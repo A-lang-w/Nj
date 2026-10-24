@@ -487,14 +487,12 @@ const stateOf = (
 
 /**
  * Echoed members accepted only with their recorded value: one naming an object the entity nests, which serving
- * would keep as recorded, and on a create a state other fields go with. Request variation cannot rebuild those dependent fields.
+ * would keep as recorded, and on a create a state other fields go with.
  */
 export const pinnedEchoes = (
   entity: JsonObject,
   body: JsonObject,
-  context: {
-    readonly type?: readonly JsonObject[];
-  } = {},
+  type?: readonly JsonObject[],
 ): Set<string> => {
   const nested = nestedIdentities(entity);
   // A member names the object nested under the field it refers to, as `collection_id` does `collection`.
@@ -507,8 +505,7 @@ export const pinnedEchoes = (
   return new Set(
     Object.entries(body).flatMap(([member, value]) =>
       namesNested(member, value) ||
-      (context.type !== undefined &&
-        stateOf(entity, member, value, context.type))
+      (type !== undefined && stateOf(entity, member, value, type))
         ? [member]
         : [],
     ),

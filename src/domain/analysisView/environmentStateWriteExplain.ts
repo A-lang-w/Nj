@@ -256,9 +256,11 @@ export const explainCreate = (
     ),
     ...instantMembers(evidence.call.body, evidence.entity, constants),
   ]);
-  const pinned = pinnedEchoes(evidence.entity, evidence.call.body, {
-    type: evidence.type,
-  });
+  const pinned = pinnedEchoes(
+    evidence.entity,
+    evidence.call.body,
+    evidence.type,
+  );
   const stored = storedMembers(
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,

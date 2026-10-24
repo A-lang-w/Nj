@@ -2562,11 +2562,12 @@ describe("recorded calls serving would refuse", () => {
     expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
   });
 
-  it("keeps a create's state at its recorded value, though a failed call or one with another query sent another", () => {
+  it("keeps a create's dependent state pinned when another call does not prove its result", () => {
     const draft = post(3, "draft", null);
     const sent = { title: "Post 3", status: "draft" };
     const others: TimedCaptureRow[] = [
       ["POST", "/api/posts", { detail: "Invalid." }, 422, { status: "x" }],
+      ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
       [
         "POST",
         "/api/posts?import=true",
@@ -2594,6 +2595,7 @@ describe("recorded calls serving would refuse", () => {
         ]),
         "post_posts",
       );
+      expect(plan.served, other[1]).toBe(true);
       expect(plan.body?.fixed, other[1]).toEqual([
         { member: "status", sent: "draft" },
       ]);

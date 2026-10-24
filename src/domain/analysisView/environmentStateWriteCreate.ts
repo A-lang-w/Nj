@@ -424,12 +424,9 @@ export const applyCreate = (
     linked: draft.linked !== undefined,
   });
   const request = requestBodyPlan(context, step, draft, observed?.object);
+  const body = request?.object;
   if (observed === undefined) {
-    fail(
-      draft,
-      step,
-      request === undefined ? "body-unusable" : "no-observation",
-    );
+    fail(draft, step, body === undefined ? "body-unusable" : "no-observation");
     return UNKNOWN;
   }
   const entity = (fields: JsonObject, id: string): StateEntity => ({
@@ -452,11 +449,10 @@ export const applyCreate = (
       entity: { type, collection, id: observed.id },
     };
   };
-  if (step.observeOnly || request === undefined) {
+  if (step.observeOnly || body === undefined) {
     fail(draft, step, "body-unusable");
     return recorded();
   }
-  const { object: body, envelope } = request;
   const call = { ...callOf(step, body), body };
   // The exemplar defines the plan's sequences; each later call must follow them.
   const later = built(draft);
@@ -477,7 +473,12 @@ export const applyCreate = (
   }
   if (
     !later &&
-    !buildCreate(context, draft, step, { observed, call, collection, envelope })
+    !buildCreate(context, draft, step, {
+      observed,
+      call,
+      collection,
+      envelope: request?.envelope,
+    })
   )
     return recorded();
   // Rules learn from the recorded path; serving fills path fields from the collection it selects.

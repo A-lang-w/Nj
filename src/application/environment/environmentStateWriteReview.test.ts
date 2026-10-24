@@ -386,6 +386,39 @@ it("keeps a create's nested reference pinned when an unobserved call varies its 
   );
 });
 
+it("refuses a create's unsupported dependent state even when an unobserved call varied it", () => {
+  const post = (id: number, status: string, published_at: string | null) => ({
+    id,
+    title: `Post ${String(id)}`,
+    status,
+    published_at,
+  });
+  const first = post(1, "published", "2026-10-01T09:00:00Z");
+  const second = post(2, "published", "2026-10-01T10:00:00Z");
+  const draft = post(3, "draft", null);
+  const posts = servedFrom([
+    ["GET", "/api/posts", [first, second]],
+    ["GET", "/api/posts/1", first],
+    ["GET", "/api/posts/2", second],
+    ["POST", "/api/posts", draft, 201, { title: "Post 3", status: "draft" }],
+    ["GET", "/api/posts/3", draft],
+    ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
+  ]);
+  expect(posts.state.writes.get("post_posts")).toMatchObject({ served: true });
+  const before = posts.snapshot();
+  expect(
+    posts.refusal("post_posts", {
+      body: { title: "Caller", status: "published" },
+    }),
+  ).toMatchObject({ code: "invalid_request" });
+  expect(posts.snapshot()).toBe(before);
+  expect(
+    posts.answer("post_posts", {
+      body: { title: "Caller", status: "draft" },
+    }).body,
+  ).toMatchObject({ title: "Caller", status: "draft", published_at: null });
+});
+
 it("drops a write's confirmation when its read view later disproves learned array sorting", () => {
   const tagged = (book: typeof FIRST_BOOK, tags: string[]) => ({
     ...book,
@@ -449,9 +482,14 @@ it("reloads an unchanged snapshot after a view with its own clock spellings disp
   expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
 });
 
-it.each([false, true])(
-  "keeps contradictions after retiring a sorted list while an item proof survives (wrong values: %s)",
-  (wrong) => {
+it.each([
+  { wrong: false, mixed: false },
+  { wrong: true, mixed: false },
+  { wrong: false, mixed: true },
+  { wrong: true, mixed: true },
+])(
+  "keeps contradictions after retiring a sorted list while an item proof survives (wrong=$wrong, mixed=$mixed)",
+  ({ wrong, mixed }) => {
     const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
     const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
     const written = { ...second, tags: ["zeta", "delta"] };
@@ -466,7 +504,10 @@ it.each([false, true])(
       [
         "GET",
         "/api/books",
-        [{ ...later, tags: wrong ? ["wrong", "values"] : later.tags }, written],
+        [
+          { ...later, tags: wrong ? ["wrong", "values"] : later.tags },
+          mixed ? { ...written, tags: ["delta", "zeta"] } : written,
+        ],
       ],
     ]);
     expect(books.state.views.get("get_books")).toMatchObject({
