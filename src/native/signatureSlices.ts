@@ -24,9 +24,9 @@ export interface SliceSignature {
 }
 
 /**
- * The aggregate signing facts, read without `-a`. codesign then describes one
- * slice (its default for the host), while `codesign -d -r-` on an ad hoc
- * signature prints a requirement covering every slice.
+ * The signing facts of the requested slice, read with `-a <architecture>`.
+ * They are the result's own fields; `codesign -d -r-` on an ad hoc signature
+ * prints a requirement naming the CDHash of every slice.
  */
 export interface AggregateSignature {
   readonly identifier: string | null;
@@ -39,23 +39,26 @@ export interface AggregateSignature {
 }
 
 /**
- * Explain which slice the aggregate signature fields describe, and name the
- * slices whose signing differs from it. Each architecture is signed
+ * Name the other signed slices of a universal file and those whose signing
+ * differs from the requested slice's. Each architecture is signed
  * independently, so a universal file can carry different identifiers,
- * hardened-runtime flags and entitlements per slice while the aggregate
- * fields show only one of them.
+ * hardened-runtime flags and entitlements per slice while the result's
+ * fields show only the requested one. The requested slice is recognised by
+ * its name, or by its CDHash when codesign selected a variant of the
+ * requested CPU family (arm64e.x1 for arm64).
  *
  * Returns limitation sentences for the result; nothing when no signed slice
  * was queried.
  */
 export const describeSignatureSlices = (
+  requested: string,
   aggregate: AggregateSignature,
   slices: readonly SliceSignature[],
 ): string[] => {
   if (slices.length === 0) return [];
-  const described = slices.find((slice) =>
-    sameCdhashes(slice.cdhashes, aggregate.cdhashes),
-  );
+  const described =
+    slices.find((slice) => slice.architecture === requested) ??
+    slices.find((slice) => sameCdhashes(slice.cdhashes, aggregate.cdhashes));
   const others = slices.filter((slice) => slice !== described);
   const limitations: string[] = [];
   const otherHashes = others
@@ -65,20 +68,16 @@ export const describeSignatureSlices = (
     .join(", ");
   if (described === undefined)
     limitations.push(
-      `Signature fields describe the slice codesign displayed by default, which did not match any queried slice by CDHash; queried signed slices: ${otherHashes}.`,
+      `The requested ${requested} slice matched no queried slice by name or CDHash; queried signed slices: ${otherHashes}.`,
     );
-  else
-    limitations.push(
-      others.length === 0
-        ? `Signature fields describe the ${described.architecture} slice that codesign displayed by default.`
-        : `Signature fields describe the ${described.architecture} slice that codesign displayed by default; other signed slices: ${otherHashes}.`,
-    );
+  else if (others.length > 0)
+    limitations.push(`Other signed Mach-O slices: ${otherHashes}.`);
   const differing = others
     .map((slice) => describeDifferences(aggregate, slice))
     .filter((text): text is string => text !== null);
   if (differing.length > 0)
     limitations.push(
-      `Mach-O slices signed differently from the ${described?.architecture ?? "described"} slice: ${differing.join(", ")}.`,
+      `Mach-O slices signed differently from the ${requested} slice: ${differing.join(", ")}.`,
     );
   limitations.push(
     ...describeRequirementHashes(aggregate.designated_requirement, {
@@ -90,30 +89,32 @@ export const describeSignatureSlices = (
 };
 
 /**
- * Name the signed slices of a universal file whose default slice is unsigned.
- * codesign then reports the whole file as unsigned, so the result's `signed`
- * field describes that default slice and these facts live in limitations.
+ * Name the signed slices of a universal file whose requested slice is
+ * unsigned. The result's `signed` field describes the requested slice, so
+ * these facts live in limitations.
  */
-export const describeSignedSlicesOfUnsignedDefault = (
+export const describeSignedSlicesBesideUnsigned = (
+  requested: string,
   slices: readonly SliceSignature[],
 ): string[] =>
   slices.length === 0
     ? []
     : [
-        `Mach-O slices signed although codesign's default slice is unsigned: ${slices
+        `Mach-O slices signed although the requested ${requested} slice is unsigned: ${slices
           .map(
             (slice) =>
               `${slice.architecture} (identifier ${quoted(slice.identifier, "unavailable")}; team identifier ${quoted(slice.team_identifier, "not set")}; authorities ${quotedList(slice.authorities)}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
           )
           .join(
             ", ",
-          )}; signed is false for the default slice and their entitlements were not reported.`,
+          )}; signed is false for the requested slice and their entitlements were not reported.`,
       ];
 
 /**
- * A requirement from `codesign -d -r-` covers the whole file. Say which of
- * its CDHashes belong to other queried slices, and which match no slice at
- * all (a custom requirement can name a previous build), without guessing.
+ * An ad hoc requirement from `codesign -d -r-` names the CDHash of every
+ * slice. Say which of its CDHashes belong to other queried slices, and which
+ * match no slice at all (a custom requirement can name a previous build),
+ * without guessing.
  */
 const describeRequirementHashes = (
   requirement: string | null,
@@ -144,11 +145,11 @@ const describeRequirementHashes = (
       `names CDHashes matching no queried slice (${unmatched.join(", ")})`,
     );
   return [
-    `designated_requirement covers the whole file and ${parts.join(" and ")}; cdhashes lists only the described slice.`,
+    `designated_requirement ${parts.join(" and ")}; cdhashes lists only the requested slice.`,
   ];
 };
 
-/** Name the fields of one slice that differ from the aggregate, or null. */
+/** Name the fields of one slice that differ from the requested slice's, or null. */
 const describeDifferences = (
   aggregate: AggregateSignature,
   slice: SliceSignature,
@@ -259,7 +260,7 @@ const withoutEmptyDictionary = (value: JsonValue | null): JsonValue | null =>
     : value;
 
 /**
- * The entries of a slice's entitlements that differ from the described
+ * The entries of a slice's entitlements that differ from the requested
  * slice's, with their values, so the policy signed into the other slice is
  * readable from the result. A key the slice lacks is reported as absent.
  * Returns null when nothing differs; codesign prints nothing for no

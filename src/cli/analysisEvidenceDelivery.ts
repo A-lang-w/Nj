@@ -1,3 +1,4 @@
+import { readArtifactInspectionSources } from "../domain/artifactInspection.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
 import { parseEvidence, type Evidence } from "../domain/evidence.js";
@@ -8,7 +9,8 @@ import { ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { publishEvidenceDelivery } from "../application/EvidenceBundleCommands.js";
-import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
@@ -17,9 +19,7 @@ export const analysisEvidenceDeliveryOptions = {
     .enum(["complete", "summary"])
     .default("complete")
     .describe("Deliver complete Evidence, or a summary with --evidence_output"),
-  evidence_output: z
-    .string()
-    .min(1)
+  evidence_output: localPathStringSchema
     .optional()
     .describe(
       "Save complete Evidence as a bundle; required for summary delivery. Never overwrites.",
@@ -97,6 +97,9 @@ export const deliverCliAnalysisEvidence = async (
     detail,
     evidenceOutput,
     ...(input.view === undefined ? {} : { view: input.view }),
+    ...(input.sourceEvidence === undefined
+      ? {}
+      : { sourceEvidence: input.sourceEvidence }),
   });
 };
 
@@ -104,7 +107,7 @@ export const deliverCliAnalysisEvidence = async (
 export const publishCliAnalysisEvidence = async (
   value: JsonValue,
   input: CliEvidenceDelivery,
-) => {
+): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
   if (!isEvidence(value)) return value;
   const complete = parseEvidence(value);
@@ -118,7 +121,7 @@ export const publishCliAnalysisEvidence = async (
   // unreported bundle; publication then owns every post-commit outcome.
   const delivered =
     detail === "summary"
-      ? inspectAnalysisView({
+      ? inspectAnalysisViewValidated({
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
@@ -127,13 +130,22 @@ export const publishCliAnalysisEvidence = async (
     return projectAnalysisError(
       delivered.error.retainPartialObservation(complete),
     );
+  const inspectionSources =
+    complete.operation === "inspect_artifact"
+      ? readArtifactInspectionSources(complete.normalized_result)
+      : ok([]);
+  if (!inspectionSources.ok)
+    return projectAnalysisError(
+      inspectionSources.error.retainPartialObservation(complete),
+    );
   const published = await publishEvidenceDelivery({
     bundle: createEvidenceBundle([
       ...new Map(
-        [...(input.sourceEvidence ?? []), complete].map((record) => [
-          record.evidence_id,
-          record,
-        ]),
+        [
+          ...(input.sourceEvidence ?? []),
+          ...inspectionSources.value,
+          complete,
+        ].map((record) => [record.evidence_id, record]),
       ).values(),
     ]),
     complete,
@@ -146,7 +158,10 @@ export const publishCliAnalysisEvidence = async (
   return detail === "summary"
     ? {
         summary: published.value.delivered,
-        evidence_bundle: published.value.evidenceBundle,
+        evidence_bundle: {
+          path: published.value.evidenceBundle.path,
+          bytes: published.value.evidenceBundle.bytes,
+        },
       }
     : published.value.delivered;
 };

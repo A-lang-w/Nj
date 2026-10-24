@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   DEFAULT_DISPATCH_METADATA_INPUT_BYTES,
   MAXIMUM_DISPATCH_METADATA_INPUT_BYTES,
@@ -13,13 +14,17 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisArtifactChangedError,
+  AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -48,7 +53,11 @@ import {
   type DispatchRecordBudget,
   type SwiftRelativeTargetLocation,
 } from "./AppleSwiftDispatchFacets.js";
-import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
+import {
+  decodeSwiftNominalTypes,
+  createSwiftContextReader,
+} from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
@@ -203,7 +212,13 @@ export const decodeAppleDispatchMetadata = (
     budget,
     result,
   });
+  const contextReader = createSwiftContextReader({
+    u32,
+    string,
+    relative: swiftRelative,
+  });
   const swift = decodeSwiftDispatchFacets({
+    contextReader,
     sections,
     segments,
     readers,
@@ -221,23 +236,38 @@ export const decodeAppleDispatchMetadata = (
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
-  const vtables = decodeSwiftClassVtables({
+  const admit = () => budget.admit();
+  const executable = (address: bigint) =>
+    segments.some(
+      (segment) =>
+        segment.executable &&
+        address >= segment.address &&
+        address < segment.address + segment.size,
+    );
+  const vtables = createSwiftClassVtableDecoder({
+    result,
+    readers: {
+      u32,
+      relative: swiftRelative,
+      location,
+      evidence,
+      admit,
+      executable,
+    },
+  });
+  const declarations = decodeSwiftNominalTypes({
+    contextReader,
     entries: typeEntries,
     result,
+    visitor: vtables.visitor,
     readers: {
       u32,
       relative: swiftRelative,
       string,
       location,
       evidence,
-      admit: () => budget.admit(),
-      executable: (address) =>
-        segments.some(
-          (segment) =>
-            segment.executable &&
-            address >= segment.address &&
-            address < segment.address + segment.size,
-        ),
+      executable,
+      admit,
     },
   });
   pushDispatchCoverage({
@@ -250,7 +280,8 @@ export const decodeAppleDispatchMetadata = (
     objcClassListScanTruncated,
     truncated: budget.truncated,
     fixups,
-    vtables,
+    declarations,
+    vtables: vtables.facts(),
     swift,
   });
   return objcSwiftMetadataSchema.parse(result);
@@ -382,7 +413,10 @@ export const appleDispatchMetadataFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? appleDispatchMetadataFailure(artifactFilePrimaryFailure(cause), path)
+        ? appleDispatchMetadataPrimaryFailure(
+            artifactFilePrimaryFacts(cause),
+            path,
+          )
         : physical?.completionCancellation === undefined
           ? undefined
           : new AnalysisCancelledError(OPERATION, {
@@ -401,25 +435,70 @@ export const appleDispatchMetadataFailure = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof UnsupportedMachoMetadataFormatError)
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      OPERATION,
-      cause.message,
-      { cause },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+  return appleDispatchMetadataPrimaryFailure(
+    artifactFilePrimaryFacts(cause),
+    path,
+  );
+};
+
+const appleDispatchMetadataPrimaryFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  if (origin === "owned-or-classified") {
+    if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof UnsupportedMachoMetadataFormatError)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(OPERATION, {
+        cause: artifactFileCancellationCause(cause),
+      });
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "unavailable"
+    )
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
+      return new AnalysisInputError(OPERATION, { cause }, [
+        { path: ["path"], reason: "invalid_value", message: cause.message },
+      ]);
+  }
+  const readCause =
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "io"
+      ? cause.cause
+      : cause;
+  if (
+    readCause instanceof Error &&
+    "code" in readCause &&
+    (readCause.code === "EACCES" || readCause.code === "EPERM")
+  )
+    return new AnalysisAccessDeniedError(OPERATION, path, readCause.code, {
+      cause,
     });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "unavailable")
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      OPERATION,
-      cause.message,
-      { cause },
-    );
+  if (isSelectedRegularFileError(readCause))
+    return new AnalysisInputError(OPERATION, { cause }, [
+      {
+        path: ["path"],
+        reason: "invalid_value",
+        message: `Selected metadata target could not be read (${String(readCause.code)}): ${path}`,
+      },
+    ]);
   return new ProviderAdapterError(IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {

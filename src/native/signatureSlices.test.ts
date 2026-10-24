@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeEntitlementDifferences,
   describeSignatureSlices,
-  describeSignedSlicesOfUnsignedDefault,
+  describeSignedSlicesBesideUnsigned,
   entitlementShape,
   type AggregateSignature,
   type SliceSignature,
@@ -45,20 +45,23 @@ const x86Slice: SliceSignature = {
 
 describe("describeSignatureSlices", () => {
   it("returns nothing when no signed slice was queried", () => {
-    expect(describeSignatureSlices(aggregate, [])).toEqual([]);
+    expect(describeSignatureSlices("arm64", aggregate, [])).toEqual([]);
   });
 
-  it("names the described slice and every differing field of the others", () => {
-    expect(describeSignatureSlices(aggregate, [x86Slice, armSlice])).toEqual([
-      `Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash ${X86}).`,
+  it("names the other slices and every differing field of theirs", () => {
+    expect(
+      describeSignatureSlices("arm64", aggregate, [x86Slice, armSlice]),
+    ).toEqual([
+      `Other signed Mach-O slices: x86_64 (CDHash ${X86}).`,
       `Mach-O slices signed differently from the arm64 slice: x86_64 (identifier "com.example.x86slice"; hardened runtime off; entitlements "com.apple.security.cs.disable-library-validation" absent, "com.apple.security.get-task-allow": true).`,
-      `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}); cdhashes lists only the described slice.`,
+      `designated_requirement names CDHashes of other slices (x86_64 ${X86}); cdhashes lists only the requested slice.`,
     ]);
   });
 
   it("does not attribute a requirement hash that matches no queried slice", () => {
     const stale = "ab".repeat(20);
     const limitations = describeSignatureSlices(
+      "arm64",
       {
         ...aggregate,
         designated_requirement: `cdhash H"${ARM}" or cdhash H"${X86}" or cdhash H"${stale}"`,
@@ -66,25 +69,26 @@ describe("describeSignatureSlices", () => {
       [x86Slice, armSlice],
     );
     expect(limitations.at(-1)).toBe(
-      `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}) and names CDHashes matching no queried slice (${stale}); cdhashes lists only the described slice.`,
+      `designated_requirement names CDHashes of other slices (x86_64 ${X86}) and names CDHashes matching no queried slice (${stale}); cdhashes lists only the requested slice.`,
     );
     const onlyStale = describeSignatureSlices(
+      "arm64",
       { ...aggregate, designated_requirement: `cdhash H"${stale}"` },
       [armSlice],
     );
     expect(onlyStale.at(-1)).toBe(
-      `designated_requirement covers the whole file and names CDHashes matching no queried slice (${stale}); cdhashes lists only the described slice.`,
+      `designated_requirement names CDHashes matching no queried slice (${stale}); cdhashes lists only the requested slice.`,
     );
   });
 
-  it("names signed slices when codesign's default slice is unsigned", () => {
-    expect(describeSignedSlicesOfUnsignedDefault([])).toEqual([]);
-    expect(describeSignedSlicesOfUnsignedDefault([armSlice])).toEqual([
-      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier "com.example.armslice"; team identifier not set; authorities none; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
+  it("names signed slices when the requested slice is unsigned", () => {
+    expect(describeSignedSlicesBesideUnsigned("x86_64", [])).toEqual([]);
+    expect(describeSignedSlicesBesideUnsigned("x86_64", [armSlice])).toEqual([
+      `Mach-O slices signed although the requested x86_64 slice is unsigned: arm64 (identifier "com.example.armslice"; team identifier not set; authorities none; CDHash ${ARM}; hardened runtime on); signed is false for the requested slice and their entitlements were not reported.`,
     ]);
   });
 
-  it("reports only the described slice when the other slices are signed alike", () => {
+  it("lists only the other slices when they are signed alike", () => {
     // An identity requirement names no CDHash, so nothing contradicts cdhashes.
     const alike: AggregateSignature = {
       ...aggregate,
@@ -107,26 +111,34 @@ describe("describeSignatureSlices", () => {
       entitlementDifferences: null,
     });
     expect(
-      describeSignatureSlices(alike, [
+      describeSignatureSlices("arm64e", alike, [
         slice("x86_64", X86),
         slice("arm64e", ARM),
         slice("arm64e.x1", "ab".repeat(20)),
       ]),
     ).toEqual([
-      `Signature fields describe the arm64e slice that codesign displayed by default; other signed slices: x86_64 (CDHash ${X86}), arm64e.x1 (CDHash ${"ab".repeat(20)}).`,
+      `Other signed Mach-O slices: x86_64 (CDHash ${X86}), arm64e.x1 (CDHash ${"ab".repeat(20)}).`,
     ]);
+    // codesign selects a variant of the requested family; the CDHash tells.
+    expect(
+      describeSignatureSlices("arm64", alike, [
+        slice("x86_64", X86),
+        slice("arm64e.x1", ARM),
+      ]),
+    ).toEqual([`Other signed Mach-O slices: x86_64 (CDHash ${X86}).`]);
   });
 
-  it("keeps an unmatched default slice visible instead of guessing", () => {
+  it("keeps an unmatched requested slice visible instead of guessing", () => {
     const limitations = describeSignatureSlices(
+      "arm64e",
       { ...aggregate, cdhashes: ["ff".repeat(20)] },
       [x86Slice, armSlice],
     );
     expect(limitations[0]).toBe(
-      `Signature fields describe the slice codesign displayed by default, which did not match any queried slice by CDHash; queried signed slices: x86_64 (CDHash ${X86}), arm64 (CDHash ${ARM}).`,
+      `The requested arm64e slice matched no queried slice by name or CDHash; queried signed slices: x86_64 (CDHash ${X86}), arm64 (CDHash ${ARM}).`,
     );
     expect(limitations[1]).toContain(
-      "Mach-O slices signed differently from the described slice: x86_64 (",
+      "Mach-O slices signed differently from the arm64e slice: x86_64 (",
     );
   });
 });
@@ -135,7 +147,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
   it("does not report entitlements for a slice that was not asked for them", () => {
     const { entitlementDifferences: _omitted, ...withoutEntitlements } =
       x86Slice;
-    const limitations = describeSignatureSlices(aggregate, [
+    const limitations = describeSignatureSlices("arm64", aggregate, [
       withoutEntitlements,
       armSlice,
     ]);
@@ -146,6 +158,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
 
   it("describes empty and missing entitlements as none", () => {
     const limitations = describeSignatureSlices(
+      "arm64",
       { ...aggregate, entitlements: null },
       [
         {
@@ -160,7 +173,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
     expect(
       limitations.some((text) => text.includes("signed differently")),
     ).toBe(false);
-    const differing = describeSignatureSlices(aggregate, [
+    const differing = describeSignatureSlices("arm64", aggregate, [
       {
         ...x86Slice,
         identifier: aggregate.identifier,
@@ -181,6 +194,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
 describe("describeEntitlementDifferences values and quoting", () => {
   it("shows the differing value when both slices carry the same entitlement key", () => {
     const limitations = describeSignatureSlices(
+      "arm64",
       {
         ...aggregate,
         entitlements: {
@@ -214,6 +228,7 @@ describe("describeEntitlementDifferences values and quoting", () => {
 
   it("reads entitlement keys that shadow prototype properties as own entries", () => {
     const limitations = describeSignatureSlices(
+      "arm64",
       { ...aggregate, entitlements: { toString: true } },
       [
         {
@@ -283,7 +298,7 @@ describe("describeEntitlementDifferences values and quoting", () => {
   });
 
   it("quotes identity values so a delimiter inside them cannot read as a field", () => {
-    const limitations = describeSignatureSlices(aggregate, [
+    const limitations = describeSignatureSlices("arm64", aggregate, [
       {
         ...armSlice,
         architecture: "x86_64",
@@ -303,6 +318,7 @@ describe("describeEntitlementDifferences values and quoting", () => {
 
   it("compares CDHashes without regard to letter case", () => {
     const limitations = describeSignatureSlices(
+      "arm64e",
       {
         ...aggregate,
         cdhashes: [ARM.toUpperCase()],
@@ -310,8 +326,6 @@ describe("describeEntitlementDifferences values and quoting", () => {
       },
       [armSlice],
     );
-    expect(limitations).toEqual([
-      "Signature fields describe the arm64 slice that codesign displayed by default.",
-    ]);
+    expect(limitations).toEqual([]);
   });
 });

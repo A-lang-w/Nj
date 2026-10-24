@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { browserExclusionSchema } from "./browserCompleteness.js";
+import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
   MAX_BROWSER_DEADLINE_MS,
@@ -8,7 +10,10 @@ import {
   optionalBrowserDeadlineMs,
 } from "./browserDeadline.js";
 import { emptyArraySchema } from "./emptyArraySchema.js";
-import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
+import {
+  inspectWebPageWithSourceInputSchema,
+  recordedBrowserOriginSchema,
+} from "./browserObservation.js";
 import {
   webTextArtifactMetadataSchema,
   webTextArtifactSchema,
@@ -311,6 +316,12 @@ export const webSourceMapsSchema = z
     requested: z.int().min(0),
     processed: z.int().min(0),
     items: z.array(sourceMapSchema),
+    /** Capture exclusions retain counts/reasons without disallowed URL details. */
+    excluded: z
+      .array(
+        browserExclusionSchema.extend({ section: z.literal("source_maps") }),
+      )
+      .optional(),
     limitation: z.string().min(1).optional(),
   })
   .superRefine((sourceMaps, context) => {
@@ -337,7 +348,9 @@ export const webSourceMapsSchema = z
       (status) => status === "included" || status === "partial",
     ).length;
     const allowedStatuses =
-      sourceMaps.processed < sourceMaps.requested
+      sourceMaps.processed < sourceMaps.requested ||
+      sourceMaps.excluded?.some(({ count }) => count === null || count > 0) ===
+        true
         ? retained === 0
           ? ["unavailable"]
           : ["partial"]
@@ -362,8 +375,12 @@ export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
 
 /** Provider-neutral result of JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({
+  route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
+    // Older saved observations omit this field; current analyses retain the
+    // validated HTTP(S) target origin or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable().optional(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),

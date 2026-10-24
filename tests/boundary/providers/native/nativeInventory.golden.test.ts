@@ -16,7 +16,10 @@ import {
 import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { parseOtoolLoadCommands } from "../../../../src/native/parsers/otool.js";
-import { parseDyldSymbols } from "../../../../src/native/parsers/dyldInfo.js";
+import {
+  parseDyldExports,
+  parseDyldImports,
+} from "../../../../src/native/parsers/dyldInfo.js";
 import {
   NativeFixtureRunner as FixtureRunner,
   nativeFixture as fixture,
@@ -131,9 +134,11 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       designated_requirement: null,
       entitlements: { "com.apple.security.app-sandbox": true },
       limitations: expect.arrayContaining([
-        "Partial signature coverage: aggregate signing metadata describes codesign’s default slice; Mach-O slices have mixed signing states.",
+        expect.stringContaining(
+          "signature identity, hashes, designated requirement",
+        ),
         "Unsigned Mach-O slices: x86_64.",
-        "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
+        "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
       ]),
       provenance: expect.arrayContaining([
         expect.objectContaining({
@@ -156,17 +161,15 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
   }
 });
 
-it("names the described slice and the differently signed slices of a signed universal Mach-O", async () => {
-  // Real captures: the arm64 slice (codesign's default here) has the hardened
-  // runtime and disable-library-validation; the x86_64 slice has neither and
-  // carries get-task-allow under another identifier.
+it("names the differently signed slices of a signed universal Mach-O", async () => {
+  // Real captures: the requested arm64 slice has the hardened runtime and
+  // disable-library-validation; the x86_64 slice has neither and carries
+  // get-task-allow under another identifier.
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
-      entitlements: await load("entitlements-aggregate.xml"),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -179,7 +182,7 @@ it("names the described slice and the differently signed slices of a signed univ
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -197,9 +200,10 @@ it("names the described slice and the differently signed slices of a signed univ
   });
   expect(result.limitations).toEqual(
     expect.arrayContaining([
-      "Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash 269615ed3412eb7a8c0945e51c76355412db4b12).",
+      "Partial signature coverage: signature identity, hashes, designated requirement, entitlements and runtime state describe the requested arm64 architecture; other slices are queried separately.",
+      "Other signed Mach-O slices: x86_64 (CDHash 269615ed3412eb7a8c0945e51c76355412db4b12).",
       `Mach-O slices signed differently from the arm64 slice: x86_64 (identifier "com.example.x86slice"; hardened runtime off; entitlements "com.apple.security.cs.disable-library-validation" absent, "com.apple.security.get-task-allow": true).`,
-      "designated_requirement covers the whole file and names CDHashes of other slices (x86_64 269615ed3412eb7a8c0945e51c76355412db4b12); cdhashes lists only the described slice.",
+      "designated_requirement names CDHashes of other slices (x86_64 269615ed3412eb7a8c0945e51c76355412db4b12); cdhashes lists only the requested slice.",
     ]),
   );
   expect(
@@ -208,66 +212,67 @@ it("names the described slice and the differently signed slices of a signed univ
   const commands = result.provenance.map(({ command }) =>
     command.slice(1, -1).join(" "),
   );
+  // With -a, codesign reports the requested slice as a thin Mach-O, so the
+  // slice names come from lipo.
   expect(commands).toEqual([
-    "-d --verbose=4",
-    "-d -r-",
-    "-d --entitlements :-",
+    "-d -a arm64 --verbose=4",
+    "-d -a arm64 -r-",
+    "-d -a arm64 --entitlements :-",
+    "-archs",
     "-d -a x86_64 --verbose=4",
-    // Only the slice that differs from the aggregate is asked for entitlements.
+    // Only a slice other than the requested one is asked for entitlements.
     "-d -a x86_64 --entitlements :-",
     "-d -a arm64 --verbose=4",
   ]);
   expect(result.provenance.every(({ exit }) => exit.code === 0)).toBe(true);
 });
 
-it("adds only the described-slice note when every slice is signed alike", async () => {
+it("names only the other slices when every slice is signed alike", async () => {
   // Ad hoc signing a universal file gives every slice the same identifier
   // and flags, as `codesign -s -` does; only the CDHashes differ.
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
-  const aggregate = await load("aggregate.txt");
+  const armDisplay = await load("slice-arm64.txt");
   const alike = (await load("slice-x86_64.txt"))
     .replace(/^Identifier=.*$/mu, "Identifier=com.example.armslice")
     .replace(
       /^CodeDirectory .*$/mu,
-      /^CodeDirectory .*$/mu.exec(aggregate)?.[0] ?? "",
+      /^CodeDirectory .*$/mu.exec(armDisplay)?.[0] ?? "",
     );
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate,
       requirements: await load("requirements.txt"),
-      entitlements: await load("entitlements-aggregate.xml"),
       slices: {
         x86_64: {
           display: alike,
-          entitlements: await load("entitlements-aggregate.xml"),
+          entitlements: await load("entitlements-arm64.xml"),
         },
         arm64: {
-          display: await load("slice-arm64.txt"),
+          display: armDisplay,
           entitlements: await load("entitlements-arm64.xml"),
         },
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
   if (!execution.ok) throw execution.error;
   const { limitations } = execution.value.result as { limitations: string[] };
   expect(limitations).toContain(
-    "Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash 269615ed3412eb7a8c0945e51c76355412db4b12).",
+    "Other signed Mach-O slices: x86_64 (CDHash 269615ed3412eb7a8c0945e51c76355412db4b12).",
   );
   expect(limitations.some((text) => text.includes("signed differently"))).toBe(
     false,
   );
 });
 
-it("names signed slices when codesign's default slice is unsigned", async () => {
-  // codesign's default slice (x86_64 here) is unsigned, so the aggregate
-  // display says "not signed at all" and has no Format line. lipo names the
-  // exact slices: the target only knows the arm64 CPU family, but the
-  // signed slice is arm64e.x1, which codesign -a accepts by that name.
+it("names signed slices when the requested slice is unsigned", async () => {
+  // The requested arm64 slice is unsigned, so its display says "not signed
+  // at all" and has no Format line. lipo names the exact slices: the target
+  // only knows the arm64 CPU family, but the signed slice is arm64e.x1,
+  // which codesign -a accepts by that name.
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   // codesign frames the unsigned verdict with the exact snapshot path.
   const unsignedFor = (snapshot: string) =>
@@ -328,13 +333,14 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
     expect.arrayContaining([
       "Artifact is not signed.",
       "Unsigned Mach-O slices: x86_64.",
-      `Mach-O slices signed although codesign's default slice is unsigned: arm64e.x1 (identifier "com.example.armslice"; team identifier not set; authorities none; CDHash 133d589374281103e27b32ee243781884bc41413; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
+      `Mach-O slices signed although the requested arm64 slice is unsigned: arm64e.x1 (identifier "com.example.armslice"; team identifier not set; authorities none; CDHash 133d589374281103e27b32ee243781884bc41413; hardened runtime on); signed is false for the requested slice and their entitlements were not reported.`,
     ]),
   );
-  // A fully unsigned file is not "mixed"; that wording needs a signed slice.
+  // The requirement and entitlements of an unsigned slice are not reported
+  // as separately unavailable; "Artifact is not signed." covers them.
   expect(
-    result.limitations.filter((text) => text.includes("mixed signing")),
-  ).toHaveLength(2);
+    result.limitations.filter((text) => text.includes("unavailable because")),
+  ).toHaveLength(0);
   expect(
     result.provenance.map(({ command }) =>
       command
@@ -343,9 +349,9 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
         .join(" "),
     ),
   ).toEqual([
-    "codesign -d --verbose=4",
-    "codesign -d -r-",
-    "codesign -d --entitlements :-",
+    "codesign -d -a arm64 --verbose=4",
+    "codesign -d -a arm64 -r-",
+    "codesign -d -a arm64 --entitlements :-",
     "lipo -archs",
     "codesign -d -a x86_64 --verbose=4",
     "codesign -d -a arm64e.x1 --verbose=4",
@@ -353,9 +359,12 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
 });
 
 it("falls back to the target's CPU families when lipo is unavailable", async () => {
+  // The requested arm64 slice is unsigned; the x86_64 slice is signed.
   const unsignedFor = (snapshot: string) =>
     `${snapshot}: code object is not signed at all\n`;
-  const armDisplay = await fixture("codesign-universal-signed/slice-arm64.txt");
+  const x86Display = await fixture(
+    "codesign-universal-signed/slice-x86_64.txt",
+  );
   const runner: NativeCommandRunner = {
     run(tool: string, arguments_: readonly string[], options) {
       if (tool === "lipo")
@@ -363,9 +372,9 @@ it("falls back to the target's CPU families when lipo is unavailable", async () 
           err(new NativeCommandFailure(tool, "unavailable", null)),
         );
       const architecture = arguments_[arguments_.indexOf("-a") + 1];
-      const signedSlice = arguments_.includes("-a") && architecture === "arm64";
+      const signedSlice = architecture === "x86_64";
       const stderr = signedSlice
-        ? armDisplay
+        ? x86Display
         : unsignedFor(arguments_.at(-1) ?? "");
       const exitCode = signedSlice ? 0 : 1;
       const capture: NativeCommandCapture = {
@@ -404,9 +413,9 @@ it("falls back to the target's CPU families when lipo is unavailable", async () 
   expect(limitations).toEqual(
     expect.arrayContaining([
       "lipo is unavailable, so slice names come from the target's CPU families; variants such as arm64e.x1 are not distinguished.",
-      "Unsigned Mach-O slices: x86_64.",
+      "Unsigned Mach-O slices: arm64.",
       expect.stringMatching(
-        /^Mach-O slices signed although codesign's default slice is unsigned: arm64 /u,
+        /^Mach-O slices signed although the requested arm64 slice is unsigned: x86_64 /u,
       ),
     ]),
   );
@@ -419,10 +428,8 @@ it("compares entitlement integers beyond the exact range by their digits", async
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
       // Both literals round to the same JavaScript number.
-      entitlements: plist("9007199254740992"),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -435,7 +442,7 @@ it("compares entitlement integers beyond the exact range by their digits", async
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -455,9 +462,7 @@ it("treats a cut-off entitlements plist as unavailable, not as none", async () =
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
-      entitlements: await load("entitlements-aggregate.xml"),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -472,7 +477,7 @@ it("treats a cut-off entitlements plist as unavailable, not as none", async () =
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -496,13 +501,9 @@ it("reports a data entitlement against a dictionary shaped like its wrapper as d
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
       // A dictionary shaped exactly like the projection's data wrapper
       // projects to the same JSON as a real <data> value.
-      entitlements: plist(
-        "<dict><key>$plist_type</key><string>data</string><key>base64</key><string>AQID</string></dict>",
-      ),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -517,7 +518,7 @@ it("reports a data entitlement against a dictionary shaped like its wrapper as d
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -546,8 +547,12 @@ it("does not read an echoed file name as the unsigned verdict", async () => {
       })),
     ),
   );
-  const target = await nativeMachoTargetForFile(path);
-  const aggregate = await fixture("codesign-universal-signed/aggregate.txt");
+  const { format: _format, ...thin } = await nativeMachoTargetForFile(path);
+  const target = {
+    ...thin,
+    format: "mach-o-universal" as const,
+    universalSlice: { offset: 0, size: 0 },
+  };
   const armDisplay = await fixture("codesign-universal-signed/slice-arm64.txt");
   const requirements = await fixture(
     "codesign-universal-signed/requirements.txt",
@@ -561,18 +566,19 @@ it("does not read an echoed file name as the unsigned verdict", async () => {
       const architecture =
         architectureIndex < 0 ? null : arguments_[architectureIndex + 1];
       const snapshot = arguments_.at(-1) ?? "";
-      const stdout = arguments_.includes("-r-")
-        ? requirements
-        : arguments_.includes("--entitlements")
-          ? entitlements
-          : "";
+      const stdout =
+        tool === "lipo"
+          ? "x86_64 arm64\n"
+          : arguments_.includes("-r-")
+            ? requirements
+            : arguments_.includes("--entitlements")
+              ? entitlements
+              : "";
       const failing = architecture === "x86_64";
       const stderr = failing
         ? `${snapshot}: invalid or unsupported format\n`
         : stdout === ""
-          ? architecture === "arm64"
-            ? armDisplay
-            : aggregate
+          ? armDisplay
           : "";
       const exitCode = failing ? 1 : 0;
       const capture: NativeCommandCapture = {
@@ -622,14 +628,12 @@ it("does not read an echoed file name as the unsigned verdict", async () => {
   ).toBe(false);
 });
 
-it("keeps a non-default slice's undecodable entitlements unobserved", async () => {
+it("keeps another slice's undecodable entitlements unobserved", async () => {
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
-      entitlements: await load("entitlements-aggregate.xml"),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -644,7 +648,7 @@ it("keeps a non-default slice's undecodable entitlements unobserved", async () =
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -665,16 +669,14 @@ it("keeps a non-default slice's undecodable entitlements unobserved", async () =
   );
 });
 
-it("keeps the result when a non-default slice's entitlements hold data or prototype keys", async () => {
+it("keeps the result when another slice's entitlements hold data or prototype keys", async () => {
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
   const dataEntitlements =
     '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/><key>com.example.blob</key><data>AQID</data><key>__proto__</key><true/></dict></plist>';
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await load("aggregate.txt"),
       requirements: await load("requirements.txt"),
-      entitlements: await load("entitlements-aggregate.xml"),
       slices: {
         x86_64: {
           display: await load("slice-x86_64.txt"),
@@ -687,7 +689,7 @@ it("keeps the result when a non-default slice's entitlements hold data or protot
       },
     }),
     "darwin",
-  ).createClient(await signatureTarget("arm64"));
+  ).createClient(await universalSignatureTarget("arm64"));
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -704,29 +706,29 @@ it("keeps the result when a non-default slice's entitlements hold data or protot
 });
 
 it("adds no slice note for a signed thin Mach-O", async () => {
-  // codesign reports a thin format, so no slice is queried even though the
-  // target lists two architectures; sliceRunner rejects any `-a` query.
+  // A thin target has one slice, so nothing beyond the three requested-slice
+  // queries runs: no lipo, no slice probe.
+  const path = join(
+    await createTestTempDirectory("rea-native-inventory-"),
+    "thin",
+  );
+  await writeFile(path, machoImage({ cpu: CPU.arm64 }));
   const client = new NativeMacOSProvider(
     {},
     sliceRunner({
-      aggregate: await fixture("codesign.txt"),
       requirements: '# designated => identifier "com.example.fixture"\n',
-      entitlements: await fixture("entitlements.xml"),
-      slices: {},
+      slices: {
+        arm64: {
+          display: await fixture("codesign.txt"),
+          entitlements: await fixture("entitlements.xml"),
+        },
+      },
     }),
     "darwin",
-  ).createClient(
-    await nativeMachoTargetForFile(
-      await (async () => {
-        const path = join(
-          await createTestTempDirectory("rea-native-inventory-"),
-          "thin",
-        );
-        await writeFile(path, machoImage({ cpu: CPU.arm64 }));
-        return path;
-      })(),
-    ),
-  );
+  ).createClient({
+    ...(await nativeMachoTargetForFile(path)),
+    availableArchitectures: ["arm64"] as const,
+  });
 
   const execution = await client.execute("inspect_signature", {});
 
@@ -776,12 +778,14 @@ it.each([
     entitlements: await fixture("entitlements.xml"),
     unsignedHeader: true,
   });
+  let captureCount = 0;
   const runner: NativeCommandRunner = {
     async run(tool, args, options) {
+      captureCount += 1;
       const result = await replay.run(tool, args, options);
       if (!result.ok) return result;
       if (kind === "later slice diagnostic") {
-        if (!args.includes("arm64")) return result;
+        if (captureCount <= 3 || !args.includes("arm64")) return result;
         const stderr = "later architecture probe failed\n";
         return ok({
           ...result.value,
@@ -791,7 +795,7 @@ it.each([
         });
       }
       if (result.value.exitCode === 0) return result;
-      const isSlice = args.includes("-a");
+      const isSlice = captureCount > 3;
       if ((kind === "slice diagnostic") !== isSlice) return result;
       const stderr =
         kind === "foreign executable"
@@ -838,7 +842,7 @@ it.each([
       expect(partial.limitations).toEqual(
         expect.arrayContaining([
           "Unsigned Mach-O slices: x86_64.",
-          "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
+          "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
         ]),
       );
       expect(partial.provenance[4]).toMatchObject({
@@ -897,11 +901,12 @@ it("retains native inventory facts from captured Apple tool output", async () =>
       ]),
     },
   });
-  expect(
-    parseDyldSymbols(await fixture("dyld-imports.txt"), "imports"),
-  ).toEqual([
+  expect(parseDyldImports(await fixture("dyld-imports.txt"), false)).toEqual([
     {
       name: "__Block_copy",
+      raw_name: null,
+      name_status: "exact",
+      addend: null,
       address: null,
       weak: null,
       reexport: null,
@@ -909,6 +914,9 @@ it("retains native inventory facts from captured Apple tool output", async () =>
     },
     {
       name: "_objc_bp_assist_cfg_np",
+      raw_name: null,
+      name_status: "exact",
+      addend: null,
       address: null,
       weak: true,
       reexport: null,
@@ -916,9 +924,10 @@ it("retains native inventory facts from captured Apple tool output", async () =>
     },
   ]);
   expect(
-    parseDyldSymbols(
+    parseDyldExports(
       await fixture("dyld-inventory/library-reexports.txt"),
-      "exports",
+      null,
+      new Set(),
     ),
   ).toEqual([
     {
@@ -929,12 +938,66 @@ it("retains native inventory facts from captured Apple tool output", async () =>
       source: "libc++abi",
     },
   ]);
-  expect(parseDyldSymbols(exportsOutput, "exports")).toContainEqual({
+  expect(parseDyldExports(exportsOutput, null, new Set())).toContainEqual({
     name: "_fixture_export",
     address: null,
     weak: null,
     reexport: false,
     source: null,
+  });
+});
+
+it("reports a chained bind addend separately in native inspection", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "otool", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs.otool = withOtoolMachHeader(
+    `${outputs.otool ?? ""}Load command 17
+      cmd LC_DYLD_CHAINED_FIXUPS
+  cmdsize 16
+    dataoff 100
+   datasize 20
+`,
+  );
+  outputs["dyld_info:-imports"] =
+    "-imports:\n 0x0000 _fixture_data (from libFixture)\n 0x0001 _fixture_data+0x4 (from libFixture)\n";
+  outputs["dyld_info:-exports"] = await fixture("dyld-inventory/exports.txt");
+  const client = new NativeMacOSProvider(
+    {},
+    new FixtureRunner(outputs),
+    "darwin",
+  ).createClient(machoTarget("/private/fixture"));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      exhaustive: false,
+      limitations: expect.arrayContaining([
+        "Chained import text contains symbol/addend expressions whose split is ambiguous.",
+      ]),
+      items: [
+        {
+          name: "_fixture_data",
+          raw_name: null,
+          name_status: "exact",
+          addend: null,
+          address: null,
+          weak: null,
+          reexport: null,
+          source: "libFixture",
+        },
+        {
+          name: null,
+          raw_name: "_fixture_data+0x4",
+          name_status: "ambiguous",
+          addend: null,
+          address: null,
+          weak: null,
+          reexport: null,
+          source: "libFixture",
+        },
+      ],
+    },
   });
 });
 
@@ -975,13 +1038,12 @@ it("splits re-export rows at the source library", () => {
   // dyld_info -exports rows for synthetic dylibs: a source symbol named
   // `operator()`, and a library whose install name contains ` from `.
   expect(
-    parseDyldSymbols(
+    parseDyldExports(
       [
         "[re-export] _call_renamed (operator() from libfoo)",
         "[re-export] _g (from lib from foo)",
         "[re-export] _nested (from lib (from foo))",
       ].join("\n"),
-      "exports",
       null,
       new Set(["_call_renamed", "_g", "_nested"]),
     ),
@@ -1013,10 +1075,13 @@ it("splits re-export rows at the source library", () => {
 
 it("retains symbol names containing spaces in dyld inventory rows", () => {
   expect(
-    parseDyldSymbols("  0x0000  _entry with space  (from fixture)", "imports"),
+    parseDyldImports("  0x0000  _entry with space  (from fixture)", false),
   ).toEqual([
     {
       name: "_entry with space",
+      raw_name: null,
+      name_status: "exact",
+      addend: null,
       address: null,
       weak: null,
       reexport: null,
@@ -1024,10 +1089,10 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
     },
   ]);
   expect(
-    parseDyldSymbols(
+    parseDyldExports(
       "  offset symbol\n  0x00000348  _entry with space",
-      "exports",
       "0x0",
+      new Set(),
     ),
   ).toEqual([
     {
@@ -1039,7 +1104,11 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
     },
   ]);
   expect(
-    parseDyldSymbols("[re-export] _entry with space (from fixture)", "exports"),
+    parseDyldExports(
+      "[re-export] _entry with space (from fixture)",
+      null,
+      new Set(),
+    ),
   ).toEqual([
     {
       name: "_entry with space",
@@ -1050,7 +1119,7 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
     },
   ]);
   expect(
-    parseDyldSymbols("0x123 _weak with space [weak-def]", "exports"),
+    parseDyldExports("0x123 _weak with space [weak-def]", null, new Set()),
   ).toEqual([
     {
       name: "_weak with space",
@@ -1062,12 +1131,17 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
   ]);
 });
 
-it("preserves numeric-looking segment and section identifiers from otool", () => {
-  const parsed = parseOtoolLoadCommands(
-    withOtoolMachHeader(`Load command 0
+it.each([
+  ["0001", "0002"],
+  [" seg ", " sec "],
+])(
+  "preserves exact segment %j and section %j names from otool",
+  (segment, section) => {
+    const parsed = parseOtoolLoadCommands(
+      withOtoolMachHeader(`Load command 0
       cmd LC_SEGMENT_64
   cmdsize 152
-  segname 0001
+  segname ${segment}
    vmaddr 0x0000000000004000
    vmsize 0x0000000000004000
   fileoff 16384
@@ -1077,8 +1151,8 @@ it("preserves numeric-looking segment and section identifiers from otool", () =>
    nsects 1
     flags 0x4
 Section
-  sectname 0002
-   segname 0001
+  sectname ${section}
+   segname ${segment}
       addr 0x0000000000004000
       size 0x0000000000000008
     offset 16384
@@ -1089,19 +1163,23 @@ Section
  reserved1 0
  reserved2 0
 `),
-  );
-  expect(parsed.segments[0]).toMatchObject({
-    name: "0001",
-    file_offset: 16384,
-    sections: [{ segment: "0001", name: "0002", size: 8 }],
-  });
-});
+    );
+    expect(parsed.segments[0]).toMatchObject({
+      name: segment,
+      file_offset: 16384,
+      sections: [{ segment, name: section, size: 8 }],
+    });
+  },
+);
 
 /** Answer codesign per slice: `-a <arch>` selects that slice's captures. */
+/**
+ * Every codesign query names a slice with `-a`, the requested one included,
+ * so each answers from that slice's captures; lipo names the slices.
+ */
 const sliceRunner = (outputs: {
-  readonly aggregate: string;
   readonly requirements: string;
-  readonly entitlements: string;
+  readonly lipo?: string;
   readonly slices: Readonly<
     Record<string, { readonly display: string; readonly entitlements: string }>
   >;
@@ -1112,14 +1190,17 @@ const sliceRunner = (outputs: {
       architectureIndex < 0
         ? undefined
         : outputs.slices[arguments_[architectureIndex + 1] ?? ""];
-    if (architectureIndex >= 0 && slice === undefined)
-      throw new Error(`unexpected slice query: ${arguments_.join(" ")}`);
-    const stdout = arguments_.includes("-r-")
-      ? outputs.requirements
-      : arguments_.includes("--entitlements")
-        ? (slice?.entitlements ?? outputs.entitlements)
-        : "";
-    const stderr = stdout === "" ? (slice?.display ?? outputs.aggregate) : "";
+    if (tool !== "lipo" && slice === undefined)
+      throw new Error(`unexpected codesign query: ${arguments_.join(" ")}`);
+    const stdout =
+      tool === "lipo"
+        ? `${outputs.lipo ?? "x86_64 arm64"}\n`
+        : arguments_.includes("-r-")
+          ? outputs.requirements
+          : arguments_.includes("--entitlements")
+            ? (slice?.entitlements ?? "")
+            : "";
+    const stderr = stdout === "" ? (slice?.display ?? "") : "";
     return Promise.resolve(
       ok({
         tool,
@@ -1230,7 +1311,9 @@ Load command 1
     );
     expect(parsed.commands[0]?.fields.name).toBe(`${installName} (offset 24)`);
     expect(parsed.dependencies).toEqual([]);
-    expect(parsed.uuid).toBe("01234567-89AB-CDEF-0123-456789ABCDEF");
+    expect(parsed.commands[1]?.fields.uuid).toBe(
+      "01234567-89AB-CDEF-0123-456789ABCDEF",
+    );
   },
 );
 it.each(["weak-def", "absolute", "literal suffix"])(
@@ -1238,9 +1321,8 @@ it.each(["weak-def", "absolute", "literal suffix"])(
   (suffix) => {
     const name = `symbol [${suffix}]`;
     expect(
-      parseDyldSymbols(
+      parseDyldExports(
         `offset symbol\n0x120 ${name}`,
-        "exports",
         "0x1000",
         new Set([name]),
       ),
@@ -1252,12 +1334,7 @@ it.each(["weak-def", "absolute", "literal suffix"])(
 
 it("keeps true weak annotations when nm establishes the unannotated name", () => {
   expect(
-    parseDyldSymbols(
-      "0x120 _weak [weak-def]",
-      "exports",
-      null,
-      new Set(["_weak"]),
-    ),
+    parseDyldExports("0x120 _weak [weak-def]", null, new Set(["_weak"])),
   ).toEqual([
     {
       name: "_weak",
@@ -1269,11 +1346,67 @@ it("keeps true weak annotations when nm establishes the unannotated name", () =>
   ]);
 });
 
+it("retains chained import suffixes as ambiguous raw text", () => {
+  expect(
+    parseDyldImports(
+      "0x0000 _fixture_data (from libFixture)\n0x0001 _fixture_data+0x4 (from libFixture)\n0x0002 _fixture_weak+0x8 [weak-import] (from libFixture)",
+      true,
+    ),
+  ).toEqual([
+    {
+      name: "_fixture_data",
+      raw_name: null,
+      name_status: "exact",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "libFixture",
+    },
+    {
+      name: null,
+      raw_name: "_fixture_data+0x4",
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "libFixture",
+    },
+    {
+      name: null,
+      raw_name: "_fixture_weak+0x8",
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: true,
+      reexport: null,
+      source: "libFixture",
+    },
+  ]);
+  expect(
+    parseDyldImports("0x0001 _literal+0x4 (from libFixture)", true),
+  ).toEqual([
+    {
+      name: null,
+      raw_name: "_literal+0x4",
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "libFixture",
+    },
+  ]);
+  expect(
+    parseDyldImports("0x0001 _literal+0x4 (from libFixture)", false),
+  ).toMatchObject([{ name: "_literal+0x4", name_status: "exact" }]);
+});
+
 it("leaves an ambiguous short and literal name to the caller's nm inventory", () => {
   expect(
-    parseDyldSymbols(
+    parseDyldExports(
       "0x120 symbol [weak-def]",
-      "exports",
       null,
       new Set(["symbol", "symbol [weak-def]"]),
     ),
@@ -1282,12 +1415,7 @@ it("leaves an ambiguous short and literal name to the caller's nm inventory", ()
 
 it("retains unmatched re-export rows when the known export inventory is incomplete", () => {
   expect(
-    parseDyldSymbols(
-      "[re-export] _g (from libfoo)",
-      "exports",
-      null,
-      new Set(["_own"]),
-    ),
+    parseDyldExports("[re-export] _g (from libfoo)", null, new Set(["_own"])),
   ).toEqual([
     {
       name: "_g",
@@ -1300,7 +1428,7 @@ it("retains unmatched re-export rows when the known export inventory is incomple
 });
 
 it("retains annotation parsing without nm name evidence", () => {
-  expect(parseDyldSymbols("0x120 _weak [weak-def]", "exports")).toEqual([
+  expect(parseDyldExports("0x120 _weak [weak-def]", null, new Set())).toEqual([
     {
       name: "_weak",
       address: "0x120",
@@ -1353,6 +1481,40 @@ it("reads exports from the symbol table without llvm-nm's dyld-info pass", async
   expect(nmCommands(execution.value.result)).toEqual(nmArguments);
 });
 
+it("keeps an export name ending in a carriage return distinct", async () => {
+  // Captured from a clang executable exporting "trailing\r" and "trailing".
+  const names = "__mh_execute_header\n_main\ntrailing\ntrailing\r\n";
+  const { runner, nmArguments } = symbolTableRunner(
+    {
+      "dyld_info:-exports": [
+        "fixture [arm64]:",
+        "    -exports:",
+        "        offset      symbol",
+        "        0x00000000  __mh_execute_header",
+        "        0x00000338  _main",
+        "        0x00000330  trailing",
+        "        0x00000328  trailing\r",
+        "",
+      ].join("\n"),
+    },
+    { symbolTable: names, withDyldInfo: names },
+  );
+  const execution = await new NativeMacOSProvider({}, runner, "darwin")
+    .createClient(machoTarget("/private/fixture"))
+    .execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(nmArguments).toHaveLength(1);
+  const exported = (
+    execution.value.result as {
+      exports: { items: { name: string; address: string | null }[] };
+    }
+  ).exports.items.filter(({ name }) => name.startsWith("trailing"));
+  expect(exported).toEqual([
+    expect.objectContaining({ name: "trailing", address: "0x100000330" }),
+    expect.objectContaining({ name: "trailing\r", address: "0x100000328" }),
+  ]);
+});
+
 it("reruns nm with its dyld-info pass when a stripped symbol table omits trie exports", async () => {
   const trieNames = await fixture("dyld-inventory/stripped-swift-nm.txt");
   const { runner, nmArguments } = symbolTableRunner(
@@ -1398,3 +1560,51 @@ it("reruns nm with its dyld-info pass when a dyld_info export row is unreadable"
     ["-gjU", "-arch"],
   ]);
 });
+
+it.each(["arm64", "x86_64"] as const)(
+  "binds every signature facet to the requested %s slice when all slices are signed",
+  async (architecture) => {
+    const registered = await signatureTarget();
+    const display = (await fixture("codesign.txt")).replace(
+      /^Format=.*$/mu,
+      "Format=Mach-O universal (x86_64 arm64)",
+    );
+    const calls: (readonly string[])[] = [];
+    const runner: NativeCommandRunner = {
+      run(tool, args, options) {
+        calls.push(args);
+        const selected = args[args.indexOf("-a") + 1];
+        const output = args.includes("-r-")
+          ? `designated => identifier com.example.${selected}\n`
+          : args.includes("--entitlements")
+            ? `<?xml version="1.0"?><plist><dict><key>slice</key><string>${selected}</string></dict></plist>`
+            : display.replace(
+                /^Identifier=.*$/mu,
+                `Identifier=com.example.${selected}`,
+              );
+        return new FixtureRunner({ codesign: output }).run(tool, args, options);
+      },
+    };
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient({ ...registered, architecture })
+      .execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      identifier: `com.example.${architecture}`,
+      designated_requirement: `identifier com.example.${architecture}`,
+      entitlements: { slice: architecture },
+      limitations: expect.arrayContaining([
+        expect.stringContaining(`requested ${architecture} architecture`),
+      ]),
+    });
+    expect(
+      calls
+        .slice(0, 3)
+        .every((args) => args[args.indexOf("-a") + 1] === architecture),
+    ).toBe(true);
+    expect(calls.slice(3).map((args) => args[args.indexOf("-a") + 1])).toEqual([
+      "x86_64",
+      "arm64",
+    ]);
+  },
+);

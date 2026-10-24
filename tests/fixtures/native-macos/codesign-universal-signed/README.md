@@ -1,8 +1,11 @@
 # codesign captures of a universal Mach-O whose slices are signed differently
 
 Each slice of a universal Mach-O is signed on its own. Without `-a`, codesign
-describes the slice it selects by default for the host; `codesign -d -r-` on an
-ad hoc signature prints the requirement that covers every slice.
+describes the slice it selects by default for the host and reports the
+universal format; with `-a <slice>` it describes that slice and reports it as
+a thin Mach-O, which is why REA takes slice names from `lipo -archs`.
+`codesign -d -r-` on an ad hoc signature prints a requirement naming the
+CDHash of every slice.
 
 These files were captured on macOS 27.0.1 arm64 with the Xcode Command Line
 Tools (Apple clang 21.0.0). The executable path in the output is replaced with
