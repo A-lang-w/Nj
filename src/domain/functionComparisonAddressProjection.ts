@@ -60,7 +60,7 @@ export const createFunctionAddressProjection = (
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
   const instructionSites = observedInstructionSites(snapshot);
-  const namedSymbols = namedSymbolNames(snapshot);
+  const namedSymbols = indexNamedSymbols(namedSymbolNames(snapshot));
   const observedAddress = (address: bigint): AddressMask | null => {
     if (extent !== null && contains(extent.ranges, address))
       return {
@@ -223,21 +223,43 @@ const outgoingCallTargets = (
   });
 };
 
+interface NamedSymbolIndex {
+  readonly names: ReadonlySet<string>;
+  /** Qualifier prefixes keyed by every tail that starts after a non-word character. */
+  readonly prefixesByTail: ReadonlyMap<string, readonly string[]>;
+}
+
+const WORD_CHARACTER = /[0-9A-Za-z_]/u;
+
+/** Index named symbols once, so each matched token is a direct lookup. */
+const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
+  const prefixesByTail = new Map<string, string[]>();
+  for (const name of names)
+    for (let start = 1; start < name.length; start += 1) {
+      if (
+        WORD_CHARACTER.test(name[start - 1] ?? "") ||
+        !WORD_CHARACTER.test(name[start] ?? "")
+      )
+        continue;
+      const tail = name.slice(start);
+      const prefixes = prefixesByTail.get(tail) ?? [];
+      prefixes.push(name.slice(0, start));
+      prefixesByTail.set(tail, prefixes);
+    }
+  return { names, prefixesByTail };
+};
+
 /**
  * Whether the matched identifier spells a named symbol, alone or as the tail of
  * a qualified name whose exact qualifier precedes it in the same code segment.
  */
 const isNamedOccurrence = (
-  namedSymbols: ReadonlySet<string>,
+  { names, prefixesByTail }: NamedSymbolIndex,
   { code, index, match }: IdentifierOccurrence,
 ): boolean =>
-  namedSymbols.has(match) ||
-  [...namedSymbols].some(
-    (name) =>
-      name.length > match.length &&
-      name.endsWith(match) &&
-      code.endsWith(name.slice(0, -match.length), index),
-  );
+  names.has(match) ||
+  (prefixesByTail.get(match)?.some((prefix) => code.endsWith(prefix, index)) ??
+    false);
 
 /** A producer-reported named symbol is an identity even when it looks address-derived. */
 const namedSymbolNames = (snapshot: FunctionSnapshot): Set<string> => {

@@ -249,11 +249,16 @@ export const normalizedViews = (
         rightProjection,
         dimension,
       );
-      if (leftText === null || rightText === null)
+      if (leftText === null || rightText === null) {
+        const failed = [
+          ...(leftText === null ? ["Left"] : []),
+          ...(rightText === null ? ["Right"] : []),
+        ].join(" and ");
         return unknownView(dimension, links, [
           ...limitations,
-          "Provider text contains an unsupported raw string or an unterminated string, character literal, or block comment, so normalization was skipped.",
+          `${failed} provider text contains an unsupported raw string or an unterminated string, character literal, or block comment, so normalization was skipped.`,
         ]);
+      }
       const masking: NonNullable<NormalizedTextView["masking"]> = {
         policy: POLICY,
         provider_id: left.evidence.provider.id,

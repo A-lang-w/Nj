@@ -59,6 +59,8 @@ export function readComparisonResult(
       evidence.normalized_result,
     );
     if (!parsed.ok) return parsed;
+    const optIn = validateNormalizedViewOptIn(evidence, parsed.value);
+    if (!optIn.ok) return optIn;
     const links = validateFindingLinks(
       evidence,
       functionComparisonFindingLinks(parsed.value),
@@ -78,6 +80,20 @@ export function readComparisonResult(
   if (!links.ok) return links;
   return ok({ operation, evidence, result: parsed.value });
 }
+
+/** The recorded caller opt-in, not the payload, decides whether views exist. */
+const validateNormalizedViewOptIn = (
+  evidence: Evidence,
+  result: FunctionComparisonResult,
+): Result<void, EvidenceIntegrityError> =>
+  (evidence.parameters["include_normalized_views"] === true) ===
+  (result.normalized_views !== undefined)
+    ? ok(undefined)
+    : err(
+        new EvidenceIntegrityError(
+          "Function comparison normalized views disagree with the recorded include_normalized_views selection",
+        ),
+      );
 
 const validateFindingLinks = (
   evidence: Evidence,

@@ -24,6 +24,7 @@ import { functionDossierSchema } from "./hopperValues.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
 
 /** Authenticate fixture Evidence before the pure snapshot comparison. */
 const compareFunctions = (
@@ -1185,11 +1186,14 @@ describe("normalized view fail-closed parsing", () => {
     const result = compareFunctions(left, right, {
       includeNormalizedViews: true,
     });
+    // Only the left text is malformed, and the limitation names that side.
     expect(view(result, "pseudocode_normalized")).toMatchObject({
       status: "unknown",
       masking: null,
       limitations: expect.arrayContaining([
-        expect.stringContaining("normalization was skipped"),
+        expect.stringMatching(
+          /^Left provider text .*normalization was skipped/u,
+        ),
       ]),
     });
   });
@@ -1579,3 +1583,87 @@ it.each([
     ).toBe(status);
   },
 );
+
+describe("normalized view opt-in integrity", () => {
+  it.each([
+    { recorded: false, produced: true },
+    { recorded: true, produced: false },
+  ])(
+    "rejects comparison Evidence whose views disagree with the recorded opt-in (recorded $recorded, produced $produced)",
+    ({ recorded, produced }) => {
+      const [before, after] = syntheticPair(
+        addressRelocationText("0x411700"),
+        addressRelocationText("0x4116f0"),
+      );
+      const mismatched = createEvidence(
+        undefined,
+        {
+          id: "rea-function-comparison",
+          name: "REA function comparison",
+          version: "1",
+        },
+        {
+          predicateType: "rea.function-comparison",
+          operation: "compare_functions",
+          parameters: {
+            left_evidence_id: before.evidence_id,
+            right_evidence_id: after.evidence_id,
+            ...(recorded ? { include_normalized_views: true } : {}),
+          },
+          result: jsonValueSchema.parse(
+            compareFunctions(before, after, {
+              includeNormalizedViews: produced,
+            }),
+          ),
+          confidence: "derived",
+          authority: "analyst-inference",
+          evidenceLinks: [before.evidence_id, after.evidence_id],
+        },
+      );
+      const read = readComparisonResult(mismatched, "compare_functions");
+      expect(read.ok).toBe(false);
+      expect(read.ok ? undefined : read.error.message).toMatch(
+        /include_normalized_views/u,
+      );
+      expect(
+        readComparisonResult(
+          comparisonEvidence(before, after, produced),
+          "compare_functions",
+        ).ok,
+      ).toBe(true);
+    },
+  );
+});
+
+describe("normalized view named symbol index", () => {
+  it("recognizes a qualified named symbol whose tail contains punctuation", () => {
+    const withSymbol = (address: string) => {
+      const dossier = addressRelocationText(address);
+      const tail = `fcn.${BigInt(address).toString(16).padStart(8, "0")}`;
+      const name = `ns::${tail}`;
+      return {
+        ...dossier,
+        pseudocode: dossier.pseudocode.replace(dossier.procedure.name, name),
+        procedure: {
+          ...dossier.procedure,
+          name,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        },
+      };
+    };
+    const result = compareFunctions(
+      ...syntheticPair(withSymbol("0x411700"), withSymbol("0x4116f0")),
+      { includeNormalizedViews: true },
+    );
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "changed",
+      masking: { left: { address_derived_identifiers: 0 } },
+    });
+  });
+});
