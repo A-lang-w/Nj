@@ -8,6 +8,7 @@ import {
   HELD_FIXED_TAG_ROWS,
   TAG_ROWS,
   misshelvedRows,
+  referencedCreateRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -60,6 +61,28 @@ describe("create plans learned from every call", () => {
       served: false,
       reason: "unexplained-change",
     });
+  });
+
+  it.each([
+    { id: 1, name: "Different Hall", floor: "ground" },
+    { id: 2, name: "Map Room", floor: "upper" },
+    null,
+  ])(
+    "withholds a create whose sent reference contradicts its answer (%j)",
+    (shelf) => {
+      expect(createPlan(referencedCreateRows(shelf))).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
+
+  it("accepts a later create whose sent reference agrees in a different object key order", () => {
+    expect(
+      createPlan(
+        referencedCreateRows({ floor: "ground", name: "Main Hall", id: 1 }),
+      ),
+    ).toMatchObject({ served: true });
   });
 
   it("trims no clock a later create shows trimmed after a held entity showed it at a fixed width", () => {

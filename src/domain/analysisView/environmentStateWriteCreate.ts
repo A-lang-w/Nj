@@ -390,7 +390,7 @@ const followsSequences = (
     );
   });
 
-/** Whether a later call's created fields are ones serving would write: generated and composed fields as the plan's rules give them, and no member it left out filled otherwise than it shows. */
+/** Whether a later call's rules reproduce its observed fields and its omitted members agree with the learned defaults. */
 const agreesLater = (
   context: EffectContext,
   draft: WriteDraft,
@@ -398,28 +398,21 @@ const agreesLater = (
   call: { readonly body: JsonObject; readonly observed: JsonObject },
 ): boolean =>
   followsCreateRules(context, draft, { ...created, observed: call.observed }) &&
-  !filledOtherwise(draft.plan.rules, call, created.fields);
+  !contradictsDefault(draft.plan.rules, call, created.fields);
 
-/** Whether a call left out a member the plan fills, with an echo's default or a reference's absence, and its observation shows that field otherwise. */
-const filledOtherwise = (
+/** Whether an echoed member the call left out was stored otherwise than its learned default. */
+const contradictsDefault = (
   rules: readonly FieldRule[],
   call: { readonly body: JsonObject; readonly observed: JsonObject },
   written: JsonObject,
 ): boolean =>
-  rules.some((rule) => {
-    const member =
-      rule.rule === "echo"
-        ? rule.field
-        : rule.rule === "reference"
-          ? rule.member
-          : undefined;
-    return (
-      member !== undefined &&
-      !Object.hasOwn(call.body, member) &&
+  rules.some(
+    (rule) =>
+      rule.rule === "echo" &&
+      !Object.hasOwn(call.body, rule.field) &&
       Object.hasOwn(call.observed, rule.field) &&
-      !same(call.observed[rule.field], written[rule.field])
-    );
-  });
+      !same(call.observed[rule.field], written[rule.field]),
+  );
 
 /** Whether a later create preserves generation shapes and its derived fields reproduce the captured observation. */
 const followsCreateRules = (
@@ -432,10 +425,11 @@ const followsCreateRules = (
   draft.plan.rules.every((rule) => {
     const value = created.fields[rule.field];
     const exemplar = draft.observed?.[rule.field];
-    if (rule.rule === "composed")
+    if (rule.rule === "composed" || rule.rule === "reference")
       return (
         !Object.hasOwn(created.observed, rule.field) ||
-        value === created.observed[rule.field]
+        value === created.observed[rule.field] ||
+        (rule.rule === "reference" && same(value, created.observed[rule.field]))
       );
     if (rule.rule === "clock")
       return (

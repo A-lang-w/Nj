@@ -435,6 +435,22 @@ export const FILED_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books", [listed(FILED_SEED), listed(ATLAS), listed(CHARTS)]],
 ];
 
+/** Two creates whose last answer can contradict the named shelf, followed only by a list omitting that field. */
+export const referencedCreateRows = (shelf: JsonValue): TimedCaptureRow[] => {
+  const last = { ...CHARTS, shelf };
+  const summary = ({ id, name }: Entity): Entity => ({ id: id!, name: name! });
+  return [
+    ...FILED_ROWS.filter(([, path]) => path.startsWith("/api/shelves")),
+    ["GET", "/api/books", [summary(FILED_SEED)]],
+    ["GET", "/api/books/1", FILED_SEED],
+    ["POST", "/api/books", ATLAS, 201, { name: "Coastal Atlas", shelf_id: 2 }],
+    ["GET", "/api/books/2", ATLAS],
+    ["GET", "/api/books", [FILED_SEED, ATLAS].map(summary)],
+    ["POST", "/api/books", last, 201, { name: "Harbour Charts", shelf_id: 1 }],
+    ["GET", "/api/books", [FILED_SEED, ATLAS, last].map(summary)],
+  ];
+};
+
 /** A book moved to another shelf by `shelf_id`, then renamed by a call that sends the shelf it already has. */
 export const REFILED_ROWS: readonly TimedCaptureRow[] = (() => {
   const moved = filed(1, "Tide Tables", 2, "2026-10-01T09:00:00Z");

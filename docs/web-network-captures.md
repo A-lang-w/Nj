@@ -761,9 +761,10 @@ and a field neither rules holds one value. Members either call sent are accepted
 required, and an echoed member a call left out takes the value that call stored
 (`body.defaults`). A clock rule widens to `trimmed` only when no held entity or
 earlier call showed that clock at a fixed width. A later create that disagrees
-leaves the plan as it was, and one that left out a member the plan fills (with a
-default, or a reference's absence) while showing that field otherwise is
-`unexplained-change`.
+leaves the plan as it was. A create whose observed reference differs from the
+entity the plan rebuilds, whether or not it sent the reference member, is
+`unexplained-change`. So is a create that left out an echoed member yet shows a
+value different from the learned default.
 A `composed` string is literal text and parts read from the fields other rules
 write: a field's value, its slug, or a clock's calendar digits
 (`YYYYMMDDhhmmss`, `YYYYMMDD`, `YYYY-MM-DD` or `YYYY/MM/DD`, in the clock's

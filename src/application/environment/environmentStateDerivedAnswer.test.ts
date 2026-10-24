@@ -7,6 +7,7 @@ import {
   TAG_ROWS,
   TAGGED_ROWS,
   optionallyFiledRows,
+  referencedCreateRows,
   shelvedRows,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
@@ -130,6 +131,21 @@ describe("served objects that repeat a named entity, and sorted arrays", () => {
         books.refusal("post_books", { body: { name: "Lost", shelf_id: 9 } }),
       ),
     ).toContain("names no entity of /api/shelves");
+  });
+
+  it("keeps a contradicted reference out of state writes without changing recording fallback", () => {
+    const books = servedFrom(
+      referencedCreateRows({ id: 1, name: "Different Hall", floor: "ground" }),
+    );
+    expect(books.state.writes.get("post_books")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+    const before = books.snapshot();
+    expect(
+      books.answer("post_books", { body: { name: "New Book", shelf_id: 1 } }),
+    ).toMatchObject({ state: { source: "recording" } });
+    expect(books.snapshot()).toBe(before);
   });
 
   it.each([true, false])(
