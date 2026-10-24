@@ -42,6 +42,19 @@ type DiscoveryStatus = {
   };
 };
 
+const unconfiguredHostTool = {
+  inspectAvailability: async () => ({
+    status: "unavailable" as const,
+    code: "not_configured" as const,
+    reason: "Host tools are outside the IDA discovery fixture.",
+    diagnostics: { source: "test_fixture" },
+  }),
+  close: async () => {},
+  execute: async (): Promise<never> => {
+    throw new Error("Host-tool execution is outside the IDA discovery fixture");
+  },
+};
+
 it("advertises attached IDA UI and network effects in SDK and session discovery", async () => {
   const { root, target } = await createIdaTarget();
   const mcp = createTestMcp();
@@ -61,7 +74,12 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     expect((await session.open(target.path)).ok).toBe(true);
     const server = createServer(
       { kind: "session", session },
-      { environment: { REA_LOG_LEVEL: "silent" } },
+      {
+        environment: { REA_LOG_LEVEL: "silent" },
+        androidAnalysis: unconfiguredHostTool,
+        adbDeviceAnalysis: unconfiguredHostTool,
+        apktoolAnalysis: unconfiguredHostTool,
+      },
     );
     const client = await mcp.connect(server);
     const tools = (await client.listTools()).tools;
