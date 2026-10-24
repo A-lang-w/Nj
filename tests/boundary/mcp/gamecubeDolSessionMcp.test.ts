@@ -1,13 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { buildGamecubeDol } from "../../../src/domain/gamecubeDol.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -16,25 +16,6 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-const connect = async () => {
-  const session = createTestBinarySession(createCacheProvider([]));
-  const server = createServer(
-    { kind: "session", session },
-    { logger: silentLogger },
-  );
-  const client = new Client({ name: "dol-binary-session-mcp", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return { client, tools: (await client.listTools()).tools };
-};
 
 const validateAdvertised = (
   tools: Awaited<ReturnType<Client["listTools"]>>["tools"],
@@ -63,7 +44,12 @@ it("opens a GameCube DOL and validates binary_session status against its output 
   const root = await createTestTempDirectory("rea-dol-session-mcp-");
   const path = join(root, "game.dol");
   await writeFile(path, buildGamecubeDol());
-  const { client, tools } = await connect();
+  const { client } = await createApplicationMcpHarness({
+    session: createTestBinarySession(createCacheProvider([])),
+    serverOptions: { logger: silentLogger },
+    clientIdentity: { name: "dol-binary-session-mcp", version: "1" },
+  });
+  const tools = (await client.listTools()).tools;
 
   const opened = await client.callTool({
     name: "open_binary",

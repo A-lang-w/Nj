@@ -30,7 +30,12 @@ import {
   parseDolHeaderIndependent,
 } from "../tests/conformance/ghidra/dol-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  createVerifierRun,
+  completeVerifierRun,
+  assertVerifierCleanupComplete,
+} from "./lib/verifier-run.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -117,103 +122,102 @@ async function runPass({ fixture, languageOverride, label, layout }) {
   };
   const report = { label, language_override: languageOverride ?? null };
   try {
-    await client.connect(transport);
-    const target = await call("open_binary", {
-      path: fixture.path,
-      provider_id: "ghidra",
-      format: "gamecube-dol",
-    });
-    assert.equal(target.architecture, "powerpc");
-    assert.equal(target.sha256, fixture.sha256);
-    const status = await call("binary_session");
-    assert.equal(status.open, true);
-    assert.equal(status.format, "gamecube-dol");
-    assert.equal(status.architecture, "powerpc");
-    assert.equal(status.analysis_provider_binding?.provider?.id, "ghidra");
-    const image = await call("inspect_native_load_image");
-    const expectedLanguage = languageOverride ?? STOCK_LANGUAGE;
-    assertDolLoadImage(image, {
-      sha256: fixture.sha256,
-      languageId: expectedLanguage,
-    });
-    report.language_id = image.language_id;
-    report.compiler_spec_id = image.compiler_spec_id;
-    report.attestation = image.status;
-    const procedures = await call("list_procedures");
-    const entry = assertDolEntryProcedure(procedures, layout.entry);
-    report.entry = entry;
-    if (languageOverride === undefined) {
-      assert.ok(
-        procedures.some((p) => BigInt(p.address) === layout.leaf),
-        "Leaf function missing from real Ghidra inventory",
-      );
-      const callees = await call("procedure_callees", {
-        procedure: entry.address,
+    await withVerifierCleanup(async () => {
+      await client.connect(transport);
+      const target = await call("open_binary", {
+        path: fixture.path,
+        provider_id: "ghidra",
+        format: "gamecube-dol",
       });
-      assert.ok(
-        callees.some((address) => BigInt(address) === layout.leaf),
-        "Direct call to leaf not recovered",
-      );
-      const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: entry.address }),
-      );
-      assert.ok(
-        dossier.pseudocode.includes("__start"),
-        "Decompiled entry lacks __start",
-      );
-      const global = await call("read_bytes", {
-        address: `0x${layout.global.toString(16)}`,
-        length: 4,
+      assert.equal(target.architecture, "powerpc");
+      assert.equal(target.sha256, fixture.sha256);
+      const status = await call("binary_session");
+      assert.equal(status.open, true);
+      assert.equal(status.format, "gamecube-dol");
+      assert.equal(status.architecture, "powerpc");
+      assert.equal(status.analysis_provider_binding?.provider?.id, "ghidra");
+      const image = await call("inspect_native_load_image");
+      const expectedLanguage = languageOverride ?? STOCK_LANGUAGE;
+      assertDolLoadImage(image, {
+        sha256: fixture.sha256,
+        languageId: expectedLanguage,
       });
-      assertDolGlobal(global.bytes_hex);
-      const marker = await call("read_bytes", {
-        address: `0x${layout.marker.toString(16)}`,
-        length: 29,
-      });
-      assert.equal(
-        marker.bytes_hex,
-        Buffer.from("rea-ppc-source-owned-fixture\0").toString("hex"),
-      );
-      const tail = await call("read_bytes", {
-        address: `0x${layout.tail.toString(16)}`,
-        length: 4,
-      });
-      assertDolTail(tail.bytes_hex);
-      const gap = await call("read_bytes", {
-        address: `0x${layout.bssGap.toString(16)}`,
-        length: 4,
-      });
-      report.bss_gap_read = {
-        returned_bytes: gap.returned_bytes,
-        bytes_hex: gap.bytes_hex,
-      };
-      assertDolGap(gap);
-      await call("close_binary");
-      report.checks = [
-        "independent DOL header and ELF/readelf agreement",
-        "section file bytes and BSS gap set",
-        "MCP open_binary format gamecube-dol and load-image attestation",
-        "__start at entry, direct call to leaf, decompile",
-        "data, tail, marker and BSS-gap bytes",
-      ];
-      report.procedures = procedures.length;
-    } else {
-      await call("close_binary");
-      report.checks = [
-        "MCP open with override",
-        "load-image attestation with overridden language",
-      ];
-    }
+      report.language_id = image.language_id;
+      report.compiler_spec_id = image.compiler_spec_id;
+      report.attestation = image.status;
+      const procedures = await call("list_procedures");
+      const entry = assertDolEntryProcedure(procedures, layout.entry);
+      report.entry = entry;
+      if (languageOverride === undefined) {
+        assert.ok(
+          procedures.some((p) => BigInt(p.address) === layout.leaf),
+          "Leaf function missing from real Ghidra inventory",
+        );
+        const callees = await call("procedure_callees", {
+          procedure: entry.address,
+        });
+        assert.ok(
+          callees.some((address) => BigInt(address) === layout.leaf),
+          "Direct call to leaf not recovered",
+        );
+        const dossier = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: entry.address,
+            detail: "complete",
+          }),
+        );
+        assert.ok(
+          dossier.pseudocode.includes("__start"),
+          "Decompiled entry lacks __start",
+        );
+        const global = await call("read_bytes", {
+          address: `0x${layout.global.toString(16)}`,
+          length: 4,
+        });
+        assertDolGlobal(global.bytes_hex);
+        const marker = await call("read_bytes", {
+          address: `0x${layout.marker.toString(16)}`,
+          length: 29,
+        });
+        assert.equal(
+          marker.bytes_hex,
+          Buffer.from("rea-ppc-source-owned-fixture\0").toString("hex"),
+        );
+        const tail = await call("read_bytes", {
+          address: `0x${layout.tail.toString(16)}`,
+          length: 4,
+        });
+        assertDolTail(tail.bytes_hex);
+        const gap = await call("read_bytes", {
+          address: `0x${layout.bssGap.toString(16)}`,
+          length: 4,
+        });
+        report.bss_gap_read = {
+          returned_bytes: gap.returned_bytes,
+          bytes_hex: gap.bytes_hex,
+        };
+        assertDolGap(gap);
+        await call("close_binary");
+        report.checks = [
+          "independent DOL header and ELF/readelf agreement",
+          "section file bytes and BSS gap set",
+          "MCP open_binary format gamecube-dol and load-image attestation",
+          "__start at entry, direct call to leaf, decompile",
+          "data, tail, marker and BSS-gap bytes",
+        ];
+        report.procedures = procedures.length;
+      } else {
+        await call("close_binary");
+        report.checks = [
+          "MCP open with override",
+          "load-image attestation with overridden language",
+        ];
+      }
+    }, [() => client.close(), () => transport.close()]);
   } catch (cause) {
     throw new Error(`GameCube DOL ${label} failed; MCP stderr: ${stderr}`, {
       cause,
     });
-  } finally {
-    try {
-      await client.close();
-    } finally {
-      await transport.close();
-    }
   }
   if (languageOverride === undefined) {
     // CLI path through the same stock lane, not a private injected provider.
@@ -228,6 +232,8 @@ async function runPass({ fixture, languageOverride, label, layout }) {
         "gamecube-dol",
         "--provider",
         "ghidra",
+        "--detail",
+        "complete",
         "--json",
       ],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
@@ -247,74 +253,71 @@ async function runPass({ fixture, languageOverride, label, layout }) {
 }
 
 const reports = [];
-let primaryFailure;
+let completed;
 try {
-  const fixture = await buildGameCubeDolFixture(workspace);
-  const elfBytes = await readFile(fixture.elf_path);
-  const dolBytes = await readFile(fixture.path);
-  const independentElf = await inspectReadelfDolSource(fixture.elf_path);
-  const dol = parseDolHeaderIndependent(dolBytes);
-  const shape = assertDolAgainstElf(
-    dol,
-    dolBytes,
-    elfBytes,
-    independentElf,
-    fixture,
-  );
-  const resolved = await parseBinaryTarget(fixture.path, {
-    formatHint: "gamecube-dol",
-  });
-  if (!resolved.ok) throw resolved.error;
-  assert.equal(resolved.value.format, "gamecube-dol");
-  assert.equal(resolved.value.sha256, fixture.sha256);
-  // Addresses come from the independent readelf symbol table, not from constants.
-  const symbols = independentElf.symbols;
-  const layout = {
-    entry: symbols.rea_ppc_entry,
-    leaf: symbols.rea_ppc_leaf,
-    global: symbols.rea_dol_global,
-    marker: symbols.rea_ppc_marker,
-    tail: symbols.rea_dol_tail,
-    bssGap: BigInt(shape.gaps[0].start),
-  };
-  assert.equal(BigInt(resolved.value.entryPoint), layout.entry);
-  reports.push({
-    fixture: "stock",
-    ...fixture,
-    dol_shape: shape,
-    readelf: independentElf.version,
-  });
-  reports.push(await runPass({ fixture, label: "stock language", layout }));
-  if (await languageInstalled(GEKKO_LANGUAGE)) {
-    reports.push(
-      await runPass({
-        fixture,
-        languageOverride: GEKKO_LANGUAGE,
-        label: "Gekko override",
-        layout,
-      }),
+  await withVerifierCleanup(async () => {
+    const fixture = await buildGameCubeDolFixture(workspace);
+    const elfBytes = await readFile(fixture.elf_path);
+    const dolBytes = await readFile(fixture.path);
+    const independentElf = await inspectReadelfDolSource(fixture.elf_path);
+    const dol = parseDolHeaderIndependent(dolBytes);
+    const shape = assertDolAgainstElf(
+      dol,
+      dolBytes,
+      elfBytes,
+      independentElf,
+      fixture,
     );
-  } else {
-    console.log(
-      `skipped: ${GEKKO_LANGUAGE} (not in the Ghidra installation catalog that REA admits); stock lane still verified`,
-    );
-  }
+    const resolved = await parseBinaryTarget(fixture.path, {
+      formatHint: "gamecube-dol",
+    });
+    if (!resolved.ok) throw resolved.error;
+    assert.equal(resolved.value.format, "gamecube-dol");
+    assert.equal(resolved.value.sha256, fixture.sha256);
+    // Addresses come from the independent readelf symbol table, not from constants.
+    const symbols = independentElf.symbols;
+    const layout = {
+      entry: symbols.rea_ppc_entry,
+      leaf: symbols.rea_ppc_leaf,
+      global: symbols.rea_dol_global,
+      marker: symbols.rea_ppc_marker,
+      tail: symbols.rea_dol_tail,
+      bssGap: BigInt(shape.gaps[0].start),
+    };
+    assert.equal(BigInt(resolved.value.entryPoint), layout.entry);
+    reports.push({
+      fixture: "stock",
+      ...fixture,
+      dol_shape: shape,
+      readelf: independentElf.version,
+    });
+    reports.push(await runPass({ fixture, label: "stock language", layout }));
+    if (await languageInstalled(GEKKO_LANGUAGE)) {
+      reports.push(
+        await runPass({
+          fixture,
+          languageOverride: GEKKO_LANGUAGE,
+          label: "Gekko override",
+          layout,
+        }),
+      );
+    } else {
+      console.log(
+        `skipped: ${GEKKO_LANGUAGE} (not in the Ghidra installation catalog that REA admits); stock lane still verified`,
+      );
+    }
+  }, [
+    async () => {
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
+    },
+  ]);
 } catch (cause) {
-  primaryFailure = cause;
-}
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
-  );
-if (primaryFailure !== undefined)
   throw new Error(
     `GameCube DOL verification failed; retained workspace: ${workspace}`,
-    { cause: primaryFailure },
+    { cause },
   );
+}
+assert.ok(completed, "Verifier completion was not observed");
 await rm(workspace, { recursive: true, force: true });
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));
