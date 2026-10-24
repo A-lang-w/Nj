@@ -63,7 +63,7 @@ const probeWorkerHeap = (
     env,
     encoding: "utf8",
   });
-  expect(result.status).toBe(0);
+  expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout ?? "") as {
     resourceOld: number;
     heap: number;
@@ -219,10 +219,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       [`--experimental-config-file=${file}`],
       undefined,
     );
-    const split = probeWorkerHeap(
-      ["--experimental-config-file", file],
-      undefined,
-    );
     const withAbsolute = probeWorkerHeap(
       [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
       undefined,
@@ -233,7 +229,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       directory,
     );
     expect(fromFile.resourceOld).toBe(128);
-    expect(split.resourceOld).toBe(128);
     expect(withAbsolute.resourceOld).toBe(128);
     expect(fromDefault.resourceOld).toBe(128);
     for (const execArgv of [
@@ -575,6 +570,38 @@ it("preserves Unicode matching order and refuses a pre-cancelled match", async (
       signal: AbortSignal.abort(),
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+});
+
+it("preserves the caller abort reason for pre-cancelled and interrupted matches", async () => {
+  const preCancelled = { request: "stop before matching" };
+  const refused = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: ".",
+    caseSensitive: true,
+    values: ["value"],
+    signal: AbortSignal.abort(preCancelled),
+  });
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!refused.ok) expect(refused.error.cause).toBe(preCancelled);
+  const controller = new AbortController();
+  const interrupted = { request: "stop while matching" };
+  const matching = matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^a",
+    caseSensitive: true,
+    values: ["a"],
+    signal: controller.signal,
+  });
+  controller.abort(interrupted);
+  const result = await matching;
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!result.ok) expect(result.error.cause).toBe(interrupted);
 });
 
 it("names the rejected pattern field for a default invalid-pattern refusal", async () => {

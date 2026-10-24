@@ -8,7 +8,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { jsonParts } from "../../domain/jsonSerialization.js";
+import { jsonByteLength } from "../../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
@@ -65,16 +65,9 @@ export interface StateSnapshot {
   };
 }
 
-/** The UTF-8 bytes a value's JSON takes, counted part by part so it is never one string. */
-const jsonBytes = (value: unknown): number => {
-  let bytes = 0;
-  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
-  return bytes;
-};
-
 /** The bytes JSON writes for these array items and the commas between them. */
 const itemsBytes = (items: readonly unknown[]): number =>
-  items.reduce<number>((sum, item) => sum + jsonBytes(item), 0) +
+  items.reduce<number>((sum, item) => sum + jsonByteLength(item), 0) +
   Math.max(0, items.length - 1);
 
 /** What `data/get` reports for some content of a state. */
@@ -94,7 +87,7 @@ const snapshotOf = (
 
 /** What `data/get` writes for a state as the Evidence holds it, in UTF-8 bytes, summed item by item. */
 export const initialStateBytes = (state: EnvironmentState): number =>
-  jsonBytes(snapshotOf(state, [], [])) +
+  jsonByteLength(snapshotOf(state, [], [])) +
   itemsBytes(state.entities) +
   itemsBytes(state.documents);
 
@@ -124,6 +117,8 @@ export class EnvironmentStateStore {
   readonly #sequences = new Map<string, number>();
   /** The entities the state held when it was last reset or loaded, whose values no sequence reuses either. */
   #started: readonly StateEntity[] = [];
+  /** The types a served create has added an entity to since the last reset or load. */
+  readonly #createdTypes = new Set<string>();
   /** Baseline and post-start spellings kept known after their entities are deleted. */
   readonly #knownCollections = new Map<string, Set<string>>();
   /** Logical UTF-8 key bytes plus a 64-byte allowance per collection and potential sequence-key record. */
@@ -137,7 +132,7 @@ export class EnvironmentStateStore {
     );
     this.#clockStart =
       state.writeClock === null ? 0 : Date.parse(state.writeClock);
-    this.#frameBytes = jsonBytes(snapshotOf(state, [], []));
+    this.#frameBytes = jsonByteLength(snapshotOf(state, [], []));
     this.#initialBytes = initialStateBytes(state);
     this.reset();
   }
@@ -217,6 +212,7 @@ export class EnvironmentStateStore {
     this.#writes = 0;
     this.#sequences.clear();
     this.#started = this.#content.entities;
+    this.#createdTypes.clear();
     this.#knownCollections.clear();
     this.#collectionHistoryBytes = 0;
     for (const [type, collections] of this.#typeCollections)
@@ -234,6 +230,11 @@ export class EnvironmentStateStore {
   }
 
   /** The entities of a type the state held when it was last reset or loaded. */
+  /** Whether a served create has added an entity of the type since the last reset or load. */
+  createdInto(type: string): boolean {
+    return this.#createdTypes.has(type);
+  }
+
   startedWith(type: string): readonly StateEntity[] {
     return this.#started.filter((entity) => entity.type === type);
   }
@@ -250,7 +251,7 @@ export class EnvironmentStateStore {
   ): Result<void, AnalysisResourceConstraintError> {
     const entities = this.#content.entities;
     const bytes = this.#grown(
-      jsonBytes(entity) + (entities.length > 0 ? 1 : 0),
+      jsonByteLength(entity) + (entities.length > 0 ? 1 : 0),
     );
     if (!bytes.ok) return bytes;
     const known = this.#knownCollections.get(entity.type);
@@ -301,6 +302,7 @@ export class EnvironmentStateStore {
       this.#rememberCollection(entity.type, entity.collection);
       this.#collectionHistoryBytes += newCollectionBytes;
     }
+    this.#createdTypes.add(entity.type);
     return ok(undefined);
   }
 
@@ -309,7 +311,7 @@ export class EnvironmentStateStore {
     const key = compositeKey([entity.type, entity.collection, entity.id]);
     const held = this.#entities.get(key);
     if (held === undefined) return ok(undefined);
-    const bytes = this.#grown(jsonBytes(entity) - jsonBytes(held));
+    const bytes = this.#grown(jsonByteLength(entity) - jsonByteLength(held));
     if (!bytes.ok) return bytes;
     this.#install(
       {
@@ -333,7 +335,7 @@ export class EnvironmentStateStore {
     );
     this.#install(
       { ...this.#content, entities },
-      this.#bytes - jsonBytes(held) - (entities.length > 0 ? 1 : 0),
+      this.#bytes - jsonByteLength(held) - (entities.length > 0 ? 1 : 0),
     );
   }
 
@@ -345,7 +347,7 @@ export class EnvironmentStateStore {
     const held = this.#documents.get(tool);
     if (held === undefined) return ok(undefined);
     const written = { tool: held.tool, path: held.path, value };
-    const bytes = this.#grown(jsonBytes(written) - jsonBytes(held));
+    const bytes = this.#grown(jsonByteLength(written) - jsonByteLength(held));
     if (!bytes.ok) return bytes;
     this.#install(
       {

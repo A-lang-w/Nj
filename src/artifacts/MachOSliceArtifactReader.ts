@@ -9,11 +9,14 @@ import {
   type NativeCommandRunner,
 } from "../native/CommandRunner.js";
 import {
-  parseLipoOutput,
+  parseLipoOutputResult,
   type LipoArchitecture,
 } from "../native/parsers/lipo.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
+  machoArchitectureFamily,
+  machoCpuSubtypeBase,
+} from "../domain/apple/machoCpuIdentity.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
@@ -115,7 +118,15 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     };
     await this.#verifySource(source);
     const fileSize = source.initial.size;
-    const { architectures } = parseLipoOutput(captured.value.stdout, this.path);
+    const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
+    if (!parsed.ok)
+      throw new ArtifactReaderFailure(
+        "format",
+        `lipo did not produce readable architecture records: ${parsed.error.message}`,
+        { cause: parsed.error },
+      );
+    const lipo = parsed.value;
+    const { architectures } = lipo;
     const structural = await readStructuralSlices(source.handle, fileSize);
     await this.#verifySource(source);
     if (structural.status === "malformed")
@@ -135,26 +146,70 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         "unavailable",
         `Mach-O structural slice index is unsupported: ${structural.reason}`,
       );
+    const hiddenArchitectures = architectures.filter(({ hidden }) => hidden);
+    const visibleArchitectures = architectures.filter(({ hidden }) => !hidden);
+    if (
+      lipo.hiddenArchitectureCount !== null &&
+      lipo.hiddenArchitectureCount !== hiddenArchitectures.length
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "lipo hidden architecture count disagrees with its architecture rows",
+      );
+    if (
+      lipo.declaredArchitectureCount !== null &&
+      lipo.declaredArchitectureCount !== visibleArchitectures.length
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "lipo declared architecture count disagrees with its visible rows",
+      );
+    if (
+      (hiddenArchitectures.length > 0 ||
+        (lipo.hiddenArchitectureCount ?? 0) > 0) &&
+      structural.status !== "parsed"
+    )
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Apple hidden ARM64 slice could not be verified against the FAT table",
+      );
     const slices = structural.status === "parsed" ? structural.slices : null;
+    const hiddenSlices =
+      structural.status === "parsed" ? (structural.hiddenSlices ?? []) : [];
     const matchingSlices = new Map<LipoArchitecture, MachoSlice>();
     if (slices !== null) {
-      if (slices.length !== architectures.length)
+      if (
+        slices.length !== visibleArchitectures.length ||
+        hiddenSlices.length !== hiddenArchitectures.length ||
+        (hiddenArchitectures.length > 0 &&
+          (lipo.declaredArchitectureCount === null ||
+            lipo.hiddenArchitectureCount === null)) ||
+        (lipo.declaredArchitectureCount !== null &&
+          lipo.declaredArchitectureCount !== slices.length) ||
+        (lipo.hiddenArchitectureCount !== null &&
+          lipo.hiddenArchitectureCount !== hiddenSlices.length)
+      )
         throw new ArtifactReaderFailure(
           "integrity",
-          "lipo architecture count disagrees with the Mach-O FAT table",
+          "lipo declared and hidden architecture counts disagree with the Mach-O FAT table",
         );
-      const unmatched = [...slices];
-      for (const reported of architectures) {
-        const match = unmatched.findIndex((observed) =>
-          lipoMatchesSlice(reported, observed, slices.length === 1),
-        );
-        if (match < 0)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `lipo slice metadata disagrees with the Mach-O FAT table: ${reported.name} (cputype=${reported.cpu_type ?? "unknown"}, cpusubtype=${reported.cpu_subtype ?? "unknown"}, offset=${reported.file_offset ?? "unknown"}, size=${reported.size ?? "unknown"}, alignment=${reported.alignment ?? "unknown"})`,
+      for (const [reportedRows, observedRows] of [
+        [visibleArchitectures, slices],
+        [hiddenArchitectures, hiddenSlices],
+      ] as const) {
+        const unmatched = [...observedRows];
+        for (const reported of reportedRows) {
+          const match = unmatched.findIndex((observed) =>
+            lipoMatchesSlice(reported, observed, observedRows.length === 1),
           );
-        const [observed] = unmatched.splice(match, 1);
-        if (observed !== undefined) matchingSlices.set(reported, observed);
+          if (match < 0)
+            throw new ArtifactReaderFailure(
+              "integrity",
+              `lipo slice metadata disagrees with the Mach-O FAT table: ${reported.name} (cputype=${reported.cpu_type ?? "unknown"}, cpusubtype=${reported.cpu_subtype ?? "unknown"}, offset=${reported.file_offset ?? "unknown"}, size=${reported.size ?? "unknown"}, alignment=${reported.alignment ?? "unknown"})`,
+            );
+          const [observed] = unmatched.splice(match, 1);
+          if (observed !== undefined) matchingSlices.set(reported, observed);
+        }
       }
     }
     for (const architecture of architectures) {
@@ -578,10 +633,10 @@ const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
       ARM_SUBTYPES[reported] ===
       machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
     );
-  // Newer lipo names pointer-auth ABI variants arm64e.<variant>. Their
-  // physical type/subtype, range and alignment are still compared separately.
+  if (reported === machoArchitectureFamily(observed.architecture)) return true;
+  // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (
-    observed.architecture === "arm64e" &&
+    machoArchitectureFamily(observed.architecture) === "arm64e" &&
     /^arm64e\.[A-Za-z0-9_]+$/u.test(reported)
   );
 };

@@ -42,7 +42,14 @@ export class FirmwareAnalysisService {
         new AnalysisInputError(
           operation,
           { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, { operation, input }),
+          projectInputIssues(parsed.error.issues, { operation, input }).map(
+            (issue) => ({
+              ...issue,
+              // `input` is the internal discriminated request envelope.
+              path:
+                issue.path[0] === "input" ? issue.path.slice(1) : issue.path,
+            }),
+          ),
         ),
       );
     const executed = await this.provider.execute(parsed.data, options);
