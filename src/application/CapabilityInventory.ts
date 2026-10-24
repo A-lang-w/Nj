@@ -27,6 +27,7 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
+  toolSessionEffects,
   type ToolEffects,
 } from "../contracts/toolEffects.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
@@ -277,7 +278,7 @@ export const buildCapabilityInventory = (
     const clientBlocked = clientRequirements.missing_required.length > 0;
     const effects = composedEffects(
       contract.name,
-      contract.effects,
+      toolSessionEffects(contract.name),
       status.capabilities,
     );
     const annotations = annotationsFromEffects(effects);
@@ -995,6 +996,23 @@ const availabilityFailurePriority = (
   }
 };
 
+/** Include only operations reachable through the ordered requirement groups. */
+const reachableRequirements = (
+  requirements: CompositionRequirements,
+  descriptors: ReadonlyMap<string, ProviderDescriptor>,
+): readonly string[] => {
+  const reached: string[] = [];
+  for (const group of requirements) {
+    const operations = typeof group === "string" ? [group] : group;
+    const available = operations.filter(
+      (operation) => descriptors.get(operation)?.available === true,
+    );
+    reached.push(...available);
+    if (available.length === 0) break;
+  }
+  return reached;
+};
+
 /** Use the same composition requirements as availability when exposing provider effects. */
 const composedEffects = (
   name: string,
@@ -1005,18 +1023,18 @@ const composedEffects = (
     name === "get_navigation_context"
       ? { modes: NAVIGATION_CONTEXT_MODES }
       : ENHANCED_REQUIREMENTS.get(name);
-  const requirements: CompositionRequirements =
+  const byOperation = new Map(
+    descriptors.map((descriptor) => [descriptor.operation, descriptor]),
+  );
+  const reachable =
     composition === undefined
       ? []
       : "modes" in composition
-        ? composition.modes.flatMap(({ requirements }) => requirements)
-        : composition;
-  const operations = new Set<string>([
-    name,
-    ...requirements.flatMap((group) =>
-      typeof group === "string" ? [group] : group,
-    ),
-  ]);
+        ? composition.modes.flatMap(({ requirements }) =>
+            reachableRequirements(requirements, byOperation),
+          )
+        : reachableRequirements(composition, byOperation);
+  const operations = new Set<string>([name, ...reachable]);
   const effects = { ...base };
   for (const descriptor of descriptors) {
     if (!operations.has(descriptor.operation)) continue;
