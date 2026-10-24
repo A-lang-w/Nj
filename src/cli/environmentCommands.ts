@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EnvironmentExportResult } from "../application/environment/environmentExport.js";
 import type { EnvironmentSource } from "../application/environment/environmentSource.js";
@@ -14,7 +16,8 @@ import {
   mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
   AnalysisCancelledError,
@@ -214,16 +217,10 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof StreamableHttpListenError)) throw cause;
     return cliError(transportError(endpoint.value, cause));
   }
-  let failure: StreamableHttpListenError | undefined;
-  try {
-    failure = await Promise.race([untilAborted(signal), listenerFailed]);
-  } finally {
-    await served.close();
-  }
-  if (failure !== undefined)
-    return cliError(transportError(endpoint.value, failure));
-  return {
-    status: "stopped",
+  const failure = await Promise.race([untilAborted(signal), listenerFailed]);
+  const listenerError =
+    failure === undefined ? undefined : transportError(endpoint.value, failure);
+  const observation = {
     url: served.url,
     environment: served.card.name,
     tools: served.card.capabilities.tools.length,
@@ -231,6 +228,25 @@ const serveEnvironmentCommand = async (
     manifest_evidence_id: source.manifestEvidenceId,
     state: report,
   };
+  try {
+    await served.close();
+  } catch (cause: unknown) {
+    if (!(cause instanceof AnalysisError)) throw cause;
+    if (listenerError !== undefined)
+      return cliError(
+        analysisErrorWithCleanupFailure(
+          listenerError,
+          cause,
+          CLI_COMMANDS.environmentServe,
+        ).bindCleanupDependencies([cause]),
+      );
+    cause.retainDiagnostics({
+      shutdown_observation: { status: "shutdown_requested", ...observation },
+    });
+    return cliError(cause);
+  }
+  if (listenerError !== undefined) return cliError(listenerError);
+  return { status: "stopped", ...observation };
 };
 
 interface ExportArguments {
@@ -300,6 +316,77 @@ const evidenceOption = z
     "Parent capture Evidence JSON path (inspect-web-network-capture or capture-browser-scenario output) the manifest cites",
   );
 
+interface CompareArguments {
+  readonly manifest: string;
+  readonly evidence: string;
+  readonly probes: readonly string[];
+}
+
+/** Read the environment and every probe, then compare; a refusal is the command's output. */
+const compareEnvironmentCommand = async (
+  input: CompareArguments,
+): Promise<JsonValue> => {
+  const read = (path: string) =>
+    parseCliJsonInput(path, CLI_COMMANDS.environmentCompare, undefined, {
+      snapshot: true,
+    });
+  const manifest = await read(input.manifest);
+  if (!manifest.ok) return manifest.error;
+  const evidence = await read(input.evidence);
+  if (!evidence.ok) return evidence.error;
+  const probes = [];
+  for (const path of input.probes) {
+    const probe = await read(path);
+    if (!probe.ok) return probe.error;
+    probes.push({ label: basename(path), value: probe.value });
+  }
+  const { loadEnvironmentSource } =
+    await import("../application/environment/environmentSource.js");
+  const source = loadEnvironmentSource(
+    manifest.value,
+    evidence.value,
+    CLI_COMMANDS.environmentCompare,
+  );
+  if (!source.ok) return cliError(source.error);
+  const { compareEnvironment } =
+    await import("../application/environment/environmentCompare.js");
+  const report = compareEnvironment({
+    source: source.value,
+    captureValue: evidence.value,
+    probes,
+    operation: CLI_COMMANDS.environmentCompare,
+  });
+  return report.ok
+    ? (report.value as unknown as JsonValue)
+    : cliError(report.error);
+};
+
+/** Register the comparison of an environment with probe captures of its application. */
+const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
+  cli.command(CLI_COMMANDS.environmentCompare, {
+    description:
+      "Compare an environment with probe captures of the application it was captured from: each probe is one call sequence recorded against a freshly reset application, answered by the environment from a reset state, with agreement reported per step, tool and probe",
+    args: z.object({ manifest: manifestArgument }),
+    options: z.object({
+      evidence: evidenceOption,
+      probe: z
+        .array(z.string())
+        .min(1)
+        .describe(
+          "Probe capture Evidence JSON path (inspect-web-network-capture or capture-browser-scenario output) of one call sequence made against a freshly reset application; repeat once per sequence",
+        ),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.environmentCompare, () =>
+        compareEnvironmentCommand({
+          manifest: args.manifest,
+          evidence: options.evidence,
+          probes: options.probe,
+        }),
+      ),
+  });
+};
+
 /** Register the one-shot bundle export command. */
 const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
   cli.command(CLI_COMMANDS.environmentExport, {
@@ -307,16 +394,13 @@ const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
       "Export an environment manifest and its capture Evidence as an agent environment bundle folder the agentenv framework runs with agent-env run",
     args: z.object({
       manifest: manifestArgument,
-      directory: z
-        .string()
-        .describe(
-          "Bundle directory to create; must be absent or empty, nothing is overwritten",
-        ),
+      directory: localPathStringSchema.describe(
+        "Bundle directory to create; must be absent or empty, nothing is overwritten",
+      ),
     }),
     options: z.object({
       evidence: evidenceOption,
-      packageTarball: z
-        .string()
+      packageTarball: localPathStringSchema
         .optional()
         .describe(
           "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",
@@ -348,9 +432,10 @@ export const registerEnvironmentCommands = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   registerExportCommand(cli, logger);
+  registerCompareCommand(cli, logger);
   cli.command(CLI_COMMANDS.environmentServe, {
     description:
-      "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
+      "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools, and write tools whose effect the capture confirmed, answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
     args: z.object({ manifest: manifestArgument }),
     options: z.object({
       evidence: evidenceOption,

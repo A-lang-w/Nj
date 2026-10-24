@@ -1,3 +1,4 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { javaScriptSemanticNodeId } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
@@ -28,6 +29,8 @@ export interface SemanticFlowProjectionContext {
   readonly callableNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly callSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly returnSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
+  readonly readNodes: JavaScriptSemanticGraphNode[];
+  readonly writeNodes: JavaScriptSemanticGraphNode[];
   readonly referenceNodes: readonly JavaScriptSemanticGraphNode[];
   readonly referenceNodesWithin: (
     range: JavaScriptSourceRange,
@@ -221,9 +224,6 @@ interface ObjectReadIndex {
 
 const objectReadIndexes = new WeakMap<JavaScriptSemanticIr, ObjectReadIndex>();
 
-const objectReadRangeKey = (location: JavaScriptSourceRange): string =>
-  `${String(location.start.line)}:${String(location.start.column)}:${String(location.end.line)}:${String(location.end.column)}`;
-
 /**
  * The object projection owns a member read's occurrence. Index it once per
  * file so return and argument flow can connect that expression without
@@ -250,7 +250,7 @@ const objectReadOccurrences = (
       }),
     );
     if (node !== undefined)
-      nodes.set(objectReadRangeKey(operation.location), node);
+      nodes.set(javascriptSourceRangeKey(operation.location), node);
   }
   objectReadIndexes.set(context.ir, { state: context.state, nodes });
   return nodes;
@@ -263,7 +263,7 @@ export const semanticObjectReadOccurrence = (
 ): JavaScriptSemanticGraphNode | undefined =>
   location === null
     ? undefined
-    : objectReadOccurrences(context).get(objectReadRangeKey(location));
+    : objectReadOccurrences(context).get(javascriptSourceRangeKey(location));
 
 /** Link direct return expressions to their retained semantic references. */
 export const projectSemanticReturnValues = (

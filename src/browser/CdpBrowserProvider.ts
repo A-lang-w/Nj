@@ -13,6 +13,7 @@ import {
   type WebPageInspection,
 } from "../domain/browserObservationSchemas.js";
 import { IsolatedWebBundleAnalyzer } from "./IsolatedWebBundleAnalyzer.js";
+import { sourceMapsWithCaptureExclusions } from "../domain/webSourceMapCoverage.js";
 import type {
   AnalyzeWebBundleInput,
   WebBundleAnalysis,
@@ -151,6 +152,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           targets: selected.allowed,
           excluded: selected.excluded,
           limitations: [
+            ...(discovery.limitations ?? []),
             input.allowed_origins.length === 0
               ? "All page targets with supported HTTP(S) URLs are listed."
               : "Only page targets whose current URL matches an explicitly requested exact origin are listed.",
@@ -194,16 +196,19 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     try {
       captured = await this.#capture(input, options, "analyze_web_bundle");
       const sourceMaps = input.fetch_source_maps
-        ? await fetchWebSourceMaps(
-            captured.sourceMapRequests,
-            {
-              ...input,
-              allowed_origins:
-                input.allowed_origins.length > 0
-                  ? input.allowed_origins
-                  : [captured.inspection.target.origin],
-            },
-            options.signal,
+        ? sourceMapsWithCaptureExclusions(
+            await fetchWebSourceMaps(
+              captured.sourceMapRequests,
+              {
+                ...input,
+                allowed_origins:
+                  input.allowed_origins.length > 0
+                    ? input.allowed_origins
+                    : [captured.inspection.target.origin],
+              },
+              options.signal,
+            ),
+            captured.inspection.completeness.excluded,
           )
         : undefined;
       return await this.#bundleAnalyzer.analyze(
@@ -386,8 +391,16 @@ const withTargetSession = async <
   let outcome: Result<Output, unknown>;
   let cleanupFailure: AnalysisError | undefined;
   try {
-    const target = authorizeTarget(endpoint.discovery, input);
-    const scopedInput = scopeToTargetOrigin(input, target);
+    const { target, allowedOrigins } = authorizeCdpTarget(
+      endpoint.discovery,
+      input,
+      operation,
+    );
+    // The authorization owner already derived the target origin scope.
+    const scopedInput =
+      input.allowed_origins.length > 0
+        ? input
+        : { ...input, allowed_origins: [...allowedOrigins] };
     targetSession =
       endpoint.connection === undefined
         ? await openCdpTargetSession(
@@ -548,31 +561,13 @@ const selectTargets = (
   };
 };
 
-const authorizeTarget = (
-  discovery: CdpEndpointDiscovery,
-  input: Pick<InspectWebPageInput, "target_id" | "allowed_origins">,
-): CdpEndpointTarget => {
-  return authorizeCdpTarget(discovery, input, "inspect_web_page").target;
-};
-
-const scopeToTargetOrigin = <T extends { allowed_origins: readonly string[] }>(
-  input: T,
-  target: CdpEndpointTarget,
-): T => {
-  if (input.allowed_origins.length > 0) return input;
-  const origin = sanitizeBrowserUrl(target.url).origin;
-  if (origin === null)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  return { ...input, allowed_origins: [origin] };
-};
-
 const providerError = (
   cause: unknown,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): AnalysisError =>
-  cause instanceof BrowserObservationError && cause.operation !== operation
-    ? new BrowserObservationError(operation, cause.reason, { cause })
+  cause instanceof BrowserObservationError
+    ? cause.forOperation(operation)
     : cause instanceof AnalysisError
       ? cause
       : signal?.aborted === true
