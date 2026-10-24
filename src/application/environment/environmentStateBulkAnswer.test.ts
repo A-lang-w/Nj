@@ -110,6 +110,48 @@ describe("bulk response records and rendering", () => {
     });
   });
 
+  it("withholds delete responses whose values differ from the held entities", () => {
+    const held = [FIRST_BOOK, SECOND_BOOK].map((entry) => ({
+      ...entry,
+      deleted: false,
+    }));
+    const books = servedFrom([
+      ["GET", "/api/books", held],
+      ["GET", "/api/books/1", held[0]!],
+      ["GET", "/api/books/2", held[1]!],
+      [
+        "DELETE",
+        "/api/books",
+        held.map((entry) => ({ ...entry, deleted: true })),
+        200,
+        { ids: [1, 2] },
+      ],
+      ...deletedReads,
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: false,
+      reason: "body-unusable",
+    });
+  });
+
+  it("withholds an unparsed acknowledgement instead of treating unknown contents as absent", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "DELETE",
+        "/api/books",
+        "unparsed acknowledgement",
+        200,
+        { ids: [1, 2] },
+      ],
+      ...deletedReads,
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: false,
+      reason: "body-unusable",
+    });
+  });
+
   it("serves a recorded acknowledgement that names and counts no targets", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,

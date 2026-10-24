@@ -15,6 +15,7 @@ import {
 } from "../../fixtures/environmentServe.js";
 import {
   BOOK_NOT_FOUND,
+  BOTH_BOOKS_RENAMED_ROWS,
   BOOK_ROWS,
   book,
   bookClock,
@@ -316,3 +317,95 @@ describe("rea environment-serve write tools", () => {
     HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
+
+processTest(
+  "serves multi-row bulk responses and refuses absent targets atomically through the SDK",
+  async ({ processes }) => {
+    const rows: TimedCaptureRow[] = [
+      ...BOTH_BOOKS_RENAMED_ROWS,
+      ["DELETE", "/api/books", [{ id: 1 }, { id: 2 }], 200, { ids: [1, 2] }],
+      ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", []],
+    ];
+    const root = await createTestTempDirectory("rea-write-bulk-sdk-");
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentStateServeFixture(timedCaptureEvidence(rows)),
+    );
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = new Client({
+      name: "bulk-response-verification",
+      version: "1",
+    });
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      const { tools } = await client.listTools();
+      const update = tools.find((tool) => tool.name === "patch_books")!;
+      const deletion = tools.find((tool) => tool.name === "delete_books")!;
+      const changed = await client.callTool(
+        {
+          name: update.name,
+          arguments: { body: { ids: [2], name: "Subset" } },
+        },
+        { toolDefinition: update },
+      );
+      expect(changed.isError).toBeFalsy();
+      expect(changed.structuredContent).toMatchObject({
+        body: [{ id: 2, name: "Subset", created_at: SECOND_BOOK.created_at }],
+      });
+      const refused = await client.callTool(
+        {
+          name: update.name,
+          arguments: { body: { ids: [2, 999], name: "Refused" } },
+        },
+        { toolDefinition: update },
+      );
+      expect(refused.isError).toBe(true);
+      const unchanged = await client.callTool({
+        name: "get_books_by_id",
+        arguments: { id: "2" },
+      });
+      expect(unchanged.structuredContent).toMatchObject({
+        body: { id: 2, name: "Subset" },
+      });
+      const both = await client.callTool(
+        {
+          name: update.name,
+          arguments: { body: { ids: [1, 2], name: "Both" } },
+        },
+        { toolDefinition: update },
+      );
+      expect(both.isError).toBeFalsy();
+      expect(both.structuredContent).toMatchObject({
+        body: [
+          { id: 1, name: "Both", created_at: FIRST_BOOK.created_at },
+          { id: 2, name: "Both", created_at: SECOND_BOOK.created_at },
+        ],
+      });
+      const deleted = await client.callTool(
+        {
+          name: deletion.name,
+          arguments: { body: { ids: [2, 1] } },
+        },
+        { toolDefinition: deletion },
+      );
+      expect(deleted.isError).toBeFalsy();
+      expect(deleted.structuredContent).toMatchObject({
+        body: [{ id: 2 }, { id: 1 }],
+      });
+      const empty = await client.callTool({ name: "get_books", arguments: {} });
+      expect(empty.structuredContent).toMatchObject({ body: [] });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);

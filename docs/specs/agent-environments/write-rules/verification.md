@@ -142,3 +142,28 @@ and observed no OOM or limit events. Payload-exit counters were verified;
 final whole-scope counters were unavailable. Downloads, builds and runtime
 identity preparation are excluded from task measurements. The current
 four-capture verification does not requalify the earlier 50-capture totals.
+
+### Bulk-response follow-up qualification
+
+The follow-up at `f4bc513dd` classifies every returned bulk element and checks
+all recorded calls with the shared serving renderer. Nested parsed-body leases
+retain their enclosing scratch charge. Literal JSON IDs never pass through a
+synthetic URL. The author's subsequent bulk regressions and measurement note
+were retained when integrating `a319ba1af`; their historical census does not
+measure this follow-up.
+
+A fresh four-capture producer sweep and real CLI/MCP replay retained every
+previously matching read (109/114 initial, 302/358 session). NocoDB, Ghost and
+Metabase plans and complete SDK calls equal `9942863b2`. Mailpit's text/plain
+`ok` deletion acknowledgement is not parsed by the state JSON owner, so its
+contents remain unknown and its write tool is now withheld as `body-unusable`.
+The prior session already refused this deletion for a missing target; no
+previously applied mutation was lost. Plain-text acknowledgement support remains
+unverified rather than treating unknown contents as empty. The three other
+captures retain the same eight applied mutations.
+
+This qualification-only sweep took 5.857 s wall / 5.413 s CPU / 329.9 MiB peak;
+the complete SDK replay took 23.264 s / 22.298 s / 474.0 MiB. These single
+observations are not pooled with the earlier performance cohort. Payload cleanup
+and payload-exit resource counters were verified, with no OOM/limit events;
+final whole-scope counters and actual model token usage remain unmeasured.
