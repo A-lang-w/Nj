@@ -680,6 +680,31 @@ export async function verifyIndirectBranches(client) {
     throw new Error(
       `Computed branch at ${branchAddress} did not retain its decompiler warning evidence: ${JSON.stringify(unresolved)}`,
     );
+  // A caller can store the warning text as an entry comment. The comment must
+  // not hide the actual decompiler-generated warning or its Evidence.
+  const warningDetail = unresolved.evidence.find(
+    (evidence) => evidence.source === "ghidra-decompiler-warning",
+  )?.detail;
+  const warningText = warningDetail?.match(/reported "([^"]+)"/u)?.[1];
+  if (!warningText)
+    throw new Error(`Missing original Ghidra warning text: ${warningDetail}`);
+  const annotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: warningText,
+  });
+  const retained = annotated.dossier.native_api?.unresolved_indirect_branches?.find(
+    (branch) => branch.branch_address === branchAddress,
+  );
+  if (
+    annotated.annotations.comment !== warningText ||
+    retained?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !retained.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `Stored comment hid genuine jump-table warning at ${branchAddress}: ${JSON.stringify(retained)}`,
+    );
   // The tail call's classification depends on Ghidra's own heuristics, so it
   // is recorded rather than asserted.
   const tailCall = requireProcedure(names, "rea_indirect_tail_call");
