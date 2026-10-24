@@ -66,6 +66,26 @@ describe("strings a create composes from other fields", () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    ["before", (url: string) => `𐐀${url}`],
+    ["after", (url: string) => `${url}𐐀`],
+  ])(
+    "composes nothing from a value an astral letter joins %s it",
+    (_, label) => {
+      const labelled = (entity: JsonObject): JsonObject => ({
+        ...entity,
+        label: label(String(entity["url"])),
+      });
+      expect(
+        createdComposer(
+          labelled(CREATED),
+          [ECHO_URL, CLOCK],
+          [labelled(SEED)],
+        )("label"),
+      ).toBeUndefined();
+    },
+  );
+
   it("takes two clocks a create stamps alike as one source, but not two members that send the same text", () => {
     const modified: FieldRule = { ...CLOCK, field: "modified" };
     expect(

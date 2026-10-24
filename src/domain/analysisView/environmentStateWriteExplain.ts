@@ -30,7 +30,10 @@ import {
 } from "./environmentStateWriteValues.js";
 import { createdComposer } from "./environmentStateWriteComposed.js";
 import { referenceRule } from "./environmentStateWriteReferences.js";
-import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
+import {
+  fittedClockFormat,
+  showsFixedWidth,
+} from "./environmentStateWriteClockFormats.js";
 import {
   COPY_MIN_LENGTH,
   instantMembers,
@@ -166,7 +169,7 @@ const requestRule = (
     : { field, rule: "slug", from: member };
 };
 
-/** A clock's format, trimmed when the type's values of the field show its fraction trimmed. */
+/** A clock's format, trimmed when the type's values of the field show its fraction trimmed and none shows a fixed width. */
 const learnedClockFormat = (
   format: ClockFormat,
   field: string,
@@ -178,24 +181,27 @@ const learnedClockFormat = (
     const fitted = fittedClockFormat(learned, member[field], value);
     if (fitted?.kind === "iso" && fitted.trimmed === true) learned = fitted;
   }
-  return learned;
+  return type.some((member) => showsFixedWidth(format, member[field]))
+    ? format
+    : learned;
 };
 
-/** Whether a created field holds a large integer no entity of its type holds, where each holds a distinct one of the same length and kind, as a time-based id does. */
-const generatedInteger = (
+/** A created large integer's proof, as a time-based id's: no entity of its type holds it and each holds a distinct one of the same length and kind; linked when another field holds it too, which seeding cannot keep. */
+export const createdInteger = (
   field: string,
-  value: JsonValue,
+  entity: JsonObject,
   type: readonly JsonObject[],
-): boolean => {
+): "independent" | "linked" | undefined => {
+  const value = entity[field];
   const digits = generatedIntegerDigits(value);
   if (
     digits === undefined ||
     readClock(value) !== undefined ||
     type.length === 0
   )
-    return false;
+    return undefined;
   const held = new Set([digits]);
-  return type.every((member) => {
+  const distinct = type.every((member) => {
     const other = generatedIntegerDigits(member[field]);
     if (
       other === undefined ||
@@ -207,6 +213,17 @@ const generatedInteger = (
     held.add(other);
     return true;
   });
+  if (!distinct) return undefined;
+  return Object.entries(entity).some(
+    ([other, kept]) =>
+      other !== field &&
+      (kept === value ||
+        (typeof kept === "object" &&
+          kept !== null &&
+          containsDelimited(kept, digits))),
+  )
+    ? "linked"
+    : "independent";
 };
 
 /** The rule a created field's generated value follows, if it follows one. */
@@ -234,7 +251,7 @@ const generatedRule = (
     (isUuid(value) &&
       evidence.type.length > 0 &&
       evidence.type.every((member) => member[field] !== value)) ||
-    generatedInteger(field, value, evidence.type)
+    createdInteger(field, evidence.entity, evidence.type) === "independent"
   )
     return { field, rule: "unique" };
   if (createdToken(field, evidence.entity, evidence.type) === "independent")

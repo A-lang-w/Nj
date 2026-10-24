@@ -3,7 +3,12 @@ import { same, scalarText, type JsonObject } from "./environmentStateRules.js";
 import { COPY_MIN_LENGTH } from "./environmentStateWriteCopies.js";
 import { GENERATED } from "./environmentStateWriteGenerated.js";
 import type { ComposedPart, FieldRule } from "./environmentStateWriteRules.js";
-import { readClock, slugOf } from "./environmentStateWriteValues.js";
+import {
+  joinsAfter,
+  joinsBefore,
+  readClock,
+  slugOf,
+} from "./environmentStateWriteValues.js";
 import {
   CLOCK_PATTERNS,
   clockDigits,
@@ -80,12 +85,6 @@ const candidatesOf = (
   return candidates;
 };
 
-/** A letter or digit, which joins a token to the text around it. */
-const WORD = /[\p{L}\p{N}]/u;
-
-const joins = (character: string | undefined): boolean =>
-  character !== undefined && WORD.test(character);
-
 /** Candidates by their text, and the lengths those texts take, longest first: looked up per position rather than searched. */
 interface CandidateIndex {
   readonly byToken: ReadonlyMap<string, readonly Candidate[]>;
@@ -109,9 +108,9 @@ const matchesAt = (
   at: number,
   index: CandidateIndex,
 ): readonly Candidate[] => {
-  if (joins(text[at - 1])) return [];
+  if (joinsBefore(text, at)) return [];
   for (const length of index.lengths) {
-    if (at + length > text.length || joins(text[at + length])) continue;
+    if (at + length > text.length || joinsAfter(text, at + length)) continue;
     const matches = index.byToken.get(text.slice(at, at + length));
     if (matches !== undefined) return matches;
   }

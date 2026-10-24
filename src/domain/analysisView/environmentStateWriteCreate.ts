@@ -48,6 +48,7 @@ import {
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
 import {
+  createdInteger,
   explainCreate,
   insertCandidates,
   insertIndex,
@@ -137,7 +138,16 @@ const createdObservation = (
 const fieldsOf = (entities: readonly StateEntity[]): JsonObject[] =>
   entities.map((entity) => entity.fields);
 
-/** Whether a created field no rule explains holds a token another field links to, which serving cannot keep consistent. */
+/** Whether a created field holds a generated token or integer that another field holds too, which no rule rebuilds. */
+const linkedGenerated = (
+  field: string,
+  entity: JsonObject,
+  type: readonly JsonObject[],
+): boolean =>
+  createdToken(field, entity, type) === "linked" ||
+  createdInteger(field, entity, type) === "linked";
+
+/** Whether a created field no rule explains holds a generated value another field links to, which serving cannot keep consistent. */
 const linkedUnexplained = (
   rules: readonly FieldRule[],
   entity: JsonObject,
@@ -145,8 +155,7 @@ const linkedUnexplained = (
 ): boolean => {
   const explained = new Set(rules.map((rule) => rule.field));
   return Object.keys(entity).some(
-    (field) =>
-      !explained.has(field) && createdToken(field, entity, held) === "linked",
+    (field) => !explained.has(field) && linkedGenerated(field, entity, held),
   );
 };
 
@@ -371,7 +380,7 @@ const followsGenerated = (
     );
   }) && followsSequences(context, draft, created);
 
-/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them. */
+/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless that call shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
   const fitted = draft.plan.rules.map((rule) => {
     if (rule.rule !== "clock") return rule;
@@ -384,7 +393,7 @@ const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
       ? rule
       : { ...rule, format };
   });
-  draft.plan.rules = siblingTrimmedClocks(fitted, draft.observed);
+  draft.plan.rules = siblingTrimmedClocks(fitted, draft.observed, fields);
 };
 
 /** Record the values a create's sequences took, which the next call follows. */
@@ -555,11 +564,11 @@ export const applyCreate = (
     draft.plan.rules.some(
       (rule) =>
         rule.rule === "unique" &&
-        createdToken(
+        linkedGenerated(
           rule.field,
           observed.object,
           fieldsOf(context.state.ofType(type)),
-        ) === "linked",
+        ),
     )
   ) {
     refuse(draft, step, "unexplained-change");

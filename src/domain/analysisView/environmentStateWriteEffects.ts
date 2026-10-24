@@ -47,7 +47,7 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
-import { readClock } from "./environmentStateWriteValues.js";
+import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
 import {
   actionItemPath,
@@ -525,7 +525,7 @@ export const updateEntity = (
   }
   const unknown = context.unknown(type, collection, id);
   const call = { ...callOf(step, body), body };
-  const explained = fitUpdateClocks(
+  const { explained, rules } = fitUpdateClocks(
     draft,
     after.object,
     explainUpdate({
@@ -552,11 +552,18 @@ export const updateEntity = (
   // Each call must agree with the plan; one on an unknown entity cannot be checked, so it adds nothing to the plan.
   if (
     built(draft) &&
-    (unknown || contradictsPlan(draft, entity.fields, after.object, explained))
+    (unknown ||
+      contradictsPlan(
+        { ...draft, plan: { ...draft.plan, rules } },
+        entity.fields,
+        after.object,
+        explained,
+      ))
   ) {
     if (!unknown) refuse(draft, step, "unexplained-change");
     return recorded();
   }
+  draft.plan.rules = rules;
   buildUpdate(context, draft, step, { after, explained, idField });
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
@@ -610,14 +617,20 @@ export const updateEntity = (
   };
 };
 
-/** A later update's clocks in the plan's format, the plan's widened to the trimmed spelling the call showed when one covers both. */
+/** A later update's clocks in the plan's format, and the plan's rules widened to the trimmed spelling the call showed when one covers both, its siblings with it wherever the call's values fit; the plan adopts them only once the call is checked. */
 const fitUpdateClocks = (
   draft: WriteDraft,
   after: JsonObject,
   explained: ReturnType<typeof explainUpdate>,
-): ReturnType<typeof explainUpdate> => {
-  if (!built(draft)) return explained;
-  const fitted = new Map<string, FieldRule>();
+): {
+  readonly explained: ReturnType<typeof explainUpdate>;
+  readonly rules: FieldRule[];
+} => {
+  if (!built(draft)) return { explained, rules: draft.plan.rules };
+  const fits = (format: ClockFormat, field: string): boolean =>
+    JSON.stringify(
+      fittedClockFormat(format, after[field], draft.observed?.[field]),
+    ) === JSON.stringify(format);
   const rules = draft.plan.rules.map((rule) => {
     const later = explained.rules.find((other) => other.field === rule.field);
     if (
@@ -631,18 +644,24 @@ const fitUpdateClocks = (
       after[rule.field],
       draft.observed?.[rule.field],
     );
-    if (format === undefined) return rule;
-    const widened = { ...rule, format };
-    fitted.set(rule.field, widened);
-    return widened;
+    return format === undefined ? rule : { ...rule, format };
   });
-  draft.plan.rules = siblingTrimmedClocks(rules, draft.observed);
-  return fitted.size === 0
-    ? explained
-    : {
-        ...explained,
-        rules: explained.rules.map((rule) => fitted.get(rule.field) ?? rule),
-      };
+  const fitted = siblingTrimmedClocks(rules, draft.observed);
+  const planned = new Map(fitted.map((rule) => [rule.field, rule]));
+  return {
+    explained: {
+      ...explained,
+      rules: explained.rules.map((rule) => {
+        const held = planned.get(rule.field);
+        return rule.rule === "clock" &&
+          held?.rule === "clock" &&
+          fits(held.format, rule.field)
+          ? { ...rule, format: held.format }
+          : rule;
+      }),
+    },
+    rules: fitted,
+  };
 };
 
 /** Serving regenerates a learned clock on every update, so recorded calls must advance it. */

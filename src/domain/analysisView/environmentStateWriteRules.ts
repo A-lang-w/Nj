@@ -10,6 +10,7 @@ import {
 } from "./environmentStateRules.js";
 import type { ClockFormat } from "./environmentStateWriteValues.js";
 import {
+  showsFixedWidth,
   trimmedLike,
   type ClockPattern,
 } from "./environmentStateWriteClockFormats.js";
@@ -118,10 +119,11 @@ export type FieldRule =
       readonly value: JsonValue;
     };
 
-/** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values` show no fixed width. */
+/** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values`, and every `later` call's, show no fixed width. */
 export const siblingTrimmedClocks = (
   rules: readonly FieldRule[],
   values: Readonly<Record<string, JsonValue>> | undefined,
+  ...later: readonly Readonly<Record<string, JsonValue>>[]
 ): FieldRule[] => {
   const trimmed = rules.find(
     (rule) =>
@@ -132,11 +134,11 @@ export const siblingTrimmedClocks = (
   if (trimmed?.rule !== "clock") return [...rules];
   return rules.map((rule) => {
     if (rule.rule !== "clock") return rule;
-    const format = trimmedLike(
-      rule.format,
-      trimmed.format,
-      values?.[rule.field],
-    );
+    const format = later.some((fields) =>
+      showsFixedWidth(rule.format, fields[rule.field]),
+    )
+      ? rule.format
+      : trimmedLike(rule.format, trimmed.format, values?.[rule.field]);
     return format === rule.format ? rule : { ...rule, format };
   });
 };

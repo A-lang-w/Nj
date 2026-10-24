@@ -3,6 +3,7 @@ import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { JsonValue } from "../jsonValue.js";
 import { same, type JsonObject } from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
+import { composedValue } from "./environmentStateWriteComposed.js";
 import type { explainUpdate } from "./environmentStateWriteExplain.js";
 import {
   alikeRules,
@@ -83,6 +84,14 @@ const observedValue = (value: JsonValue): ObservedValue =>
     ? { kind: "structured", digest: digestCanonicalValue(value) }
     : { kind: "scalar", value };
 
+/** The scalar fields a call showed, as a composed rule reads them. */
+const shownScalars = (shown: ReadonlyMap<string, ObservedValue>): JsonObject =>
+  Object.fromEntries(
+    [...shown].flatMap(([field, observed]) =>
+      observed.kind === "scalar" ? [[field, observed.value]] : [],
+    ),
+  );
+
 const sameObserved = (left: ObservedValue, right: ObservedValue): boolean =>
   left.kind === "structured"
     ? right.kind === "structured" && left.digest === right.digest
@@ -131,6 +140,13 @@ export const contradictsEarlierCalls = (
       if (rule.rule === "stamp") return !sameObserved(observation, expected!);
       if (rule.rule === "derived")
         return sent.has(rule.member) && !sameObserved(observation, expected!);
+      if (rule.rule === "composed") {
+        const value = composedValue(rule.parts, shownScalars(shown));
+        return (
+          value !== undefined &&
+          !sameObserved(observation, observedValue(value))
+        );
+      }
       const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
       return (
         typeof from === "string" &&
