@@ -143,6 +143,34 @@ unusual filesystems and all 37 caller workflows have not been runtime-qualified
 by this experiment. Existing cross-provider source tests are complementary
 coverage, not real-provider verification. No OOM reproduction is claimed.
 
+## CI follow-up and integration
+
+The first CI run, `40071483901` at `41adc629f`, passed source tests
+(17,305 passed, 13 skipped), static checks, package/Windows builds and all nine
+selected real-workflow/SQLite compatibility jobs. Four built-test shards passed;
+shard 4 failed two Go/PE cleanup cases and three shards were cancelled, leaving
+that coverage unknown.
+
+The failed fixture selected its first descriptor during close and omitted that
+first call from its counter. The old stream's extra close invocation masked
+this assumption; the original fixture passes on the fixed baseline and fails
+with direct reads. The fixture now captures ownership at open, counts every
+attempt and checks the retained descriptor itself: open after failed close,
+closed after exactly one retry. This strengthens lifecycle coverage rather than
+lowering the expected count. An intermediate assertion needed a typed getter
+for state populated by asynchronous callbacks; its failed typecheck receipt is
+retained. The measured production reader was unchanged.
+
+After integrating main `98ec00f40`, qualification at `8e5bf787650e147aa1927c920501665df45dfe3a` passed
+all 153 tests in the original two files plus
+`tests/boundary/providers/artifactReadCleanupRetry.test.ts`, all six serial static
+tasks and architecture guards. Three fresh real MCP/source-export tasks and
+three CLI calls matched every oracle fact and the frozen complete parent
+Evidence. All seven guarded groups exited 0 with verified payload cleanup and
+no memory/PID limit events or OOM; static peak was 1.59 GiB. These integration
+checks use their own runtime identity and preserve the fixed performance pins
+above. Updated PR CI/review is separate from this local qualification.
+
 ## Reproduction
 
 Build both pinned checkouts serially with their locked toolchain and matching
