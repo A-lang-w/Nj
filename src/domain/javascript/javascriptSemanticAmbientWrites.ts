@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -136,12 +137,18 @@ export const semanticStoreMayReachAmbientSetter = (
   key: string | null,
   store: SemanticBeforeStore,
 ): boolean => {
-  if (key === null || key === "__proto__") return true;
-  const candidates = ["Object", "Array", "Function"].map((owner) => ({
-    slot: ["global", owner, "prototype", key],
-    prototype: ["global", owner, "prototype", "__proto__"],
-  }));
+  if (key === null) return true;
+  const candidates = (["Object", "Array", "Function"] as const).map(
+    (owner) => ({
+      owner,
+      slot: ["global", owner, "prototype", key],
+      prototype: ["global", owner, "prototype", "__proto__"],
+    }),
+  );
+  // Most stores have no ambient descriptor changes. Keep this indexed absence
+  // check ahead of the captured receiver/prototype traversal.
   if (
+    key !== "__proto__" &&
     !candidates.some(
       ({ slot, prototype }) =>
         state.ambientWrites.covers(slot) ||
@@ -151,6 +158,12 @@ export const semanticStoreMayReachAmbientSetter = (
     )
   )
     return false;
+  const prototypeFacts = state.ambientStorePrototypeFacts?.(store);
+  if (key === "__proto__") return prototypeFacts?.directNullPrototype !== true;
+  const applicable =
+    prototypeFacts === undefined
+      ? candidates
+      : candidates.filter(({ owner }) => prototypeFacts.owners.includes(owner));
   const mayIntercept = (
     effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
   ) => {
@@ -162,7 +175,7 @@ export const semanticStoreMayReachAmbientSetter = (
           : part === null || part === path[index],
       );
     return (
-      candidates.some(
+      applicable.some(
         ({ slot, prototype }) =>
           overlaps(slot, false) || overlaps(prototype, true),
       ) && semanticEffectTimingAtStore(store, effect, state) !== "after"
@@ -187,7 +200,7 @@ export const semanticIntrinsicReceiverIsSafe = (
 };
 
 /** A native descriptor write does not expose its ordinary builtin target to user code. */
-export const semanticNativeDescriptorTargetIsSafe = (
+export const semanticNativeMutationTargetIsSafe = (
   node: t.Node,
   target: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -196,12 +209,17 @@ export const semanticNativeDescriptorTargetIsSafe = (
   if (
     fact?.path.length !== 3 ||
     !["Object", "Reflect"].includes(fact.path[1] ?? "") ||
-    fact.path[2] !== "defineProperty" ||
+    !["defineProperty", "setPrototypeOf"].includes(fact.path[2] ?? "") ||
     !semanticIntrinsicReceiverIsSafe(node, state) ||
     (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
     node.arguments[0] !== target
   )
     return false;
+  if (
+    fact.path[2] === "setPrototypeOf" &&
+    state.ordinaryLocalIdentityAt?.(target) === true
+  )
+    return true;
   const identities = createAmbientPathResolver(state, false)(target).paths;
   const identity = identities[0];
   return (
@@ -234,6 +252,9 @@ interface AmbientResolution {
   readonly paths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
+  readonly nullPrototype: boolean;
+  readonly directNullPrototype: boolean;
+  readonly localPrototypes: readonly t.Node[];
 }
 
 interface AmbientPrototypeReplacement {
@@ -258,6 +279,7 @@ interface AmbientReferenceFacts {
     mutation: t.Node,
     read: t.Node,
     native: boolean,
+    store?: SemanticBeforeStore,
   ) => boolean;
   readonly freshObject: (node: t.Node) => boolean;
 }
@@ -282,12 +304,17 @@ export const createAmbientPathResolver = (
     selection?: {
       readonly localIdentity?: (node: t.Node, path: AmbientProjection) => void;
       readonly prototypeReceiver?: boolean;
+      readonly actualPrototype?: boolean;
+      readonly beforeStore?: SemanticBeforeStore;
     },
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
+    let nullPrototype = false;
+    let traversedLocalPrototype = false;
+    const localPrototypes = new Set<t.Node>();
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
@@ -297,7 +324,15 @@ export const createAmbientPathResolver = (
       readsAtSelf?: true;
       prototypeDepths?: readonly number[];
       prototypeReadAt?: t.Node;
-    }[] = [{ node, suffix: projection }];
+    }[] = [
+      {
+        node,
+        suffix: projection,
+        ...(selection?.actualPrototype
+          ? { prototypeDepths: [0], prototypeReadAt: capture ?? node }
+          : {}),
+      },
+    ];
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
@@ -381,6 +416,9 @@ export const createAmbientPathResolver = (
               paths: [],
               ownership: "unknown",
               unknownReasons: ["widened-projection"],
+              nullPrototype: false,
+              directNullPrototype: false,
+              localPrototypes: [],
             };
             cached.set(node, unresolved);
             return unresolved;
@@ -428,13 +466,55 @@ export const createAmbientPathResolver = (
                   ],
             );
         };
+        const ownProtoData =
+          t.isObjectExpression(root) &&
+          root.properties.some(
+            (property) =>
+              !t.isSpreadElement(property) &&
+              semanticStaticPropertyKey(property.key, property.computed) ===
+                "__proto__" &&
+              !(
+                t.isObjectProperty(property) &&
+                !property.computed &&
+                !property.shorthand
+              ),
+          );
         if (!t.isIdentifier(root) && facts?.freshObject(root)) {
           selection?.localIdentity?.(root, suffix);
           if (suffix?.length === 0) {
-            hasLocalIdentity = true;
+            if (!selection?.actualPrototype) hasLocalIdentity = true;
             resolvedIdentity = true;
           }
           for (const [source, path] of facts?.stores.get(root) ?? []) {
+            if (
+              selection?.actualPrototype &&
+              selection.beforeStore !== undefined &&
+              semanticEffectTimingAtStore(
+                selection.beforeStore,
+                { node: source.mutation, assignedSources: [source] },
+                state,
+              ) === "after"
+            )
+              continue;
+            if (
+              selection?.actualPrototype &&
+              path?.length === 1 &&
+              path[0] === "__proto__" &&
+              (ownProtoData ||
+                (t.isNullLiteral(
+                  state.nativeObjectCreationAt?.(root)?.prototype,
+                ) &&
+                  !(facts?.prototypeReplacements.get(root) ?? []).some(
+                    (replacement) =>
+                      source.target !== undefined &&
+                      semanticEffectTimingAtStore(
+                        { mutation: source.mutation, target: source.target },
+                        { node: replacement.node },
+                        state,
+                      ) !== "after",
+                  )))
+            )
+              continue;
             const selected =
               suffix === undefined ||
               path === undefined ||
@@ -565,20 +645,34 @@ export const createAmbientPathResolver = (
           }
           continue;
         }
+        if (selection?.actualPrototype) {
+          if (t.isNullLiteral(root) && suffix?.length === 0) {
+            nullPrototype = true;
+            resolvedIdentity = true;
+            continue;
+          }
+          if (suffix?.length === 0 && facts?.freshObject(root)) {
+            traversedLocalPrototype = true;
+            localPrototypes.add(root);
+            continueWith(root, ["__proto__"], [0]);
+            continue;
+          }
+          if (
+            suffix?.[0] === "__proto__" &&
+            facts?.freshObject(root) &&
+            !facts.prototypeReady(
+              root,
+              root,
+              selection.beforeStore?.mutation ?? capture ?? current.node,
+              true,
+              selection.beforeStore,
+            )
+          ) {
+            unknownReasons.add("unresolved-value");
+            continue;
+          }
+        }
         const explicitPrototype = prototypeDepths.includes(0);
-        const ownProtoData =
-          t.isObjectExpression(root) &&
-          root.properties.some(
-            (property) =>
-              !t.isSpreadElement(property) &&
-              semanticStaticPropertyKey(property.key, property.computed) ===
-                "__proto__" &&
-              !(
-                t.isObjectProperty(property) &&
-                !property.computed &&
-                !property.shorthand
-              ),
-          );
         const canSelectActualPrototype = explicitPrototype || !ownProtoData;
         let intrinsicReplacement = false;
         if (
@@ -590,11 +684,17 @@ export const createAmbientPathResolver = (
             []) {
             if (
               !facts?.prototypeMutation(replacement.node) ||
-              semanticEffectTiming(
-                prototypeReadAt ?? capture ?? current.node,
-                replacement.node,
-                state,
-              ) === "after"
+              (selection?.beforeStore === undefined
+                ? semanticEffectTiming(
+                    prototypeReadAt ?? capture ?? current.node,
+                    replacement.node,
+                    state,
+                  )
+                : semanticEffectTimingAtStore(
+                    selection.beforeStore,
+                    { node: replacement.node },
+                    state,
+                  )) === "after"
             )
               continue;
             continueWith(replacement.value, suffix.slice(1));
@@ -617,6 +717,7 @@ export const createAmbientPathResolver = (
               intrinsicReplacement = true;
           }
         }
+        if (selection?.actualPrototype && intrinsicReplacement) continue;
         // Literal instances share native prototypes. A write to the instance's
         // own __proto__ slot changes only that instance; selecting or exposing
         // the prototype's contents can affect every instance of the builtin.
@@ -625,44 +726,66 @@ export const createAmbientPathResolver = (
           suffix?.[0] === "__proto__" &&
           (escapedContents || selection?.prototypeReceiver || suffix.length > 1)
         ) {
-          const builtin = t.isArrayExpression(root)
-            ? "Array"
-            : t.isObjectExpression(root) &&
-                root.properties.every((property) => {
-                  if (t.isSpreadElement(property))
-                    return prototypeDepths.includes(0);
-                  const key = semanticStaticPropertyKey(
-                    property.key,
-                    property.computed,
-                  );
-                  const prototypeSetter =
+          const declaredPrototype =
+            selection?.actualPrototype && t.isObjectExpression(root)
+              ? root.properties.find(
+                  (property) =>
                     t.isObjectProperty(property) &&
                     !property.computed &&
                     !property.shorthand &&
-                    key === "__proto__";
-                  if (prototypeSetter && t.isObjectProperty(property)) {
-                    // Unknown values may be primitive: Annex B ignores them and
-                    // leaves Object.prototype in place. Only a proven object or
-                    // null can exclude that shared prototype.
-                    const value = unwrapJavaScriptExpression(
-                      property.value,
-                    ).node;
-                    return !(
-                      t.isNullLiteral(value) ||
-                      t.isObjectExpression(value) ||
-                      t.isArrayExpression(value) ||
-                      t.isFunction(value) ||
-                      t.isClassExpression(value) ||
-                      facts?.freshObject(value)
-                    );
-                  }
-                  return (
-                    prototypeDepths.includes(0) ||
-                    (key !== null && key !== "__proto__")
-                  );
-                })
-              ? "Object"
+                    semanticStaticPropertyKey(property.key, false) ===
+                      "__proto__",
+                )
               : undefined;
+          const prototypeLiteral = t.isObjectProperty(declaredPrototype)
+            ? readExactJavaScriptLiteral(declaredPrototype.value)
+            : undefined;
+          const explicitObjectPrototype =
+            declaredPrototype !== undefined &&
+            !(prototypeLiteral?.found && prototypeLiteral.value !== null);
+          const builtin = explicitObjectPrototype
+            ? undefined
+            : t.isArrayExpression(root)
+              ? "Array"
+              : t.isObjectExpression(root) &&
+                  root.properties.every((property) => {
+                    if (t.isSpreadElement(property))
+                      return prototypeDepths.includes(0);
+                    const key = semanticStaticPropertyKey(
+                      property.key,
+                      property.computed,
+                    );
+                    const prototypeSetter =
+                      t.isObjectProperty(property) &&
+                      !property.computed &&
+                      !property.shorthand &&
+                      key === "__proto__";
+                    if (prototypeSetter && t.isObjectProperty(property)) {
+                      // Unknown values may be primitive: Annex B ignores them and
+                      // leaves Object.prototype in place. Only a proven object or
+                      // null can exclude that shared prototype.
+                      const value = unwrapJavaScriptExpression(
+                        property.value,
+                      ).node;
+                      return !(
+                        t.isNullLiteral(value) ||
+                        t.isObjectExpression(value) ||
+                        t.isArrayExpression(value) ||
+                        t.isFunction(value) ||
+                        t.isClassExpression(value) ||
+                        facts?.freshObject(value)
+                      );
+                    }
+                    return (
+                      prototypeDepths.includes(0) ||
+                      (key !== null && key !== "__proto__")
+                    );
+                  })
+                ? "Object"
+                : t.isFunction(root) ||
+                    (t.isClass(root) && root.superClass == null)
+                  ? "Function"
+                  : undefined;
           if (builtin !== undefined) {
             const replaced =
               intrinsicReplacement ||
@@ -706,6 +829,28 @@ export const createAmbientPathResolver = (
               ? ["prototype", ...suffix.slice(1)]
               : suffix.slice(1),
           );
+          continue;
+        }
+        const creation = state.nativeObjectCreationAt?.(root);
+        if (
+          selection?.actualPrototype &&
+          suffix?.[0] === "__proto__" &&
+          creation !== undefined
+        ) {
+          pending.push({
+            node: creation.prototype,
+            suffix: suffix.slice(1),
+            readsAtSelf: true,
+            ...(prototypeReadAt === undefined ? {} : { prototypeReadAt }),
+          });
+          continue;
+        }
+        if (
+          creation !== undefined &&
+          suffix?.length === 0 &&
+          facts?.freshObject(root)
+        ) {
+          resolvedIdentity = true;
           continue;
         }
         const prototypeTarget = possibleWrites
@@ -879,6 +1024,10 @@ export const createAmbientPathResolver = (
               ? "local"
               : "unknown",
       unknownReasons: [...unknownReasons],
+      nullPrototype,
+      directNullPrototype:
+        nullPrototype && !traversedLocalPrototype && paths.length === 0,
+      localPrototypes: [...localPrototypes],
     };
     if (!possibleWrites) cached.set(node, resolution);
     return resolution;
@@ -950,6 +1099,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     mutation: t.Node,
     read: t.Node,
     native: boolean,
+    store?: SemanticBeforeStore,
   ): boolean => {
     if (
       state.opaqueEffects.byScope.size > 0 ||
@@ -992,18 +1142,57 @@ export function* indexJavaScriptAmbientWritesSteps(
         }
       }
       return (
-        semanticEffectTiming(read, site, state) !== "after" &&
+        (store === undefined
+          ? semanticEffectTiming(read, site, state)
+          : semanticEffectTimingAtStore(store, { node: site }, state)) !==
+          "after" &&
         (kind === "unknown" ||
           semanticEffectTiming(mutation, site, state) !== "after")
       );
     });
   };
+  state.nativeObjectCreationAt = (node) => {
+    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+      return undefined;
+    const invocation = interop.intrinsicInvocation(node);
+    if (
+      invocation?.kind !== "known" ||
+      invocation.path.length !== 3 ||
+      invocation.path[1] !== "Object" ||
+      invocation.path[2] !== "create" ||
+      semanticAmbientPathMayHaveChanged(state, node.callee, [
+        "global",
+        "Object",
+        "create",
+      ])
+    )
+      return undefined;
+    const prototype = invocation.arguments?.[0];
+    let descriptors: t.Node | undefined = invocation.arguments?.[1];
+    // Sequence operands still execute, but the final value owns the descriptors.
+    while (t.isSequenceExpression(descriptors))
+      descriptors = descriptors.expressions.at(-1);
+    if (descriptors !== undefined)
+      descriptors = unwrapJavaScriptExpression(descriptors).node;
+    return t.isExpression(prototype)
+      ? {
+          prototype,
+          ownPropertiesEmpty:
+            invocation.arguments?.length === 1 ||
+            (t.isObjectExpression(descriptors) &&
+              descriptors.properties.length === 0),
+        }
+      : undefined;
+  };
+  const freshObject = (node: t.Node) =>
+    interop.isFreshObject(node) ||
+    state.nativeObjectCreationAt?.(node) !== undefined;
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
     prototypeReplacements,
     prototypeMutation,
     prototypeReady,
-    freshObject: interop.isFreshObject,
+    freshObject,
     prototypeTarget: (node) => {
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
         return undefined;
@@ -1021,6 +1210,8 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  state.ordinaryLocalIdentityAt = (node) =>
+    ambientWrites(node, node).ownership === "local";
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (root, kind, writeSite) => {
@@ -1221,10 +1412,7 @@ export function* indexJavaScriptAmbientWritesSteps(
           if (path?.length === 0) roots.add(root);
         },
       });
-      const definiteOwner =
-        roots.size === 1 &&
-        ambient.paths.length === 0 &&
-        interop.isFreshObject(call.target);
+      const definiteOwner = roots.size === 1 && ambient.ownership === "local";
       for (const root of roots) {
         const values = prototypeReplacements.get(root) ?? [];
         values.push({ node: call.node, value: call.value, definiteOwner });
@@ -1261,7 +1449,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes) {
-    if (semanticNativeDescriptorTargetIsSafe(node, target, state)) continue;
+    if (semanticNativeMutationTargetIsSafe(node, target, state)) continue;
     const resolved = ambientWrites(target, node, true, projection);
     if (
       browserReceiver &&
@@ -1276,6 +1464,50 @@ export function* indexJavaScriptAmbientWritesSteps(
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
   }
+  state.ambientStorePrototypeFacts = (store) => {
+    const resolved = ambientWrites(
+      store.target.object,
+      store.target.object,
+      false,
+      ["__proto__"],
+      { actualPrototype: true, prototypeReceiver: true, beforeStore: store },
+    );
+    if (resolved.unknownReasons.length > 0) return undefined;
+    const owners = new Set<"Object" | "Array" | "Function">();
+    for (const path of resolved.paths) {
+      const owner = path[1];
+      if (
+        path.length !== 3 ||
+        path[0] !== "global" ||
+        path[2] !== "prototype" ||
+        (owner !== "Object" && owner !== "Array" && owner !== "Function")
+      )
+        return undefined;
+      owners.add(owner);
+      if (owner !== "Object") {
+        if (
+          [...state.ambientWriteEffects, ...state.ambientEscapeEffects].some(
+            (effect) =>
+              effect.path.length >= 4 &&
+              effect.path[0] === "global" &&
+              effect.path[1] === owner &&
+              effect.path[2] === "prototype" &&
+              (effect.path[3] === null || effect.path[3] === "__proto__") &&
+              semanticEffectTimingAtStore(store, effect, state) !== "after",
+          )
+        )
+          return undefined;
+        owners.add("Object");
+      }
+    }
+    return resolved.paths.length > 0 || resolved.nullPrototype
+      ? {
+          owners: [...owners],
+          directNullPrototype: resolved.directNullPrototype,
+          localPrototypes: resolved.localPrototypes,
+        }
+      : undefined;
+  };
   // A setter can rewrite any property of its receiver, not just the assigned
   // key. Publish that exposure before deciding whether a recognized native
   // method still keeps its receiver away from user code.

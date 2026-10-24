@@ -4,7 +4,7 @@ import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
   semanticIntrinsicReceiverIsSafe,
-  semanticNativeDescriptorTargetIsSafe,
+  semanticNativeMutationTargetIsSafe,
   semanticStoreMayReachAmbientSetter,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
@@ -145,7 +145,14 @@ const localAccessorMethods = (
 ): readonly (t.ObjectMethod | t.ClassMethod)[] | undefined => {
   if (!selection.keyMayExist(path.at(-1), accessor)) return [];
   const methods = new Set<t.ObjectMethod | t.ClassMethod>();
-  const lookup = selection.lookup ?? "prototype";
+  const storePrototypeFacts =
+    selection.beforeStore === undefined
+      ? undefined
+      : state.ambientStorePrototypeFacts?.(selection.beforeStore);
+  const lookup =
+    storePrototypeFacts !== undefined
+      ? "own"
+      : (selection.lookup ?? "prototype");
   const pending: (ReferencedValue & {
     readonly capturedSelections?:
       | readonly SemanticCapturedSelection[]
@@ -189,7 +196,14 @@ const localAccessorMethods = (
         const receiverPath = current.path.slice(0, -1);
         for (const { path, includeDescendants } of [
           { path: current.path, includeDescendants: false },
-          { path: [...receiverPath, "__proto__"], includeDescendants: true },
+          ...(storePrototypeFacts !== undefined
+            ? []
+            : [
+                {
+                  path: [...receiverPath, "__proto__"],
+                  includeDescendants: true,
+                },
+              ]),
         ]) {
           const facts = semanticProjectedSourceFactsAtRead(
             binding,
@@ -313,6 +327,22 @@ const localAccessorMethods = (
             current.capturedSelections,
             source,
           ),
+        });
+    } else if (t.isNullLiteral(node)) {
+      // A null prototype terminates inherited descriptor selection.
+      continue;
+    } else if (
+      current.path.length > 0 &&
+      state.nativeObjectCreationAt?.(node) !== undefined
+    ) {
+      const creation = state.nativeObjectCreationAt(node)!;
+      if (!creation.ownPropertiesEmpty || current.path.length > 1)
+        return undefined;
+      if (lookup === "prototype")
+        pending.push({
+          node: creation.prototype,
+          path: current.path,
+          capturedSelections: current.capturedSelections,
         });
     } else if (
       (t.isClass(node) || t.isNewExpression(node)) &&
@@ -1648,6 +1678,18 @@ export function* collectSemanticMemberMutationsSteps(
       })
     )
       return true;
+    const prototypeFacts = state.ambientStorePrototypeFacts?.({
+      mutation: source.mutation,
+      target,
+    });
+    for (const prototype of prototypeFacts?.localPrototypes ?? []) {
+      const accessors = localAccessorMethods(prototype, [key], "set", state, {
+        ...completeSetterSelection,
+        beforeStore: { mutation: source.mutation, target },
+        lookup: "own",
+      });
+      if (accessors === undefined || accessors.length > 0) return true;
+    }
     const setters = localAccessorMethods(target.object, [key], "set", state, {
       ...completeSetterSelection,
       beforeStore: { mutation: source.mutation, target },
@@ -1756,9 +1798,7 @@ export function* collectSemanticMemberMutationsSteps(
               mutation: node,
               originAt: node,
             });
-          else if (
-            semanticNativeDescriptorTargetIsSafe(node, argument, state)
-          ) {
+          else if (semanticNativeMutationTargetIsSafe(node, argument, state)) {
             if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
               deferredDescriptorTargets.add(node);
           } else markEscaped(argument, node);
@@ -1906,7 +1946,7 @@ export function* collectSemanticMemberMutationsSteps(
     for (const node of deferredDescriptorTargets) {
       const target = node.arguments[0];
       if (!t.isNode(target) || t.isSpreadElement(target)) continue;
-      if (semanticNativeDescriptorTargetIsSafe(node, target, state)) continue;
+      if (semanticNativeMutationTargetIsSafe(node, target, state)) continue;
       deferredDescriptorTargets.delete(node);
       markEscaped(target, node);
     }
@@ -2259,6 +2299,10 @@ const observableMutationPaths = (
           isIntrinsicTypedArrayConstruction(expression, state)
         )
           (observer.origins ??= new Set()).add("typed-array");
+        else if (state.nativeObjectCreationAt?.(expression) !== undefined)
+          // The construction owner proves an ordinary allocation. Its slots
+          // remain observable even when its property values are not evaluated.
+          (observer.origins ??= new Set()).add("opaque");
         else if (
           t.isNewExpression(expression) &&
           semanticClassCandidates(expression.callee, state).length === 0

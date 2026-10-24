@@ -437,3 +437,117 @@ it.each([
     else expect(endpoints).toEqual([]);
   },
 );
+
+it.each([
+  [
+    'const box={};Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box={};Object.defineProperty(Function.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box={};Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box=[];Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box=function(){};Object.defineProperty(Function.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  ["const box={__proto__:{set p(value){value.get=fetch}}};", true],
+  [
+    'const box={};Object.setPrototypeOf(box,Array.prototype);Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box={};Object.setPrototypeOf(box,Function.prototype);Object.defineProperty(Function.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box={};const alias=box;Reflect.setPrototypeOf(alias,Array.prototype);Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box=Object.create(null);Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box={__proto__:null};Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box={["__proto__"]:Array.prototype};Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box=Object.create(null);box.__proto__=Array.prototype;Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box={};Object.setPrototypeOf(box,null);Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box=flag?{}:[];Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'const box={["__proto__"]:null};box.__proto__=Array.prototype;Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+  [
+    'const box=Object.create(null);Object.setPrototypeOf(box,Array.prototype);box.__proto__=Function.prototype;Object.defineProperty(Function.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'let proto=Array.prototype;const box=Object.create(proto,(proto=null,{}));Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    true,
+  ],
+  [
+    'let proto=null;const box=Object.create(proto,(proto=Array.prototype,{}));Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});',
+    false,
+  ],
+])(
+  "limits inherited setters to applicable receiver prototypes: %s",
+  (setup, invoked) => {
+    const source = `${setup}box.p=Map.prototype;new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, {
+      flag: false,
+      fetch: (value: unknown) => calls.push(value),
+    });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);
+
+it.each([
+  'Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});Object.create=()=>[];const box=Object.create(null);box.p=Map.prototype;',
+  'Object.setPrototypeOf=function(target){Object.defineProperty(target,"p",{set(value){value.get=fetch}});return target};const box={};Object.setPrototypeOf(box,null);box.p=Map.prototype;',
+  'const box=new Proxy({},{setPrototypeOf(target){Object.defineProperty(target,"p",{set(value){value.get=fetch}});return true}});Object.setPrototypeOf(box,null);box.p=Map.prototype;',
+  'function make(){return []}const box=make();Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});box.p=Map.prototype;',
+])("retains unknown or replaced prototype operations: %s", (setup) => {
+  const source = `${setup}new Map().get("/accounts");`;
+  const calls: unknown[] = [];
+  runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+  expect(calls).toEqual(["/accounts"]);
+  expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});

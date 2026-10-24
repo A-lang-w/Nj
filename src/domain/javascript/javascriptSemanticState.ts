@@ -9,6 +9,7 @@ import {
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
+  type SemanticBeforeStore,
 } from "./javascriptSemanticMutationInitializers.js";
 
 import {
@@ -176,6 +177,26 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientWrites: SemanticPropertyPathCoverage;
   /** Browser receivers proven to be only the ambient global identity. */
   readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Ambient identity owner selects actual prototype chains at this captured store. */
+  ambientStorePrototypeFacts?:
+    | ((store: SemanticBeforeStore) =>
+        | {
+            readonly owners: readonly ("Object" | "Array" | "Function")[];
+            readonly directNullPrototype: boolean;
+            readonly localPrototypes: readonly t.Node[];
+          }
+        | undefined)
+    | undefined;
+  /** Ordinary local identity selected at the target argument's own read site. */
+  ordinaryLocalIdentityAt?: ((node: t.Node) => boolean) | undefined;
+  /** Parsed native construction, including whether descriptors can add own accessors. */
+  nativeObjectCreationAt?:
+    | ((
+        node: t.Node,
+      ) =>
+        | { readonly prototype: t.Node; readonly ownPropertiesEmpty: boolean }
+        | undefined)
+    | undefined;
   /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
   readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
