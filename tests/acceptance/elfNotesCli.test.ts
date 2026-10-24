@@ -11,23 +11,27 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
-cliTest("reports a GNU build-id through the public CLI", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-notes-cli-");
-  const path = join(root, "program");
-  await writeFile(path, elfNoteFixture({ ownership: "program" }));
-  const result = await cli.run({
-    arguments: ["inspect-elf-notes", path, "--json"],
-  });
-  expect(result.exitCode, result.stderr).toBe(0);
-  const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
-    result.json,
+for (const bits of [32, 64] as const)
+  cliTest(
+    `reports an ELF${bits} GNU build-id through the public CLI`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-elf-notes-cli-");
+      const path = join(root, "program");
+      await writeFile(path, elfNoteFixture({ bits, ownership: "program" }));
+      const result = await cli.run({
+        arguments: ["inspect-elf-notes", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        result.json,
+      );
+      expect(
+        evidence.normalized_result.entries.find(
+          (entry) => entry.type_name === "gnu_build_id",
+        )?.gnu?.build_id_hex,
+      ).toBe("0123456789abcdef0123456789abcdef01234567");
+    },
   );
-  expect(
-    evidence.normalized_result.entries.find(
-      (entry) => entry.type_name === "gnu_build_id",
-    )?.gnu?.build_id_hex,
-  ).toBe("0123456789abcdef0123456789abcdef01234567");
-});
 
 cliTest(
   "resolves section note names from a compressed string table through the CLI",

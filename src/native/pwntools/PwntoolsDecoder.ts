@@ -96,6 +96,8 @@ export interface PwntoolsDecoderProfile<
   readonly operation: string;
   readonly bridge: URL;
   readonly payloadSchema: z.ZodType<Payload>;
+  /** Operation-specific alternatives when the selected target is outside this profile. */
+  readonly unsupportedTargetRemediationAction?: string;
   readonly project: (context: {
     readonly input: Input;
     readonly payload: Payload;
@@ -422,7 +424,15 @@ export class PwntoolsDecoder<
             OPERATION,
             input.path,
             reply.message,
-            { capturedOutput },
+            {
+              capturedOutput,
+              ...(this.profile.unsupportedTargetRemediationAction === undefined
+                ? {}
+                : {
+                    remediationAction:
+                      this.profile.unsupportedTargetRemediationAction,
+                  }),
+            },
           );
         if (reply.reason === "resource-limit")
           throw new AnalysisResourceConstraintError(

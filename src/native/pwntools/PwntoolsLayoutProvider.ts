@@ -33,6 +33,8 @@ export class PwntoolsLayoutProvider
         operation: "inspect_binary_layout",
         bridge: new URL("../../../bridge/pwntools/layout.py", import.meta.url),
         payloadSchema: binaryLayoutPayloadSchema,
+        unsupportedTargetRemediationAction:
+          "For file or section headers, use inspect_with_objdump with operation file_headers or section_headers (CLI: rea inspect-with-objdump <path> file_headers or section_headers). Supply GNU objdump with support for the selected target via REA_OBJDUMP_COMMAND or PATH. For ELF32/ELF64 note records, use inspect_elf_notes (CLI: rea inspect-elf-notes <path>). These operations return narrower facts, not the complete normalized binary layout report; inspect_binary_layout remains limited to ELF64 x86-64 little-endian EXEC/DYN/REL.",
         project: ({ input, payload, snapshot, diagnostics }) => {
           const value = binaryLayoutSchema.safeParse({
             ...payload,

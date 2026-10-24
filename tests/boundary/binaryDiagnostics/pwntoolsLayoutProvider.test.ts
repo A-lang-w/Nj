@@ -516,6 +516,7 @@ it
     "format",
     "unavailable",
     "unsupported",
+    "unsupported-target",
     "output-limit",
     "wrong-profile",
     "malformed-reply",
@@ -551,12 +552,16 @@ it
                   "format",
                   "unavailable",
                   "unsupported",
+                  "unsupported-target",
                   "output-limit",
                 ].includes(scenario)
                   ? {
                       ok: false,
                       reason: scenario,
-                      message: "ELF table is truncated.",
+                      message:
+                        scenario === "unsupported-target"
+                          ? "Initial layout profile requires ELF64 little-endian objects."
+                          : "ELF table is truncated.",
                     }
                   : {
                       ok: true,
@@ -595,9 +600,32 @@ it
                 ? "ProviderSelectionError"
                 : scenario === "unsupported"
                   ? "AnalysisCapabilityUnavailableError"
-                  : "AnalysisOutputError",
+                  : scenario === "unsupported-target"
+                    ? "AnalysisUnsupportedTargetError"
+                    : "AnalysisOutputError",
         },
       });
+    if (!result.ok && scenario === "unsupported-target") {
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "unsupported_target",
+        retryable: false,
+        details: { operation: "inspect_binary_layout", path },
+      });
+      expect(projected.message).toContain(
+        "Initial layout profile requires ELF64 little-endian objects.",
+      );
+      for (const alternative of [
+        "inspect_with_objdump",
+        "file_headers",
+        "section_headers",
+        "REA_OBJDUMP_COMMAND",
+        "inspect_elf_notes",
+        "ELF64 x86-64 little-endian",
+      ])
+        expect(projected.remediation.action).toContain(alternative);
+      expect(projected.remediation.action).toContain("narrower facts");
+    }
     if (!result.ok)
       expect(projectAnalysisError(result.error).details).toMatchObject({
         captured_output: {

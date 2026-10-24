@@ -29,6 +29,22 @@ the selected object as a host process, or requests runtime library resolution. T
 uses isolated mode and an owned cache. Exact upstream profiles are recorded in
 [upstream provenance](https://github.com/morluto/rea/blob/main/third_party/pwntools/README.md).
 
+ELF32 and other targets outside this layout profile return `unsupported_target`.
+For file or section headers, use `inspect_with_objdump` with
+`operation: "file_headers"` or `operation: "section_headers"`, or run:
+
+```sh
+rea inspect-with-objdump ./selected.elf section_headers
+```
+
+Supply a GNU objdump build supporting the
+selected target through `REA_OBJDUMP_COMMAND` or `PATH`; see the
+[objdump guide](reverse-engineering-tools.md#gnu-objdump). For ELF32/ELF64 note
+records, use `inspect_elf_notes` / `rea inspect-elf-notes ./selected.elf` without
+an external engine. These operations provide narrower facts, rather than a
+complete normalized layout report. The refusal names these alternatives without
+automatically selecting or launching one.
+
 The adapter skips pwntools kernel configuration and version discovery: those
 memory-content scans supply none of this report's fields. Ordinary `IKCFG_ST`
 data is not interpreted as a kernel-config request, and virtual zero-filled
