@@ -23,18 +23,25 @@ const MAX_INTAKE_CSS_VARIABLES = 2000;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
 
-const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
+const CSS_URL_PATTERN = /(url\(\s*(['"]?))([\s\S]*?)(\2\s*\))/gi;
 
 export const redactCssUrlCredentials = (value: string): string => {
   if (!value.toLowerCase().includes("url(")) return value;
   return value.replace(
     CSS_URL_PATTERN,
-    (_fullMatch, quote: string, rawUrl: string) => {
+    (
+      fullMatch,
+      prefix: string,
+      _quote: string,
+      rawUrl: string,
+      suffix: string,
+    ) => {
       try {
-        const sanitized = sanitizeBrowserUrl(rawUrl).url;
-        return `url(${quote}${sanitized}${quote})`;
+        const sanitized = sanitizeBrowserUrl(rawUrl);
+        if (!sanitized.redacted) return fullMatch;
+        return `${prefix}${sanitized.url}${suffix}`;
       } catch {
-        return _fullMatch;
+        return fullMatch;
       }
     },
   );

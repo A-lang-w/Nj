@@ -411,7 +411,12 @@ it("redacts URL transport credentials from CSS url() values", async () => {
       computedStyle: [
         {
           name: "--bg-asset",
-          value: "url('https://alice:secret123@example.test/assets/bg.png')",
+          value:
+            "URL(  'https://alice:secret123@example.test/assets/bg.png'  )",
+        },
+        {
+          name: "--local-asset",
+          value: 'url( "/assets/bg.png" )',
         },
       ],
     },
@@ -432,10 +437,13 @@ it("redacts URL transport credentials from CSS url() values", async () => {
     limitations,
   );
 
-  expect(result.items).toHaveLength(1);
-  const item = result.items[0];
-  expect(item?.value).not.toContain("secret123");
-  expect(item?.value).toBe("url('https://example.test/assets/bg.png')");
+  expect(result.items).toHaveLength(2);
+  const bgItem = result.items.find((item) => item.name === "--bg-asset");
+  expect(bgItem?.value).not.toContain("secret123");
+  expect(bgItem?.value).toBe("URL(  'https://example.test/assets/bg.png'  )");
+
+  const localItem = result.items.find((item) => item.name === "--local-asset");
+  expect(localItem?.value).toBe('url( "/assets/bg.png" )');
 });
 
 it("treats missing or non-array computedStyle as unavailable with limitation", async () => {
