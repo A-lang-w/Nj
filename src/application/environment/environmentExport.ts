@@ -298,11 +298,7 @@ export const readEnvironmentExportFile = async (
     bytes = await readRegularFile(path, {
       resources,
       admit: (state) => {
-        const refused = headroomRefusal(
-          operation,
-          path,
-          state.size,
-        );
+        const refused = headroomRefusal(operation, path, state.size);
         if (refused !== undefined) throw refused;
       },
     });

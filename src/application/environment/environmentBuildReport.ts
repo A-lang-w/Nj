@@ -6,7 +6,8 @@ import type { EnvironmentBuildReport } from "../../domain/environmentBundleExpor
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 
 /** A note the build report carries; warnings never change what is built. */
-export type EnvironmentBuildWarning = EnvironmentBuildReport["warnings"][number];
+export type EnvironmentBuildWarning =
+  EnvironmentBuildReport["warnings"][number];
 
 /** Whole name segments that name credentials; `author` is not `auth`. */
 const CREDENTIAL_SEGMENTS = new Set([
