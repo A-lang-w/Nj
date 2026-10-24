@@ -426,8 +426,12 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. Malformed recognized FAT declarations retain
-their format-specific reasons.
+prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
+checks complete JVM framing within the same 16 MiB class identity bound as the
+Mach-O image reader. A complete class remains unsupported even if its constant
+pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
+malformed FAT interpretation remains unresolved. Malformed recognized FAT
+declarations retain their format-specific reasons.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -464,24 +468,26 @@ numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.
-Malformed XML structure remains an input failure; malformed scalar literals
-retain their exact source text, reason and counted unknown-scalar limitation,
-using the same scalar interpretation as archive readers.
+XML sources must also pass native format validation, with native refusals retaining
+their diagnostics and successful validation recorded in provenance. Original
+unknown scalar text, reasons and limitations survive successful validation;
+output-budget omissions remain omissions.
 
 Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
 estimated 64 MiB decode budget before parsing; this is not a hard process-memory
 bound. JSON decode memory has not been measured and has no equivalent decode
 estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
-Ordinary direct-source inspection admits 998 source nesting levels, derived from
-the existing 1000-level JSON result capacity by reserving one level for typed
-scalar fields and one for the result's `value` field. Deeper input reports
+Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
+derived from the existing 1000-level JSON result capacity by reserving one level
+for typed scalar fields and one for the result's `value` field. Deeper input reports
 `resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
-the fixed nesting allowance. Compatibility conversions can encounter an earlier
-native utility refusal; their diagnostics remain explicit. Archive and Interface
-Builder decoding retain their separate 128-level allowance. Worker limits and
-host memory do not raise these fixed allowances, and the unchanged request fails
-the same way.
+the fixed nesting allowance. XML admission also requires native validation, which
+can refuse input below this decoding ceiling. Compatibility conversions can
+likewise encounter an earlier native utility refusal; both retain native
+diagnostics. Archive and Interface Builder decoding retain their separate
+128-level allowance. Worker limits and host memory do not raise these fixed
+allowances, and the unchanged request fails the same way.
 
 A plist explicitly selected through the path input or as the active plist target
 reports an unreadable or malformed selection as `invalid_request`. A missing or
@@ -724,9 +730,10 @@ complete observation.
   examined type records and fully decoded declarations. Class vtable recovery
   reads the same descriptors, so an unreadable type record also keeps
   `swift_class_vtable_descriptors` partial.
-  Nominal declarations, conformance type references and class vtables share one
-  snapshot-scoped name/context reader. Conformance `type_name` and dispatch
-  `owner` retain enclosing named types; conformances carry the known module.
+  Nominal declarations, conformance type and protocol references, and class
+  vtables share one snapshot-scoped name/context reader. Conformance `type_name`,
+  `protocol_name`, and dispatch `owner` retain enclosing named types;
+  conformances carry the known module.
   Unresolved parents preserve the leaf name and a partial identity reason,
   while independently readable witness implementations remain available.
   Protocol instance properties use the same property-list reader as classes.
