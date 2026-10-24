@@ -103,18 +103,21 @@ const parsedBody = (
   if (typeof text !== "string") return undefined;
   if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
     return { kind: "skipped" };
-  const format = typeof mimeType === "string" ? mediaTypeEssence(mimeType) : "";
-  if (format === "application/x-www-form-urlencoded")
-    return { kind: "form", fields: [...new URLSearchParams(text)] };
+  const format =
+    typeof mimeType === "string" ? mediaTypeEssence(mimeType) : null;
+  const form = format === "application/x-www-form-urlencoded";
   const start = text.trimStart()[0];
-  if (start === "{" || start === "[") {
+  if (!form && (start === "{" || start === "[")) {
     try {
       return { kind: "json", value: JSON.parse(text) };
     } catch {
       return undefined;
     }
   }
-  return undefined;
+  // An unclassified capture can still retain form text. Review its potential names without changing Evidence or manifest interpretation.
+  return form || (format === null && text.includes("="))
+    ? { kind: "form", fields: [...new URLSearchParams(text)] }
+    : undefined;
 };
 
 /** Name/value pairs such as HAR headers and query strings. */

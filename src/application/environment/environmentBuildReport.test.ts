@@ -389,3 +389,52 @@ it.each([
     skipped: NONE_SKIPPED,
   });
 });
+
+it.each([
+  { text: "password=example", pointers: ["/password"] },
+  { text: "token=a&page=1&token=b", pointers: ["/token", "/token"] },
+  { text: "%70assword=encoded", pointers: ["/password"] },
+  { text: "flag&password=example", pointers: ["/password"] },
+])(
+  "reviews retained form names without a recorded media type: $text",
+  ({ text, pointers }) => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session",
+          status: 200,
+          mediaType: "application/json",
+          body: "{}",
+          requestBody: text,
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    expect(
+      scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
+    ).toEqual({
+      count: pointers.length,
+      pointers: pointers.map((pointer) => `record 0 request ${pointer}`),
+      skipped: NONE_SKIPPED,
+    });
+  },
+);
+
+it("keeps JSON interpretation before an untyped form fallback and honors explicit non-form types", () => {
+  const json = record(7, undefined, undefined);
+  const plain = record(8, undefined, undefined);
+  (json.reported as { request: { postData: unknown } }).request.postData = {
+    mimeType: "",
+    text: '{"name":"password=example","token":"actual"}',
+  };
+  (plain.reported as { request: { postData: unknown } }).request.postData = {
+    mimeType: "text/plain",
+    text: "password=example",
+  };
+  expect(scanCredentialNames([json, plain])).toEqual({
+    count: 1,
+    pointers: ["record 7 request /token"],
+    skipped: NONE_SKIPPED,
+  });
+});
