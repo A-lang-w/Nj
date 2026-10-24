@@ -23,6 +23,28 @@ it("audits every IDA operation's network transport without adding it to the sess
   }
 });
 
+it.each([
+  ["attached", false, false],
+  ["attached", true, true],
+  ["headless", true, false],
+] as const)(
+  "covers IDA provider effects in the global audit (%s, stdio=%s, native=%s)",
+  (mode, stdio, native) => {
+    for (const descriptor of idaCapabilities(mode, stdio, native)) {
+      const audited = TOOL_EFFECTS[descriptor.operation];
+      expect(audited, descriptor.operation).toBeDefined();
+      if (descriptor.effects.mayAccessNetwork)
+        expect(audited?.accessesNetwork, descriptor.operation).toBe(true);
+      if (descriptor.effects.mayShowUi)
+        expect(audited?.changesUiState, descriptor.operation).toBe(true);
+      if (descriptor.effects.launchesProcess)
+        expect(audited?.launchesProcess, descriptor.operation).toBe(true);
+      if (descriptor.effects.mayWriteFilesystem)
+        expect(audited?.writesFilesystem, descriptor.operation).toBe(true);
+    }
+  },
+);
+
 it.each([false, true])(
   "retains selected provider UI/process/network effects in direct and composed discovery (UI=%s)",
   (showUi) => {

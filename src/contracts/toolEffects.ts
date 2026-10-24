@@ -61,9 +61,18 @@ const providerEffects = (
   global: Partial<ToolEffects>,
 ): EffectAudit => ({ session, global });
 
-const idaNetworkEvidence = providerEffects(evidence, { accessesNetwork: true });
-const attachedIdaNavigation = providerEffects(evidence, {
+/** Global possibility across supported provider paths; sessions compose their selected descriptor. */
+const providerRemoteEffects = {
+  launchesProcess: true,
+  writesFilesystem: true,
   accessesNetwork: true,
+};
+const providerNetworkEvidence = providerEffects(
+  evidence,
+  providerRemoteEffects,
+);
+const providerUiNetworkEvidence = providerEffects(evidence, {
+  ...providerRemoteEffects,
   changesUiState: true,
 });
 
@@ -518,7 +527,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_native_load_image: evidence,
   inspect_native_dispatch_metadata: evidence,
   trace_native_ui_action: evidence,
-  trace_native_values: attachedIdaNavigation,
+  trace_native_values: providerUiNetworkEvidence,
   address_name: evidence,
   comment: evidence,
   current_address: evidence,
@@ -527,19 +536,19 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   goto_address: effects({ mutatesSession: true, changesUiState: true }),
   inline_comment: evidence,
   list_bookmarks: evidence,
-  list_documents: idaNetworkEvidence,
+  list_documents: providerNetworkEvidence,
   list_names: evidence,
-  list_procedures: idaNetworkEvidence,
+  list_procedures: providerNetworkEvidence,
   list_segments: evidence,
-  list_strings: idaNetworkEvidence,
+  list_strings: providerNetworkEvidence,
   next_address: evidence,
   prev_address: evidence,
-  procedure_address: idaNetworkEvidence,
-  procedure_assembly: attachedIdaNavigation,
-  procedure_callees: idaNetworkEvidence,
-  procedure_callers: idaNetworkEvidence,
+  procedure_address: providerNetworkEvidence,
+  procedure_assembly: providerUiNetworkEvidence,
+  procedure_callees: providerNetworkEvidence,
+  procedure_callers: providerNetworkEvidence,
   procedure_info: evidence,
-  read_function_instructions: attachedIdaNavigation,
+  read_function_instructions: providerUiNetworkEvidence,
   inspect_native_instruction: evidence,
   inspect_native_data_type: evidence,
   resolve_native_call_targets: evidence,
@@ -547,10 +556,10 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   search_bytes: evidence,
   address_to_file_offset: evidence,
   procedure_references: evidence,
-  procedure_pseudo_code: attachedIdaNavigation,
-  resolve_containing_procedure: idaNetworkEvidence,
-  search_procedures: idaNetworkEvidence,
-  search_strings: idaNetworkEvidence,
+  procedure_pseudo_code: providerUiNetworkEvidence,
+  resolve_containing_procedure: providerNetworkEvidence,
+  search_procedures: providerNetworkEvidence,
+  search_strings: providerNetworkEvidence,
   set_address_name: effects({
     mutatesTarget: true,
     mutatesSession: true,
@@ -581,34 +590,34 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     mutatesSession: true,
     mayDiscardData: true,
   }),
-  xrefs: idaNetworkEvidence,
+  xrefs: providerNetworkEvidence,
   get_objc_classes: evidence,
   get_objc_protocols: evidence,
-  batch_decompile: attachedIdaNavigation,
+  batch_decompile: providerUiNetworkEvidence,
   decompile_all: providerEffects(
     effects({
       mutatesSession: true,
       writesFilesystem: true,
       idempotent: false,
     }),
-    { accessesNetwork: true, changesUiState: true },
+    { ...providerRemoteEffects, changesUiState: true },
   ),
-  get_call_graph: providerEffects(evidence, { accessesNetwork: true }),
-  analyze_swift_types: providerEffects(evidence, { accessesNetwork: true }),
-  find_xrefs_to_name: providerEffects(evidence, { accessesNetwork: true }),
-  binary_overview: providerEffects(evidence, { accessesNetwork: true }),
-  analyze_function: attachedIdaNavigation,
+  get_call_graph: providerEffects(evidence, providerRemoteEffects),
+  analyze_swift_types: providerEffects(evidence, providerRemoteEffects),
+  find_xrefs_to_name: providerEffects(evidence, providerRemoteEffects),
+  binary_overview: providerEffects(evidence, providerRemoteEffects),
+  analyze_function: providerUiNetworkEvidence,
   inspect_native_api: providerEffects(
     effects({ mutatesSession: true, idempotent: false }),
-    { accessesNetwork: true, changesUiState: true },
+    { ...providerRemoteEffects, changesUiState: true },
   ),
   trace_feature: providerEffects(
     effects({ mutatesSession: true, idempotent: false }),
-    { accessesNetwork: true },
+    providerRemoteEffects,
   ),
   trace_call_path: providerEffects(
     effects({ mutatesSession: true, idempotent: false }),
-    { accessesNetwork: true },
+    providerRemoteEffects,
   ),
   observe_native_ui: effects({
     mutatesSession: true,
@@ -747,9 +756,10 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     mayDiscardData: true,
   }),
   get_evidence_bundle: effects(),
-  get_navigation_context: providerEffects(effects({ mutatesSession: true }), {
-    accessesNetwork: true,
-  }),
+  get_navigation_context: providerEffects(
+    effects({ mutatesSession: true }),
+    providerRemoteEffects,
+  ),
   inspect_address_context: effects({ mutatesSession: true }),
   import_evidence_bundle: effects({ mutatesSession: true }),
   capture_process_scenario: effects({
