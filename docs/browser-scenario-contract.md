@@ -355,6 +355,14 @@ and unfinished-request metadata. Select content independently:
 All three options default to `false`. Any selected network content also enables
 network metadata observation; listing `network` in `events` is then optional.
 Each observed request object receives a capture-scoped `transaction_id`.
+Each `request` event carries `observed_at`, the wall-clock time REA observed the
+request start (a few milliseconds after the browser started it), and each
+`request-finished` or `request-failed` event carries `elapsed_ms`, the browser's
+own time from the request start to the end of its response, when the browser
+reports one. The environment views time scenario records from these, as HAR
+entries are timed; captures made before these fields existed lack them and are
+read in record order. Scenario comparisons ignore both fields
+(`ignore_network_request_timing`).
 Requests sharing a URL remain distinct. Redirects link to the preceding
 transaction only when it was observed; a null predecessor does not establish
 that no earlier hop existed. Request events require both transaction fields;
