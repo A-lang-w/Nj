@@ -219,7 +219,7 @@ const expectHarnessFailureCleanup = async (
     .map((line) => JSON.parse(line));
   const ready = events.find(({ kind }) => kind === "ready");
   expect(ready).toBeDefined();
-  expect(ready.runId).toMatch(/^rea-package-command-/);
+  expect(ready.runId).toMatch(/^rea-verifier-command-/);
   expect(ready.descendantRunId).toBe(ready.runId);
   expectRootCleanupAfterProcessExit(events, ready.runtime, [
     ready.leader,
@@ -316,7 +316,7 @@ it.skipIf(process.platform === "win32").each([
       const observed = JSON.parse(await readFile(report, "utf8"));
       expect(observed.reason).toBe("timeout");
       expect(observed.pids).toHaveLength(2);
-      expect(observed.runId).toMatch(/^rea-package-command-/);
+      expect(observed.runId).toMatch(/^rea-verifier-command-/);
       expect(observed.descendantRunId).toBe(observed.runId);
       expect(observed.rootExists).toBe(denied);
       expect(observed.livePids.sort()).toEqual(
