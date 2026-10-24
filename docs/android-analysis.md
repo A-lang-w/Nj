@@ -157,6 +157,10 @@ exact. The field reports `null` when no value is encoded, the encoded value is
 null or of another kind, or the field is not `static final`. The value is read from parsed
 metadata without generating source, and a static initializer can still assign
 the field; use `inspect_android_method` on `<clinit>` for that evidence.
+Only `inspect_android_class` asks the bridge for these values.
+`inspect_android_method` and `trace_android_references` read the member-only
+class summary, so large encoded strings cannot push their member lookup past
+the 8 MiB protocol frame limit.
 
 Smali fallbacks select one complete block using the original method name and DEX
 descriptor, before applying the source byte limit. This preserves the selected

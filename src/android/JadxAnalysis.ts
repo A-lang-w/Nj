@@ -70,8 +70,13 @@ const classSummary = async (
     { operation: "inspect_android_package" | "search_android_classes" }
   >,
 ): Promise<ClassSummary> => {
+  // Only class inspection reports DEX static values; method and reference
+  // lookups keep the member-only summary so large constants cannot block them.
   const raw = await tools.json("get_class_summary", {
     class_name: request.input.class_name,
+    ...(request.operation === "inspect_android_class"
+      ? { dex_static_values: true }
+      : {}),
   });
   if (
     raw !== null &&

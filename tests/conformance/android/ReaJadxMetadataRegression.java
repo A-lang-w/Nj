@@ -379,7 +379,9 @@ public class ReaJadxMetadataRegression {
         "WIDE", "{\"type\":\"short\",\"value\":32767}");
     // Null, unencoded, non-final and instance fields have no reportable DEX static value.
     Set<String> absent = Set.of("NOTHING", "INSTANCE", "COUNTER", "width");
-    JsonObject summary = call(handle, bridge, "get_class_summary", arguments("fixture.ConstantFields"));
+    JsonObject valuesInput = arguments("fixture.ConstantFields");
+    valuesInput.addProperty("dex_static_values", true);
+    JsonObject summary = call(handle, bridge, "get_class_summary", valuesInput);
     ClassNode node = session.getClasses().stream()
         .filter(cls -> cls.getFullName().equals("fixture.ConstantFields"))
         .findFirst().orElseThrow().getClassNode();
@@ -397,16 +399,34 @@ public class ReaJadxMetadataRegression {
     // Fields assigned only by <clinit> carry a JADX null placeholder, not a DEX value.
     for (String[] assigned : new String[][] {
         { "fixture.InitializationPolicy", "POLICY" }, { "fixture.MixedInitialization", "LABEL" } }) {
-      for (JsonElement entry : call(handle, bridge, "get_class_summary", arguments(assigned[0]))
+      JsonObject assignedInput = arguments(assigned[0]);
+      assignedInput.addProperty("dex_static_values", true);
+      for (JsonElement entry : call(handle, bridge, "get_class_summary", assignedInput)
           .getAsJsonArray("fields")) {
         JsonObject field = entry.getAsJsonObject();
         if (field.get("name").getAsString().equals(assigned[1]))
           require(!field.has("dex_static_value"), "Initializer-assigned field reported a value: " + field);
       }
     }
-    require(summary.equals(call(handle, bridge, "get_class_summary", arguments("fixture.ConstantFields"))),
+    require(summary.equals(call(handle, bridge, "get_class_summary", valuesInput)),
         "Repeated constant field summary changed");
-    System.out.println("CONSTANT_FIELD_REGRESSION_PASS encoded=" + encoded.size() + " absent=" + absent.size());
+    // Method and reference lookups omit the flag and must get the member-only summary.
+    JsonObject members = call(handle, bridge, "get_class_summary", arguments("fixture.ConstantFields"));
+    JsonObject stripped = summary.deepCopy();
+    for (JsonElement entry : stripped.getAsJsonArray("fields")) entry.getAsJsonObject().remove("dex_static_value");
+    require(members.equals(stripped), "Default class summary carried DEX static values: " + members);
+    JsonObject explicitOff = arguments("fixture.ConstantFields");
+    explicitOff.addProperty("dex_static_values", false);
+    require(members.equals(call(handle, bridge, "get_class_summary", explicitOff)),
+        "dex_static_values=false returned DEX static values");
+    JsonObject malformed = arguments("fixture.ConstantFields");
+    malformed.addProperty("dex_static_values", "true");
+    boolean refused = false;
+    try { call(handle, bridge, "get_class_summary", malformed); }
+    catch (AssertionError failure) { refused = failure.getCause() instanceof IllegalArgumentException; }
+    require(refused, "Non-boolean dex_static_values was accepted");
+    System.out.println("CONSTANT_FIELD_REGRESSION_PASS encoded=" + encoded.size() + " absent=" + absent.size()
+        + " opt_in=true");
   }
 
   private static void verifyMergedMethods(Method handle, Object bridge) throws Exception {

@@ -91,7 +91,7 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
-      /CONSTANT_FIELD_REGRESSION_PASS encoded=9 absent=4/u,
+      /CONSTANT_FIELD_REGRESSION_PASS encoded=9 absent=4 opt_in=true/u,
     );
     assert.match(
       result.stdout,

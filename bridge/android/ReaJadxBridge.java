@@ -42,7 +42,8 @@ class ReaJadxBridge {
 
   private record MethodSnapshot(String name, String rawName, String shortId, List<String> bodyAbsenceMarkers,
       Map<String, Object> summary) {}
-  private record ClassSnapshot(JavaClass node, List<MethodSnapshot> methods, Map<String, Object> summary) {}
+  private record ClassSnapshot(JavaClass node, List<MethodSnapshot> methods, Map<String, Object> summary,
+      Map<String, Object> summaryWithValues) {}
   private record ManifestSnapshot(String text, Map<String, Object> summary) {}
 
   private static final class InputFailure extends IllegalArgumentException {
@@ -142,6 +143,14 @@ class ReaJadxBridge {
     if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())
       throw new IllegalArgumentException(name + " must be a string");
     return value.getAsString();
+  }
+
+  private static boolean flag(JsonObject args, String name) {
+    JsonElement value = args.get(name);
+    if (value == null) return false;
+    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean())
+      throw new IllegalArgumentException(name + " must be a boolean");
+    return value.getAsBoolean();
   }
 
   private static int integer(JsonObject args, String name, int fallback) {
@@ -265,23 +274,39 @@ class ReaJadxBridge {
                 "dex_descriptor", descriptor,
                 "is_constructor", method.isConstructor(), "def_pos", 0));
           }).toList();
-          List<Map<String, Object>> fields = node.getFields().stream()
-              .sorted(Comparator.comparing(FieldNode::getAlias))
-              .map(field -> {
-                Map<String, Object> entry = new LinkedHashMap<>(Map.of("name", field.getAlias(),
-                    "type", field.getType().toString(), "def_pos", 0));
-                Map<String, Object> value = dexStaticValue(field);
-                if (value != null) entry.put("dex_static_value", value);
-                return Collections.unmodifiableMap(entry);
-              }).toList();
+          List<FieldNode> orderedFields = new ArrayList<>(node.getFields());
+          orderedFields.sort(Comparator.comparing(FieldNode::getAlias));
+          List<Map<String, Object>> fields = new ArrayList<>();
+          List<Map<String, Object>> valuedFields = new ArrayList<>();
+          boolean anyValue = false;
+          for (FieldNode field : orderedFields) {
+            Map<String, Object> entry = Map.of("name", field.getAlias(),
+                "type", field.getType().toString(), "def_pos", 0);
+            fields.add(entry);
+            Map<String, Object> value = dexStaticValue(field);
+            if (value == null) valuedFields.add(entry);
+            else {
+              anyValue = true;
+              Map<String, Object> valued = new LinkedHashMap<>(entry);
+              valued.put("dex_static_value", value);
+              valuedFields.add(Collections.unmodifiableMap(valued));
+            }
+          }
           List<String> inner = node.getInnerClasses().stream().map(ClassNode::getFullName).toList();
           Map<String, Object> summary = Map.of(
               "full_name", cls.getFullName(), "name", cls.getName(),
               "method_count", methods.size(), "field_count", fields.size(),
               "inner_class_count", inner.size(), "inner_classes", inner,
-              "methods", methods.stream().map(MethodSnapshot::summary).toList(), "fields", fields);
+              "methods", methods.stream().map(MethodSnapshot::summary).toList(), "fields", List.copyOf(fields));
+          // DEX static values are opt-in, so method and reference lookups keep the member-only reply.
+          Map<String, Object> summaryWithValues = summary;
+          if (anyValue) {
+            Map<String, Object> copy = new LinkedHashMap<>(summary);
+            copy.put("fields", List.copyOf(valuedFields));
+            summaryWithValues = Collections.unmodifiableMap(copy);
+          }
           index.computeIfAbsent(cls.getFullName(), ignored -> new ArrayList<>())
-              .add(new ClassSnapshot(cls, methods, summary));
+              .add(new ClassSnapshot(cls, methods, summary, summaryWithValues));
         }
       }
       classes = Collections.unmodifiableMap(index);
@@ -468,7 +493,8 @@ class ReaJadxBridge {
           "items", items));
     }
     ClassSnapshot cls = selected(args);
-    if (name.equals("get_class_summary")) return json(cls.summary());
+    if (name.equals("get_class_summary"))
+      return json(flag(args, "dex_static_values") ? cls.summaryWithValues() : cls.summary());
     if (name.equals("get_method_body")) {
       List<MethodSnapshot> overloads = methods(cls, args);
       int index = integer(args, "overload_index", 0);
@@ -593,9 +619,12 @@ class ReaJadxBridge {
       if (name.equals("list_classes")) properties.put("query",
           new kotlinx.serialization.json.JsonObject(Map.of(
               "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
+      if (name.equals("get_class_summary")) properties.put("dex_static_values",
+          new kotlinx.serialization.json.JsonObject(Map.of(
+              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
       String description = switch (name) {
         case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
-        case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation.";
+        case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
         default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
       };

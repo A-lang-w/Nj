@@ -338,6 +338,77 @@ it.each([
   },
 );
 
+it.each([
+  { operation: "inspect_android_class", input: {}, values: true },
+  {
+    operation: "inspect_android_method",
+    input: { method_name: "choose", overload_index: 1 },
+    values: false,
+  },
+  {
+    operation: "trace_android_references",
+    input: { method_name: "choose", overload_index: 1 },
+    values: false,
+  },
+  { operation: "trace_android_references", input: {}, values: false },
+] as const)(
+  "requests DEX static values for $operation only when inspecting a class",
+  async ({ operation, input, values }) => {
+    const calls: Record<string, unknown>[] = [];
+    const reply = (name: string): JsonValue => {
+      if (name === "get_class_summary") return summary;
+      if (name === "get_method_body")
+        return {
+          class_name: "fixture.Target",
+          method_name: "choose",
+          full_name: "fixture.Target.choose",
+          overload_index: 1,
+          overload_count: 2,
+          dex_descriptor: "(I)V",
+          mode: "java",
+          fell_back: false,
+          markers: [],
+          body: "void choose(int value) {}",
+        };
+      return {
+        target:
+          name === "get_xrefs_to_class"
+            ? "fixture.Target"
+            : "fixture.Target.choose",
+        ...(name === "get_xrefs_to_class"
+          ? {}
+          : { overload_index: 1, reported_signature: "choose(int): void" }),
+        total: 0,
+        count: 0,
+        resolve_line: false,
+        items: [],
+      };
+    };
+    await analyzeJadxRequest(
+      {
+        listClasses: () =>
+          Promise.reject(new Error("unexpected class inventory call")),
+        json: (name, args) => {
+          calls.push({ name, ...args });
+          return Promise.resolve(reply(name));
+        },
+        text: () => Promise.reject(new Error("unexpected text call")),
+      },
+      {
+        operation,
+        input: { path: "/fixture.apk", class_name: "fixture.Target", ...input },
+      } as never,
+      {} as never,
+      engine,
+    );
+    expect(calls[0]).toEqual({
+      name: "get_class_summary",
+      class_name: "fixture.Target",
+      ...(values ? { dex_static_values: true } : {}),
+    });
+  },
+);
+
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];
   const tools: JadxToolPort = {
