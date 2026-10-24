@@ -127,6 +127,7 @@ export const toolFamilyCatalog = (sources) => {
         ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
         ...sources.javascriptRecoveryContracts
           .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+        ...sources.environmentContracts.ENVIRONMENT_TOOL_CONTRACTS,
       ],
     },
     {
@@ -272,6 +273,13 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) => name === "inspect_devicetree",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_LOAD_CONFIG_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_load_config",
         ),
     },
     {

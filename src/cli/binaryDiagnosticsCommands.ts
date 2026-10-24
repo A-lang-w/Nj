@@ -1,4 +1,5 @@
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
+import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
 import {
@@ -8,6 +9,7 @@ import {
   createElfNotesService,
   createAppleIpsService,
   createDevicetreeService,
+  createPeLoadConfigService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
@@ -115,6 +117,41 @@ export const registerBinaryDiagnosticsCommands = (
               ips,
               "rea-apple-ips",
               "inspect_apple_ips",
+              signal,
+            ),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectPeLoadConfig, {
+    description:
+      "Inspect PE TLS callbacks and load configuration without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
+      maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const elf = createPeLoadConfigService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectPeLoadConfig,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                elf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_callbacks: options.maxCallbacks,
+                  },
+                  { signal },
+                ),
+              elf,
+              "rea-pe-load-config",
+              "inspect_pe_load_config",
               signal,
             ),
         );
@@ -269,10 +306,18 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local flattened devicetree image"),
     }),
     options: z.object({
-      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes,
-      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes,
-      maxProperties: inspectDevicetreeInputSchema.shape.max_properties,
-      maxDepth: inspectDevicetreeInputSchema.shape.max_depth,
+      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
+        "Maximum FDT file size in bytes (default 4194304)",
+      ),
+      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
+        "Maximum number of device-tree nodes (default 8192)",
+      ),
+      maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
+        "Maximum number of device-tree properties (default 32768)",
+      ),
+      maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
+        "Maximum device-tree nesting depth (default 64)",
+      ),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>

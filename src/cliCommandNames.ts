@@ -76,6 +76,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectDevicetree: "inspect-devicetree",
   inspectElfNotes: "inspect-elf-notes",
   inspectAppleIps: "inspect-apple-ips",
+  inspectPeLoadConfig: "inspect-pe-load-config",
   inspectAnalysisView: "inspect-analysis-view",
   listFridaDevices: "list-frida-devices",
   listFridaProcesses: "list-frida-processes",
@@ -141,6 +142,7 @@ export const CLI_COMMANDS = Object.freeze({
   environmentServe: "environment-serve",
   environmentExport: "environment-export",
   environmentCompare: "environment-compare",
+  environmentBuild: "environment-build",
   compare: "compare",
   captureProcess: "capture-process",
   compareProcessCaptures: "compare-process-captures",
@@ -180,6 +182,7 @@ export const CLI_COMMAND_NAMES = Object.freeze(Object.values(CLI_COMMANDS));
 
 /** Canonical MCP operations reached by CLI commands with different names. */
 export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
+  "environment-build": ["export_environment_bundle"],
   analyze: ["binary_overview"],
   inspect: ["binary_overview"],
   decompile: ["procedure_pseudo_code"],
