@@ -32,6 +32,7 @@ const client = new Client({ name: "entropy-complete-task", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [join(values.runtime, "scripts/rea.mjs"), "mcp"],
+  maxBufferSize: 10485760,
   env: {
     HOME: account,
     TMPDIR: account,
