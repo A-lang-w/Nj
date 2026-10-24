@@ -988,6 +988,10 @@ const registerConfiguredAnalysisTools = (
   registerKernelModuleTool(
     server,
     kernelModule,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   registerPeLoadConfigTool(
     server,
     peLoadConfig,

@@ -123,37 +123,72 @@ export const registerBinaryDiagnosticsCommands = (
       }),
   });
   cli.command(CLI_COMMANDS.inspectKernelModule, {
-    description: "Inspect Linux kernel module metadata without executing the module",
-    args: z.object({ path: localPathStringSchema.describe("Local ELF32/ELF64 kernel module or compressed .ko container") }),
-    options: {
+    description:
+      "Inspect Linux kernel module metadata without executing the module",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF32/ELF64 kernel module or compressed .ko container",
+      ),
+    }),
+    options: z.object({
       maxFileBytes: inspectKernelModuleInputSchema.shape.max_file_bytes,
       maxEntries: inspectKernelModuleInputSchema.shape.max_entries,
-    },
-    run: ({ args, options }) => withCommandCancellation(async (signal) => {
-      const kernelModule = createKernelModuleService();
-      return await logCliCommand(logger, CLI_COMMANDS.inspectKernelModule, async () =>
-        finishAnalysisCommand(() => kernelModule.inspect({
-          path: absoluteCallerPath(args.path), max_file_bytes: options.maxFileBytes,
-          max_entries: options.maxEntries,
-        }, { signal }), kernelModule, "rea-kernel-module", "inspect_kernel_module", signal));
     }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const kernelModule = createKernelModuleService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectKernelModule,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                kernelModule.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                  },
+                  { signal },
+                ),
+              kernelModule,
+              "rea-kernel-module",
+              "inspect_kernel_module",
+              signal,
+            ),
+        );
+      }),
   });
   cli.command(CLI_COMMANDS.inspectPeLoadConfig, {
-    description: "Inspect PE TLS callbacks and load configuration without executing the image",
-    args: z.object({ path: localPathStringSchema.describe("Local PE32/PE32+ image") }),
-    options: {
+    description:
+      "Inspect PE TLS callbacks and load configuration without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
+    options: z.object({
       maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
       maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
-    },
-    run: ({ args, options }) => withCommandCancellation(async (signal) => {
-      const peLoadConfig = createPeLoadConfigService();
-      return await logCliCommand(logger, CLI_COMMANDS.inspectPeLoadConfig, async () =>
-        finishAnalysisCommand(() => peLoadConfig.inspect({
-          path: absoluteCallerPath(args.path), max_file_bytes: options.maxFileBytes,
-          max_callbacks: options.maxCallbacks,
-        }, { signal }), peLoadConfig, "rea-pe-load-config", "inspect_pe_load_config", signal));
     }),
-  });
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const elf = createPeLoadConfigService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectPeLoadConfig,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                elf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_callbacks: options.maxCallbacks,
+                  },
+                  { signal },
+                ),
+              elf,
+              "rea-pe-load-config",
+              "inspect_pe_load_config",
               signal,
             ),
         );
