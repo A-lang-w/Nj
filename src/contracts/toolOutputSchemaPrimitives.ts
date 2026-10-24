@@ -58,6 +58,7 @@ export const targetFormatSchema = z.enum([
   "raw-binary",
   "gamecube-dol",
   ...ZIP_PACKAGE_FORMATS,
+  "gzip",
   "asar",
   "godot-pck",
   "dmg",

@@ -29,7 +29,7 @@ const packageRunnerEnvironment = {
   HOPPER_LAUNCHER_PATH: "/fixture/Hopper",
 } as const;
 
-describe("setup registration package-runner prewarm", () => {
+describe("setup registration package-runner prewarm execution", () => {
   it("materializes the pinned runner cache once after configuring clients", async () => {
     const root = await createTestTempDirectory("rea-setup-prewarm-");
     roots.push(root);
@@ -147,7 +147,9 @@ describe("setup registration package-runner prewarm", () => {
       detail: "The pinned package-runner entry could not be materialized",
     });
   });
+});
 
+describe("setup registration package-runner prewarm fallback", () => {
   it("omits the prewarm summary when the host offers no capability", async () => {
     const root = await createTestTempDirectory("rea-setup-prewarm-absent-");
     roots.push(root);

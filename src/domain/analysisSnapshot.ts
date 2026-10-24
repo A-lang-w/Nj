@@ -63,6 +63,7 @@ const formatSchema = z.enum([
   "raw-binary",
   "gamecube-dol",
   "zip",
+  "gzip",
   "ipa",
   "apk",
   "msix",
@@ -93,6 +94,15 @@ const subjectFormatSchema = z.enum([
   "entitlements",
   "pyinstaller",
   "node-sea",
+  "7z",
+  "tar",
+  "bzip2",
+  "xz",
+  "wasm",
+  "sqlite",
+  "dex",
+  "jvm-class",
+  "python-bytecode",
 ]);
 // Snapshot entries retain the same raw-only architecture boundary as targets.
 const subjectSchema = z.discriminatedUnion("format", [

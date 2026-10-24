@@ -28,6 +28,7 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { SafeOutputTree } from "../SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
+import { GzipArtifactReader } from "../GzipArtifactReader.js";
 import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NodeSeaArtifactReader } from "../NodeSeaArtifactReader.js";
@@ -547,6 +548,7 @@ const requireExtractableFormat = async (
     !directory &&
     format !== "asar" &&
     format !== "godot-pck" &&
+    format !== "gzip" &&
     format !== "mach-o-universal" &&
     !isZipPackageFormat(format)
   ) {
@@ -599,6 +601,8 @@ const createReader = async (
   if (containerFormat === "pyinstaller")
     return new PyInstallerArtifactReader(path);
   if (containerFormat === "node-sea") return new NodeSeaArtifactReader(path);
+  if (containerFormat === "gzip" || format === "gzip")
+    return new GzipArtifactReader(path);
   if (await requireExtractableFormat(path, input, signal))
     return new DirectoryArtifactReader(path);
   if (format === "asar")
