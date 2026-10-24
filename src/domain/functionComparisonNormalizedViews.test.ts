@@ -158,7 +158,7 @@ describe("wallace relocation-only function pair", () => {
         },
         limitations: expect.arrayContaining([
           expect.stringContaining(
-            "exact calls dimension is unknown; normalized equality cannot establish callee identity or call order",
+            "normalized equality cannot establish callee identity or call order",
           ),
         ]),
       });
@@ -1748,5 +1748,162 @@ describe("normalized view targets outside the exact calls comparison", () => {
           expect.stringContaining("exact calls dimension does not compare"),
         ]),
       });
+  });
+});
+
+describe("normalized view callee thunk targets", () => {
+  it("keeps a retargeted callee thunk unknown even when exact calls are unchanged", () => {
+    const make = (base: string, callee: string, thunkTarget: string) => {
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { FUN_${BigInt(thunkTarget).toString(16)}(); }`,
+        assembly: [`${base}: PUSH EBP`],
+        callees: [
+          { address: callee, name: "helper", thunk_target: thunkTarget },
+        ],
+      });
+      return {
+        ...dossier,
+        facet_availability: {
+          callers: { available: true as const },
+          callees: { available: true as const },
+        },
+        // A named callee keeps its identity across builds.
+        callees: dossier.callees.map((item) => ({
+          ...item,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        })),
+      };
+    };
+    const observeComplete = (digest: string, dossier: object): Evidence =>
+      createEvidence(
+        {
+          path: `/tmp/thunk-${digest}`,
+          sha256: digest.repeat(64),
+          format: "pe",
+          architecture: "x86",
+        },
+        G_HIDRA,
+        {
+          operation: "analyze_function",
+          parameters: enhancedInputSchemas.analyze_function.parse({
+            procedure: "fixture",
+          }),
+          result: jsonValueSchema.parse(
+            functionDossierSchema.parse(wallaceDossier(dossier)),
+          ),
+          confidence: "observed",
+          authority: "shipped-artifact",
+          relationshipCoverage: { status: "complete" },
+        },
+      );
+    // The callee keeps its name while its thunk now points elsewhere.
+    const before = observeComplete(
+      "7",
+      make("0x411700", "0x411800", "0x411860"),
+    );
+    const after = observeComplete(
+      "8",
+      make("0x511700", "0x511800", "0x5118a0"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unchanged" });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("exact calls dimension does not compare"),
+      ]),
+    });
+  });
+});
+
+describe("normalized view source citations", () => {
+  it("rejects a normalized view that does not cite both selected sources", () => {
+    const [before, after] = syntheticPair(
+      addressRelocationText("0x411700"),
+      addressRelocationText("0x4116f0"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    const [first, second] = result.normalized_views!.views;
+    const evidence = createEvidence(
+      undefined,
+      {
+        id: "rea-function-comparison",
+        name: "REA function comparison",
+        version: "1",
+      },
+      {
+        predicateType: "rea.function-comparison",
+        operation: "compare_functions",
+        parameters: {
+          left_evidence_id: before.evidence_id,
+          right_evidence_id: after.evidence_id,
+          include_normalized_views: true,
+        },
+        result: jsonValueSchema.parse({
+          ...result,
+          normalized_views: {
+            ...result.normalized_views!,
+            views: [
+              {
+                ...first!,
+                evidence_links: [before.evidence_id, before.evidence_id],
+              },
+              second!,
+            ],
+          },
+        }),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [before.evidence_id, after.evidence_id],
+      },
+    );
+    const read = readComparisonResult(evidence, "compare_functions");
+    expect(read.ok).toBe(false);
+    expect(read.ok ? undefined : read.error.message).toMatch(
+      /cite both selected/u,
+    );
+  });
+
+  it("recognizes a named symbol under a long nested template qualifier", () => {
+    const qualifier = `${Array.from({ length: 400 }, (_, index) => `n${index}<t${index}>`).join("::")}::`;
+    const withSymbol = (address: string) => {
+      const dossier = addressRelocationText(address);
+      const name = `${qualifier}${dossier.procedure.name}`;
+      return {
+        ...dossier,
+        pseudocode: dossier.pseudocode.replace(dossier.procedure.name, name),
+        procedure: {
+          ...dossier.procedure,
+          name,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined" as const,
+          },
+        },
+      };
+    };
+    const result = compareFunctions(
+      ...syntheticPair(withSymbol("0x411700"), withSymbol("0x4116f0")),
+      { includeNormalizedViews: true },
+    );
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "changed",
+      masking: { left: { address_derived_identifiers: 0 } },
+    });
   });
 });

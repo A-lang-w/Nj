@@ -28,7 +28,7 @@ export interface AddressProjection {
     location: TextAddressLocation,
   ) => AddressMask | null;
   readonly isCalleeAddress: (address: bigint) => boolean;
-  /** Whether the exact calls dimension compares this callee (the callees facet). */
+  /** Whether the exact calls dimension compares this callee endpoint. */
   readonly isComparedCalleeAddress: (address: bigint) => boolean;
 }
 
@@ -51,18 +51,17 @@ export const createFunctionAddressProjection = (
     values
       .map((value) => parseAddress((value ?? "").toLowerCase()))
       .filter((value): value is bigint => value !== null);
-  // The exact calls dimension compares only the callees facet.
+  // The exact calls dimension compares only callee endpoints; it never reads
+  // a callee's classification, so its thunk target stays uncompared.
   const comparedCallees = new Set(
-    parsed(
-      snapshot.dossier.callees.flatMap((callee) => [
-        callee.address,
-        callee.classification?.thunk_target,
-      ]),
-    ),
+    parsed(snapshot.dossier.callees.map((callee) => callee.address)),
   );
   const calleeAddresses = new Set([
     ...comparedCallees,
     ...parsed([
+      ...snapshot.dossier.callees.map(
+        (callee) => callee.classification?.thunk_target,
+      ),
       ...outgoingCallTargets(snapshot),
       snapshot.dossier.procedure.classification?.thunk_target,
     ]),
@@ -236,28 +235,24 @@ const outgoingCallTargets = (
 
 interface NamedSymbolIndex {
   readonly names: ReadonlySet<string>;
-  /** Qualifier prefixes keyed by every tail that starts after a non-word character. */
-  readonly prefixesByTail: ReadonlyMap<string, readonly string[]>;
+  /** Named symbols keyed by their final run of word characters. */
+  readonly namesByLastRun: ReadonlyMap<string, readonly string[]>;
 }
 
-const WORD_CHARACTER = /[0-9A-Za-z_]/u;
+const lastWordRun = (value: string): string | undefined =>
+  /[0-9A-Za-z_]+$/u.exec(value)?.[0];
 
-/** Index named symbols once, so each matched token is a direct lookup. */
+/** Index named symbols once, in linear space, so each token is a direct lookup. */
 const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
-  const prefixesByTail = new Map<string, string[]>();
-  for (const name of names)
-    for (let start = 1; start < name.length; start += 1) {
-      if (
-        WORD_CHARACTER.test(name[start - 1] ?? "") ||
-        !WORD_CHARACTER.test(name[start] ?? "")
-      )
-        continue;
-      const tail = name.slice(start);
-      const prefixes = prefixesByTail.get(tail) ?? [];
-      prefixes.push(name.slice(0, start));
-      prefixesByTail.set(tail, prefixes);
-    }
-  return { names, prefixesByTail };
+  const namesByLastRun = new Map<string, string[]>();
+  for (const name of names) {
+    const run = lastWordRun(name);
+    if (run === undefined) continue;
+    const bucket = namesByLastRun.get(run) ?? [];
+    bucket.push(name);
+    namesByLastRun.set(run, bucket);
+  }
+  return { names, namesByLastRun };
 };
 
 /**
@@ -265,12 +260,21 @@ const indexNamedSymbols = (names: ReadonlySet<string>): NamedSymbolIndex => {
  * a qualified name whose exact qualifier precedes it in the same code segment.
  */
 const isNamedOccurrence = (
-  { names, prefixesByTail }: NamedSymbolIndex,
+  { names, namesByLastRun }: NamedSymbolIndex,
   { code, index, match }: IdentifierOccurrence,
-): boolean =>
-  names.has(match) ||
-  (prefixesByTail.get(match)?.some((prefix) => code.endsWith(prefix, index)) ??
-    false);
+): boolean => {
+  if (names.has(match)) return true;
+  const run = lastWordRun(match);
+  return (
+    run !== undefined &&
+    (namesByLastRun.get(run) ?? []).some(
+      (name) =>
+        name.length > match.length &&
+        name.endsWith(match) &&
+        code.endsWith(name.slice(0, -match.length), index),
+    )
+  );
+};
 
 /** A producer-reported named symbol is an identity even when it looks address-derived. */
 const namedSymbolNames = (snapshot: FunctionSnapshot): Set<string> => {
