@@ -311,6 +311,15 @@ that derived observation. A corrected raw-text projection that exceeds
 `limits.output_bytes` returns a typed capacity failure with collected facts in
 partial observations. No additional raw-screen copy or replay is retained.
 
+Before failure cleanup renders retained observations, REA cancels scheduled
+interactions, waits for sampling to stop, and stops the owned process group.
+The terminal finalizer then freezes PTY input, retains normalized and rendered
+facts, and releases the renderer. Cleanup retry reuses those completed facts.
+All new captures commit
+`terminal_observation_version: "deferred-rendered-journal-v1"`, including when
+PID and port normalization are disabled. Historical Evidence remains readable;
+recapture both sides with the same observation version before comparison.
+
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
 sibling filename such as `tool-helper`; selected parent directories still
@@ -473,7 +482,8 @@ Every capture requires `truncation_details`, with separate accounting for:
   input, so raw omissions also limit rendered coverage. `unknown_size_frames`
   counts frames whose complete size was not calculated; it does not by itself
   identify normalization as the cause. `normalization_over_budget_frames`
-  identifies omissions caused by an ordered normalization stage.
+  counts the subset of unknown-size frames stopped by an ordered normalization
+  stage; it cannot exceed `unknown_size_frames`.
   `observed_bytes` includes only rendered frame sizes determined exactly.
 - `filesystem_before` and `filesystem_after`: file-count/depth limits,
   enumeration failures, whole-file hash budget and bytes successfully hashed.

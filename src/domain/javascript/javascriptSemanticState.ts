@@ -195,6 +195,10 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Browser receivers proven to be only the ambient global identity. */
+  readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
+  readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Writes and opaque escapes share source-site ordering at identity captures. */
@@ -626,16 +630,13 @@ export const semanticBindingHasPriorValueWrite = (
   );
 };
 
-/** Program `var` redeclarations retain wrapper identity until a source write. */
+/** Explicit wrapper facts and program `var` redeclarations retain their lexical identity. */
 export const commonJsWrapperBindingDeclaration = (
   node: t.Node,
   name: string,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticBindingState | undefined => {
-  // Parser sourceType separates explicit modules from script/CommonJS source;
-  // specifier resolution mode does not establish that distinction.
   if (
-    state.program.sourceType !== "script" ||
     !["module", "exports", "require", "__dirname", "__filename"].includes(
       name,
     ) ||
@@ -645,9 +646,17 @@ export const commonJsWrapperBindingDeclaration = (
   const binding = resolveSemanticBindingState(state, node, name);
   if (binding === undefined) return undefined;
   const scope = state.scopesById.get(binding.scopeId);
-  return scope?.kind === "program" &&
-    binding.declarationKinds.size > 0 &&
-    [...binding.declarationKinds].every((kind) => kind === "var")
+  if (
+    scope?.kind !== "program" ||
+    ![...binding.declarationKinds].every((kind) => kind === "var")
+  )
+    return undefined;
+  // The index owns explicit wrapper parameters, including ones with no source
+  // redeclaration. Babel's module classification does not invalidate that fact.
+  if (binding.hostOrigin === "commonjs-wrapper") return binding;
+  // Without an explicit host fact, preserve the legacy script-var inference.
+  return state.program.sourceType === "script" &&
+    binding.declarationKinds.size > 0
     ? binding
     : undefined;
 };

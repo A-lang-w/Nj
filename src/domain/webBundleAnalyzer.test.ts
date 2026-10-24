@@ -1366,8 +1366,9 @@ describe("web bundle selected bindings and reachable waits", () => {
     '(async () => { (await ready).value ??= new Socket("wss://example.test/selected"); })(); const Socket = globalThis.WebSocket;',
     '(async () => { switch (kind) { case 0: await ready; new Socket("wss://example.test/selected"); } })(); const Socket = globalThis.WebSocket;',
     '(async () => { switch (kind) { default: 0; await ready; new Socket("wss://example.test/selected"); } })(); const Socket = globalThis.WebSocket;',
-    'import ws = require("ws"); const other = require("ws"); ws = {}; ws.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
-    'import ws = require("ws"); const other = require("ws"); ws = {}; const replacement = ws; replacement.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
+    // export= declares a CommonJS fixture, where the bare require is available.
+    'export = {}; import ws = require("ws"); const other = require("ws"); ws = {}; ws.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
+    'export = {}; import ws = require("ws"); const other = require("ws"); ws = {}; const replacement = ws; replacement.WebSocket = class {}; new other.WebSocket("wss://example.test/selected");',
     'Array.prototype[Symbol.iterator] = function* () { yield class {}; }; const { 0: Socket } = [globalThis.WebSocket]; new Socket("wss://example.test/selected");',
     'let box; const { WebSocket: Socket, unused = (box.WebSocket = class {}) } = (box = { WebSocket: globalThis.WebSocket }); new Socket("wss://example.test/selected");',
     'let box; const { 0: Socket, unused = (box.length = 0) } = (box = [globalThis.WebSocket]); new Socket("wss://example.test/selected");',
@@ -1746,7 +1747,8 @@ describe("web bundle mandatory operands and literal projections", () => {
     'const Socket = ws.WebSocket; import ws = require("ws");',
     'import ws = require("ws"); ws.WebSocket = class {}; const Socket = ws.WebSocket;',
     'import ws = require("ws"); const alias = ws; alias.WebSocket = class {}; const Socket = ws.WebSocket;',
-    'import ws = require("ws"); require("ws").WebSocket = class {}; const Socket = ws.WebSocket;',
+    // This mutation executes in CommonJS; an unbound ESM require is not a loader.
+    'export = {}; import ws = require("ws"); require("ws").WebSocket = class {}; const Socket = ws.WebSocket;',
     "const [Socket] = [...items, globalThis.WebSocket];",
     "const [Socket = globalThis.WebSocket] = [];",
     "const [Socket] = [class {}];",

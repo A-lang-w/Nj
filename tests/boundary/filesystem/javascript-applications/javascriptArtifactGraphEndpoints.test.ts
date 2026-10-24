@@ -95,8 +95,8 @@ it("retains constructor captures, ws imports and template keys with their graph 
       'new Socket("wss://example.test/imported");',
       'new Captured("wss://example.test/captured");',
       'new globalThis[`WebSocket`]("wss://example.test/template");',
-      'const CommonJs = require("ws");',
-      'new CommonJs("wss://example.test/commonjs");',
+      "",
+      "",
       "const { WebSocket: Projected } = globalThis;",
       'new Projected("wss://example.test/projected");',
       "function connect() {",
@@ -104,15 +104,27 @@ it("retains constructor captures, ws imports and template keys with their graph 
       "}",
       "const Deferred = globalThis.WebSocket;",
       "connect();",
-      'const { WebSocket: Named } = require("ws");',
-      'new Named("wss://example.test/named-commonjs");',
-      'const Member = require("ws").WebSocket;',
-      'new Member("wss://example.test/member-commonjs");',
+      "",
+      "",
+      "",
+      "",
     ].join("\n"),
   );
   await writeFile(
     join(root, "import-equals.ts"),
     'import Socket = require("ws");\nnew Socket("wss://example.test/import-equals");',
+  );
+  // Keep the native loader in its real CommonJS wrapper, separate from ESM.
+  await writeFile(
+    join(root, "commonjs.cjs"),
+    [
+      'const CommonJs = require("ws");',
+      'new CommonJs("wss://example.test/commonjs");',
+      'const { WebSocket: Named } = require("ws");',
+      'new Named("wss://example.test/named-commonjs");',
+      'const Member = require("ws").WebSocket;',
+      'new Member("wss://example.test/member-commonjs");',
+    ].join("\n"),
   );
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
@@ -126,12 +138,12 @@ it("retains constructor captures, ws imports and template keys with their graph 
       ["imported", "Socket", 3, "app.js"],
       ["captured", "Captured", 4, "app.js"],
       ["template", "globalThis.WebSocket", 5, "app.js"],
-      ["commonjs", "CommonJs", 7, "app.js"],
+      ["commonjs", "CommonJs", 2, "commonjs.cjs"],
       ["projected", "Projected", 9, "app.js"],
       ["deferred", "Deferred", 11, "app.js"],
       ["import-equals", "Socket", 2, "import-equals.ts"],
-      ["named-commonjs", "Named", 16, "app.js"],
-      ["member-commonjs", "Member", 18, "app.js"],
+      ["named-commonjs", "Named", 4, "commonjs.cjs"],
+      ["member-commonjs", "Member", 6, "commonjs.cjs"],
     ] as const) {
       const observation = endpoints.find(({ observations }) =>
         observations.some(
@@ -225,7 +237,7 @@ const socketExecutionPhaseSources = {
     '(async () => { (await ready).value &&= new Socket("wss://example.test/logical-assignment"); })(); const Socket = globalThis.WebSocket;',
   "case-prefix.js":
     '(async () => { switch (kind) { case 0: await ready; new Socket("wss://example.test/case-prefix"); } })(); const Socket = globalThis.WebSocket;',
-  "rebound-import.ts":
+  "rebound-import.cts":
     'import ws = require("ws"); const other = require("ws"); ws = {}; ws.WebSocket = class {}; new other.WebSocket("wss://example.test/rebound-import");',
   "branch-alias.js":
     '(async () => { if (condition) { const pending = (async () => { await ready; new Socket("wss://example.test/invalid-branch-alias"); })(); await pending; } const Socket = globalThis.WebSocket; })();',
@@ -389,7 +401,7 @@ const socketExecutionPhaseLocations = [
   ["dead-wait", "dead-wait.js", 1],
   ["logical-assignment", "logical-rhs.js", 1],
   ["case-prefix", "case-prefix.js", 1],
-  ["rebound-import", "rebound-import.ts", 1],
+  ["rebound-import", "rebound-import.cts", 1],
   ["finally-entry", "finally-entry.js", 1],
   ["wrapped-array", "wrapped-array.js", 1],
   ["switch-await", "switch-await.js", 1],

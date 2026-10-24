@@ -265,7 +265,11 @@ Undecodable objects retain native display text with `decoding.available: false`
 and a reason, so one uncertain object does not block unrelated inspections.
 Function dossiers and `trace_feature` string matches retain this same string
 evidence, including decoding uncertainty; procedure matches keep their own
-named observation fields without invented string qualifications. Native call edges retain
+named observation fields without invented string qualifications. Tracing keeps
+same-address search alternatives, including different string encodings, in their
+original search order and shares one reference read per target address within
+the call. Reference rows are emitted once per target address, preserving any
+duplicates in the provider's observation. Native call edges retain
 Hopper's partial `CallReference` classification and exact endpoints; detailed
 reference flags remain unavailable rather than being invented. Caller and callee
 procedure inventories come from independent Hopper APIs; REA retains observed
@@ -433,6 +437,8 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+Malformed successful `lipo` output reports a format failure with its parse
+diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the
 raw `nfat_arch` count and admitted only from its extra FAT table slot when its
 in-range Mach-O header matches the row. `list_architectures` preserves the
@@ -464,6 +470,12 @@ reports an unreadable or malformed selection as `invalid_request`. A missing or
 unreadable default plist of another target reports `capability_unavailable`.
 Permission failures remain `access_denied`; output and cleanup failures retain
 their own error categories.
+
+Selected plist paths preserve filesystem resolution, including `..` after a
+directory symlink and trailing directory separators. Resource-only bundle
+sessions resolve relative selections from the bundle root with the same path
+semantics as executable sessions; the reported source path retains those
+selected segments.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
@@ -535,7 +547,12 @@ complete observation.
   when either source is incomplete. Resource wrappers retain their serialized
   class and authored runtime class, including AppKit `NSCustomResource` names.
   Invalid producer JSON and subprocess failures retain captured output with
-  their typed failure reason. Catalog-reader cleanup retains the primary
+  their typed failure reason and selected catalog path. A complete normal
+  assetutil exit declaring that exact catalog path `is not a valid AssetCatalog`,
+  or its observed `Undefined error: 0` / `invalid file` rejection, reports an
+  invalid-artifact failure. Other tool failures retain their own
+  classification; unrecognized diagnostics do not establish malformed bytes.
+  Catalog-reader cleanup retains the primary
   integrity, utility or cancellation failure and its cleanup resources; the
   provider retains catalog, Interface Builder and keyed-archive readers until
   cleanup is confirmed. A catalog failure also retains cleanup failures from
@@ -549,9 +566,11 @@ complete observation.
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
   Binary references retain their serialized type-8 UID identity; ordinary
-  dictionaries with `UID` or `CF$UID` keys remain authored data. XML has no UID
-  scalar, so its dictionary UID convention remains ambiguous with authored
-  dictionaries of the same shape. Object `kind` describes the decoded archive value: data, dates and numbers
+  dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
+  Foundation's single numeric `CF$UID` dictionary convention for references;
+  a numeric `UID` dictionary remains authored data. Reference identity follows
+  the parsed format, rather than the displayed key alone. Object `kind`
+  describes the decoded archive value: data, dates and numbers
   remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
   dictionary with the same fields remains `dictionary`.
   XML must be well-formed. Data literals use
@@ -639,6 +658,14 @@ complete observation.
   registries use paired keys and parents; objects paired with `NSRoot` are
   top-level, while nested objects keep their recorded parent. Conflicting or
   unreadable registry pairs remain incomplete hierarchy evidence.
+  `NSString` objects with the [recognized `NS.bytes` representation](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/NSString.swift#L201-L215) are decoded
+  as UTF-8 without substituting malformed bytes. A failed conversion retains
+  the source string object ID and `nibValues.NS.bytes` base64 data; dependent
+  authored classes, titles and selectors remain unknown, and object, class,
+  connection and archive-decode coverage is partial. Other decoded objects and
+  connections remain available. Genuine U+FFFD and leading U+FEFF characters in
+  valid UTF-8 retain their identity; opaque data fields are not interpreted as
+  strings. This does not establish support for other NSString representations.
   Embedded `UINib` archive data remains retained and undecoded; affected
   object, connection, class and hierarchy coverage is partial. Recognized
   `UIStoryboardShowSegueTemplate` source records similarly qualify connection
@@ -653,6 +680,10 @@ complete observation.
   non-generic, non-resilient class vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  The selected Mach-O header must match the requested CPU family for both thin
+  files and universal slices before metadata decoding. CPU subtypes and
+  capability bits remain source facts; an `arm64` request may select an
+  `arm64e` image under the existing slice preference policy.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -691,6 +722,21 @@ complete observation.
   - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
+
+  [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
+  compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
+  Dependent library install names likewise originate as
+  [load-command byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/Header.cpp#L1278-L1298)
+  and are [compared byte for byte](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/dyld/DyldAPIs.cpp#L607-L618).
+  When a symbol or applicable library name has no lossless UTF-8 text
+  projection, the affected binding remains unresolved and pointer-fixup
+  coverage is partial; later readable bindings and other metadata survive.
+  The internal fixup reader retains the exact name bytes and parsed binding
+  fields, while public Objective-C and Swift results retain the unresolved
+  reason instead of publishing a guessed symbol, library or class name. A literal
+  U+FFFD or leading BOM in valid UTF-8 remains part of the name. Legacy
+  weak-bind lookup has no library-name scope, so an opaque dependency name
+  does not prevent decoding an otherwise readable weak binding.
 
   A Swift conformance whose type or protocol reference is an external bind
   keeps its name as `null` and carries the raw dyld identity in

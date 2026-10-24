@@ -15,6 +15,13 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 // Babel's module classification includes erased TypeScript syntax. Keep the
 // runtime proof separate, including explicit filename mode, for every parser entry.
 type JavaScriptRuntimeContext = "module" | "commonjs" | "unknown";
+/** Package scope observed inside a source inventory; missing scope is unknown. */
+export type JavaScriptPackageType =
+  | "module"
+  | "commonjs"
+  | "unspecified"
+  | "unknown";
+
 const runtimeContextByProgram = new WeakMap<
   t.Program,
   JavaScriptRuntimeContext
@@ -25,6 +32,20 @@ export const javaScriptRuntimeContext = (
   program: t.Program,
 ): JavaScriptRuntimeContext =>
   runtimeContextByProgram.get(program) ?? "unknown";
+
+/** Runtime strictness follows parser-owned mode, not erased TypeScript syntax. */
+export const javaScriptProgramStrictness = (
+  program: t.Program,
+): "strict" | "sloppy" | "unknown" => {
+  if (program.directives.some(({ value }) => value.value === "use strict"))
+    return "strict";
+  const context = javaScriptRuntimeContext(program);
+  return context === "module"
+    ? "strict"
+    : context === "commonjs"
+      ? "sloppy"
+      : "unknown";
+};
 
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
@@ -53,6 +74,7 @@ const parseWithRuntimeContext = (
   source: string,
   sourcePath: string | undefined,
   options: ParserOptions,
+  packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
   runtimeContextByProgram.set(
@@ -63,13 +85,19 @@ const parseWithRuntimeContext = (
         : "commonjs"
       : isExplicitModuleSourcePath(sourcePath)
         ? "module"
-        : file.program.body.some((node) => t.isTSExportAssignment(node))
-          ? // CommonJS isolation does not establish strict ESM semantics.
-            "commonjs"
-          : file.program.sourceType === "module" &&
-              hasRuntimeModuleDeclaration(file.program)
-            ? "module"
-            : "unknown",
+        : packageContext === "module" || packageContext === "commonjs"
+          ? packageContext
+          : packageContext === "unspecified" && /\.js$/iu.test(sourcePath ?? "")
+            ? file.program.sourceType === "module"
+              ? "module"
+              : "commonjs"
+            : file.program.body.some((node) => t.isTSExportAssignment(node))
+              ? // CommonJS isolation does not establish strict ESM semantics.
+                "commonjs"
+              : file.program.sourceType === "module" &&
+                  hasRuntimeModuleDeclaration(file.program)
+                ? "module"
+                : "unknown",
   );
   return file;
 };
@@ -147,8 +175,25 @@ export const parseRecoveredJavaScript = (
   source: string,
   sourcePath: string | undefined,
   options: Omit<ParserOptions, "sourceType" | "errorRecovery">,
+  observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
-  const sourceType = runtimeSourceTypeForPath(sourcePath);
+  const filenameType = runtimeSourceTypeForPath(sourcePath);
+  // Node package facts apply to .js/.ts sources, not explicit suffixes,
+  // declaration wrappers, or an unknown JSX compilation pipeline.
+  const packageContext =
+    /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
+    !/\.d\.ts$/iu.test(sourcePath ?? "")
+      ? observedPackageType
+      : undefined;
+  // Retain TypeScript import syntax for later CommonJS compilation.
+  const sourceType =
+    filenameType !== "unambiguous"
+      ? filenameType
+      : packageContext === "module"
+        ? "module"
+        : packageContext === "commonjs" && /\.js$/iu.test(sourcePath ?? "")
+          ? "commonjs"
+          : "unambiguous";
   if (sourceType !== "unambiguous") {
     const normalizedOptions = { ...options };
     if (sourceType === "commonjs") {
@@ -159,32 +204,50 @@ export const parseRecoveredJavaScript = (
       delete normalizedOptions.allowNewTargetOutsideFunction;
     }
     return {
-      file: parseWithRuntimeContext(source, sourcePath, {
-        ...normalizedOptions,
-        sourceType,
-        errorRecovery: true,
-      }),
+      file: parseWithRuntimeContext(
+        source,
+        sourcePath,
+        {
+          ...normalizedOptions,
+          sourceType,
+          errorRecovery: true,
+        },
+        packageContext,
+      ),
       moduleOnlyErrors: [],
     };
   }
-  const file = parseWithRuntimeContext(source, sourcePath, {
-    ...options,
-    sourceType: "unambiguous",
-    errorRecovery: true,
-  });
+  const file = parseWithRuntimeContext(
+    source,
+    sourcePath,
+    {
+      ...options,
+      sourceType: "unambiguous",
+      errorRecovery: true,
+    },
+    packageContext,
+  );
   if (file.program.sourceType !== "script" || file.errors.length === 0)
     return { file, moduleOnlyErrors: [] };
-  const script = parseWithRuntimeContext(source, sourcePath, {
-    ...options,
-    sourceType: "script",
-    errorRecovery: true,
-  });
+  const script = parseWithRuntimeContext(
+    source,
+    sourcePath,
+    {
+      ...options,
+      sourceType: "script",
+      errorRecovery: true,
+    },
+    packageContext,
+  );
   const scriptErrors = new Set(script.errors.map((error) => error.message));
   return {
     file: script,
-    moduleOnlyErrors: file.errors
-      .map((error) => error.message)
-      .filter((message) => !scriptErrors.has(message)),
+    moduleOnlyErrors:
+      javaScriptRuntimeContext(script.program) === "commonjs"
+        ? []
+        : file.errors
+            .map((error) => error.message)
+            .filter((message) => !scriptErrors.has(message)),
   };
 };
 
