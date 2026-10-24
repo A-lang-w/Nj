@@ -26,35 +26,97 @@ again if a hint names a gap, then writes the bundle with
 
 ## Record a session an environment can learn writes from
 
-One `capture_browser_scenario`, launch mode with a Chrome-family
-`executable_path`, `start_url` on the application, and
-`capture: {network: {request_body: true, response_body: true, header_values: true}}`.
+One `capture_browser_scenario` records the whole session. Start from this
+shape, with the application's own locators, paths and headers:
 
-1. Log in through the UI: `fill` the user and password fields (the password as
-   a secret reference), `click` submit, then `wait_for` a page element only a
-   signed-in user sees.
+```json
+{
+  "browser": { "mode": "launch", "executable_path": "/usr/bin/chromium" },
+  "start_url": { "url": "http://127.0.0.1:3000/login" },
+  "secrets": [
+    { "secret_id": "admin_password", "environment_variable": "APP_PASSWORD" }
+  ],
+  "capture": {
+    "network": {
+      "request_body": true,
+      "response_body": true,
+      "header_values": true
+    }
+  },
+  "actions": [
+    {
+      "step_id": "user",
+      "action": "fill",
+      "timeout_ms": 15000,
+      "locator": { "kind": "css", "selector": "input[name=username]" },
+      "value": { "source": "literal", "value": "admin" }
+    },
+    {
+      "step_id": "password",
+      "action": "fill",
+      "timeout_ms": 15000,
+      "locator": { "kind": "css", "selector": "input[name=password]" },
+      "value": { "source": "secret", "secret_id": "admin_password" }
+    },
+    {
+      "step_id": "sign-in",
+      "action": "press",
+      "timeout_ms": 15000,
+      "locator": { "kind": "css", "selector": "input[name=password]" },
+      "key": "Enter"
+    },
+    {
+      "step_id": "signed-in",
+      "action": "wait_for",
+      "timeout_ms": 15000,
+      "locator": { "kind": "css", "selector": "nav a[href='/settings']" },
+      "state": "visible"
+    },
+    {
+      "step_id": "folders-1",
+      "action": "request",
+      "timeout_ms": 15000,
+      "method": "GET",
+      "path": "/api/folders",
+      "expected_status": [200]
+    },
+    {
+      "step_id": "create-folder-1",
+      "action": "request",
+      "timeout_ms": 15000,
+      "method": "POST",
+      "path": "/api/folders",
+      "json": { "title": "Scratch folder 1" },
+      "headers": [
+        {
+          "name": "X-CSRFToken",
+          "value": { "source": "cookie", "name": "csrftoken" }
+        }
+      ],
+      "expected_status": [200, 201]
+    }
+  ]
+}
+```
+
+Give every step a `timeout_ms`. A step without one waits until the scenario
+is cancelled, so a locator that never matches hangs the capture, and the
+client with it. Match `wait_for` locators to exactly one element.
+
+1. Sign in through the UI: `fill` the user and password fields (the password
+   as a secret reference), submit, then `wait_for` an element only a signed-in
+   user sees.
 2. Read with `request` steps: each collection the environment needs, twice
    before any write, so fields that change on their own show up; one item of
    each.
 3. Write with `request` steps, two numbered scratch objects per write type,
-   with varied free text. Read each write back at once, by id and in its list:
+   with varied free text. Read each write back at once, by id and in its list.
+4. Leave more than a second between a create and its first edit
+   (`wait_for_timeout` with `duration_ms: 1100`).
+5. Update both objects and read each back; delete both and read each back
+   (expect 404) and the list.
 
-```json
-{
-  "step_id": "create-folder-1",
-  "action": "request",
-  "method": "POST",
-  "path": "/api/folders",
-  "json": { "title": "Scratch folder 1" },
-  "headers": [
-    {
-      "name": "X-CSRFToken",
-      "value": { "source": "cookie", "name": "csrftoken" }
-    }
-  ],
-  "expected_status": [200, 201]
-}
-```
+About `request` steps:
 
 - `path` is on the start URL's origin; the page must be on that origin.
 - Header values are literals, declared secrets, a cookie the browser holds
@@ -64,15 +126,9 @@ One `capture_browser_scenario`, launch mode with a Chrome-family
   requests send (a CSRF header, a bearer token). Values read from the page
   are redacted from records made after they are read, not from the login
   response that returned them.
-- Set `expected_status` on writes, so a refused write fails its step and
+- Set `expected_status` on every step, so a refused call fails its step and
   the later steps report not having run, instead of recording read-backs of
   nothing.
-
-4. Leave more than a second between a create and its first edit
-   (`wait_for_timeout` with `duration_ms: 1100`): writes that share a second
-   with their create can lose their own timestamps.
-5. Update both objects and read each back; delete both and read each back
-   (expect 404) and the list.
 
 Keep it to about 60 to 160 requests. A scenario with no `request` step is
 recorded exactly as before.
@@ -112,6 +168,10 @@ withheld with its hint:
 
 Use new scratch names on each attempt; the first attempt's objects may still
 exist.
+A browser scenario carries no request times, so the coverage limitations say
+the state learns no clock: an update the application stamps with a
+modification time stays `unexplained-change` however it is recorded. Report
+it rather than re-recording for it.
 
 ## Export and hand off
 
