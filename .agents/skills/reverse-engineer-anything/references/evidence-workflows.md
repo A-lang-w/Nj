@@ -107,8 +107,10 @@ applied.
 Use `view: {kind: "environment-coverage"}` with the same rules to see what an
 environment built from a capture would serve: read tools answered from the
 state or replayed with their reason, and each write tool served or withheld
-with a hint about what to record next. `rea environment-build <capture.har>
-<dir>` inspects, projects and exports in one step and prints the same coverage.
+with a hint about what to record next; it does not apply the serve-time
+catalog and state size checks. `rea environment-build <capture.har> <dir>`
+inspects, projects and exports in one step and prints the same coverage, or
+`null` when the bundle serves replay.
 
 For a PE/ELF export question, `inspect_native_exports` accepts `detail: "summary"`
 and retains the complete table. Query `inspect_analysis_view` with

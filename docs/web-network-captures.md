@@ -776,8 +776,8 @@ plans from it and loads replacement states through the AgentEnv data plane, as
 ## Environment coverage
 
 `view: {"kind":"environment-coverage"}` with the same `template_rules` reports
-what an environment built from the parent would serve, without the state's
-entities: `reads.state` counts read tools answered from the state,
+what the state an environment derives from the parent would serve, without the
+state's entities: `reads.state` counts read tools answered from the state,
 `reads.recorded` those that replay their recordings with
 `reads.recorded_reasons` per view reason, `writes.served` lists the write tools
 whose effect later reads confirmed, and `writes.withheld` lists every other
@@ -787,8 +787,11 @@ about what to record next. Hints are advice; they never change what is served.
 The view projects the environment-state view and summarizes it, so it refuses
 every parent that view refuses, with the same errors, and it is always
 inferred. Call it after each recording to see which writes an environment
-built from it would serve; `rea environment-build` prints the same summary as
-its `coverage`. See
+built from it would serve. It does not apply the serve-time admission checks:
+an environment whose served catalog exceeds the discovery budget, or whose
+state exceeds what `data/add` loads, serves replay, and `rea environment-build`
+then reports `coverage: null`; otherwise the build prints this summary as its
+`coverage`. See
 [Build a bundle in one step](agent-environments.md#build-a-bundle-in-one-step)
 for the hint per reason.
 

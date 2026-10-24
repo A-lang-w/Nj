@@ -7,6 +7,7 @@
 - [x] Switch the real-agentenv lane to the build command.
 - [x] Document the command, the report, the hints and the view.
 - [x] Add domain, service, CLI and MCP tests.
-- [ ] Run static, formatting, duplication, documentation and test gates.
-- [ ] Build the 50 published captures and compare them with the three-step path.
-- [ ] Build environments end to end on Linux VMs and run them with agents.
+- [x] Run static, formatting, duplication, documentation and test gates.
+- [x] Build the 50 published captures and compare them with the three-step path.
+- [x] Build environments end to end on Linux VMs and run them with agents.
+- [x] Address the independent review.

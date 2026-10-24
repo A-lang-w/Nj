@@ -58,35 +58,44 @@ Evidence JSON from `inspect-web-network-capture` (HAR) or
 `inspect-web-network-capture` does (Evidence input skips this), projects the
 environment manifest from that Evidence as retained Evidence, authenticates
 the pair, prepares the state the bundle's server derives at startup, and
-writes the bundle with the export. For the same capture path and options every
-file it writes is byte-identical to what `inspect-web-network-capture`,
-`inspect-analysis-view` and `environment-export` write, Evidence ids included.
-It reads one file and writes one folder: it fetches nothing and launches no
-process, so record a browser scenario with `capture-browser-scenario` first
+writes the bundle with the export. For the same capture path, every file it
+writes is byte-identical to what `inspect-web-network-capture`,
+`inspect-analysis-view` and `environment-export` write, Evidence ids included,
+when `view.json` lists the same rules in the views' order and the export is
+given the build's name. It reads one file and writes one folder: it fetches
+nothing and launches no browser (HAR inspection runs REA's own decoder
+process), so record a browser scenario with `capture-browser-scenario` first
 and pass its Evidence. Other capture formats are refused, as the manifest view
-refuses them.
+refuses them, and a HAR document saved as `.json` is refused with a hint to
+name it `.har`.
 
 - `--template-rule <rule>`, repeated, replaces the default opt-in rules
   `after-uid-literal`, `opaque-token`, `sibling-variance` and
   `prefix-variance`, the rules the published capture-built environments use;
   `--format-rules-only` applies none, the views' own default. Rules apply in
-  the views' fixed order, and the report lists them.
+  the views' fixed order, the report lists them, and a repeated rule is
+  refused as the views refuse it.
 - `--name` names the env folder and env id. Without it the name is the
   manifest's, unless the capture's origin is a loopback name or an IP literal:
   the capture file then names it (`grafana.har` and `grafana.capture.json`
   become `grafana`) and a `name-from-file` warning says so. A file name that
-  yields no label is refused; pass `--name`.
-- `--package-tarball` works as for the export.
+  yields no portable label (kebab-case, at most 64 characters, not a Windows
+  device name) is refused; pass `--name`.
+- `--package-tarball` works as for the export, and `--capture-timeout-ms`
+  as for `inspect-web-network-capture`.
 - `--dry-run` runs every stage and prints the report with `status: "planned"`
   and the files a build would write, but writes nothing and does not check the
-  directory, which may then be omitted.
+  directory, which may then be omitted. It opens a `--package-tarball` for
+  reading, so it refuses the tarballs a build refuses.
 
 The directory must be absent or empty, as for the export; the build never
 replaces a folder. A refusal before the write leaves nothing behind. Each
 refusal names its stage: `environment-build` for the build's own checks,
 `inspect_web_network_capture` and `inspect_analysis_view` for inspection and
-projection, `environment-export` for the bundle. Stage progress is logged to
-stderr at info level; the report is the only output on stdout:
+projection, `environment-export` for the bundle. SIGINT cancels the build
+(`cancelled`); before the bundle stage nothing is written, and a cancellation
+during the write names the bundle it wrote. Stage progress is logged to stderr
+at info level; the report is the only output on stdout:
 
 ```json
 {
@@ -142,31 +151,38 @@ stderr at info level; the report is the only output on stdout:
 `coverage` is the state's read views and write plans summarized, and `null`
 when the state is unavailable and the bundle serves replay. The
 [environment coverage](web-network-captures.md#environment-coverage) view
-reports the same summary for any capture, so an agent can check it after each
-recording. Each withheld write carries a hint about what to record next; hints
-never change what is served:
+reports the same summary for any capture without building, so an agent can
+check it after each recording. The view summarizes the state as derived; it
+does not apply the serve-time admission checks, so for an environment whose
+served catalog exceeds the discovery budget, or whose state exceeds what
+`data/add` loads, it still reports the state while the build reports `coverage:
+null` and the bundle serves replay. Each withheld write carries a hint about
+what to record next; hints never change what is served:
 
-| Reason                | Hint                                                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                        |
-| `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                   |
-| `body-unusable`       | The request body is not a usable JSON object.                                                                                                  |
-| `no-observation`      | Nothing showed the written entity. Read it back by id right after the write.                                                                   |
-| `unexplained-change`  | The write changed fields it did not send, in a way no rule explains. A second, different call of the same tool can show the pattern.           |
-| `contradicted`        | A later read disagreed with the modelled effect. Check the read at contradicted_by.                                                            |
-| `side-effect`         | The write changed something besides its own entity, which the environment does not model.                                                      |
-| `unconfirmed`         | No later read showed the effect. Read the entity and its list after the write.                                                                 |
-| `incomplete-entities` | The write is confirmed, but the views that show its entity cannot render it in full. Read the written entity through every view that lists it. |
+| Reason                | Hint                                                                                                                                                                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
+| `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
+| `body-unusable`       | The request body is not a usable JSON object.                                                                                                                                                                                                    |
+| `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
+| `unexplained-change`  | The write changed fields it did not send, in a way no rule explains. A second, different call of the same tool can show the pattern.                                                                                                             |
+| `contradicted`        | A later read disagreed with the modelled effect. Check the read at contradicted_by.                                                                                                                                                              |
+| `side-effect`         | The write changed something besides its own entity, which the environment does not model.                                                                                                                                                        |
+| `unconfirmed`         | No later read showed the effect. Read the entity and its list after the write.                                                                                                                                                                   |
+| `incomplete-entities` | The write is confirmed, but the views that show its entity cannot render it in full. Read the written entity through every view that lists it.                                                                                                   |
 
 The bundle ships `evidence.json`, the whole capture Evidence, response bodies
-included. Inspection excludes header and cookie authentication values and URL
-userinfo; tokens an application returns in bodies remain. The environment
-views refuse captures inspected with `--sensitive-value`, so scrub a capture
-before building it. The report's `credential-named-members` warning counts
-recorded body members whose names look like credentials (whole name segments
-such as `token`, `secret`, `password`, `api_key` or `session`) and hold a
-string, and lists the first 20 by record and JSON pointer, never by value.
-Names do not establish sensitivity, so the build never refuses on them. Capture
+included. Inspection excludes the values of the standard authentication headers
+(`Authorization`, `Cookie` and `Set-Cookie` among them) and URL userinfo; a
+custom key header such as `X-Api-Key`, a token in the query string and tokens
+an application returns in bodies remain. The environment views refuse captures
+inspected with `--sensitive-value`, so scrub a capture before building it. The
+report's `credential-named-members` warning counts recorded header names, query
+parameter names and JSON or form body members whose names look like
+credentials (whole name segments such as `token`, `secret`, `password`,
+`api_key`, `authorization` or `session`) and hold a value, and lists the first
+20 by record and pointer, never by value. Names do not establish sensitivity,
+so the build never refuses on them. Capture
 Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle
 carries it: build from a neutral folder when that path should not ship.

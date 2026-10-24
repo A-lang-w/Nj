@@ -20,29 +20,39 @@ before building.
 
 - The capture is a `.har` file, inspected as `inspect-web-network-capture`
   inspects it, or capture Evidence JSON from `inspect_web_network_capture` or
-  `capture_browser_scenario`; anything else is refused before it is read.
+  `capture_browser_scenario`; any other extension is refused before it is
+  read, and a HAR document saved as `.json` is refused with a hint.
 - The manifest is projected from the in-memory capture as retained Evidence,
   with the default rules `after-uid-literal`, `opaque-token`,
   `sibling-variance` and `prefix-variance` unless `--template-rule` or
-  `--format-rules-only` selects others; rules apply in the views' order.
-- For the same capture path and options, every bundle file is byte-identical
-  to what `inspect-web-network-capture --format json`, `inspect-analysis-view
-  --format json` and `environment-export` write, Evidence ids included.
+  `--format-rules-only` selects others; rules apply in the views' order and a
+  repeated rule is refused, as the views refuse it.
+- For the same capture path, every bundle file is byte-identical to what
+  `inspect-web-network-capture --format json`, `inspect-analysis-view --format
+  json` (the same rules in the views' order) and `environment-export` (the
+  build's name) write, Evidence ids included.
 - The name is `--name`, else the manifest's, unless the origin is a loopback
   name or IP literal: then the capture file's name, with a warning; a file name
-  that yields no label is refused.
-- The report extends the export document with the capture and manifest
-  identities, the state, `coverage`, warnings and the next command. `coverage`
+  that yields no portable bundle name is refused, asking for `--name`.
+- The report carries the export's tool count, state, package source and files,
+  plus the capture and manifest identities, `coverage`, warnings and the next
+  command, shell-quoted. `coverage`
   counts read tools answered from the state and replayed (per view reason), and
   lists write tools as served or withheld with their reason, plan record, the
   contradicting read and a hint; it is null when the state is unavailable.
 - Every write reason has a hint; a reason without one fails to compile.
-- Credential-named body members with a string value are reported as a count
-  and the first 20 record pointers, never values, and never refuse a build.
-- Nothing is written before the bundle stage; `--dry-run` writes nothing and
-  reports the files a build would write. The directory must be absent or empty.
+- Credential-named header names, query parameter names and JSON or form body
+  members that hold a value are reported as a count and the first 20 record
+  pointers, never values, and never refuse a build; the scan cannot overflow
+  the stack on deeply nested bodies.
+- Nothing is written before the bundle stage; `--dry-run` writes nothing,
+  reports the files a build would write and refuses the package tarballs a
+  build refuses. The directory must be absent or empty.
+- SIGINT is checked between stages: a build cancelled before the bundle stage
+  writes nothing, and one cancelled during the write names the written bundle.
 - The `environment-coverage` view summarizes the environment-state view with
-  the same rules, refuses what it refuses and is inferred.
+  the same rules, refuses what it refuses and is inferred. It does not apply the
+  serve-time catalog and state admission checks, and says so in a limitation.
 - The `real-agentenv` lane builds its bundle with `environment-build`.
 
 ## Non-goals
