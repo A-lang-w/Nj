@@ -1,5 +1,5 @@
 """Independent CPython code-object facts; never execute target bytecode."""
-import argparse
+import getopt
 import hashlib
 import importlib.util
 import json
@@ -57,15 +57,29 @@ def describe(path, names):
                 bytecode_execution=False)
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--path', type=Path)
-parser.add_argument('--compile-control', type=Path)
-parser.add_argument('--output', required=True, type=Path)
-parser.add_argument('--names', nargs='+', default=NAMES)
-args = parser.parse_args()
+# Keep the argument parser independent of the argparse/typing targets.
+options, trailing = getopt.getopt(sys.argv[1:], '',
+                                 ['path=', 'compile-control=', 'output=', 'name='])
+if trailing:
+    raise SystemExit('Unexpected positional arguments; repeat --name NAME for selectors')
+values, selected_names = {}, []
+for key, value in options:
+    if key == '--name':
+        selected_names.append(value)
+    elif key in values:
+        raise SystemExit('Duplicate option: ' + key)
+    else:
+        values[key] = value
+if '--output' not in values:
+    raise SystemExit('--output is required')
+path = Path(values['--path']) if '--path' in values else None
+compile_control = Path(values['--compile-control']) if '--compile-control' in values else None
+output = Path(values['--output'])
+names = selected_names or NAMES
+assert all(module not in sys.modules for module in ['argparse', 'typing']), 'Oracle dependency loaded a target module'
 assert sys.implementation.name == 'cpython' and sys.version_info >= (3, 11)
-if args.compile_control:
-    directory = args.compile_control
+if compile_control:
+    directory = compile_control
     directory.mkdir(parents=True, exist_ok=False)
     source = directory / 'control.py'
     source.write_text('''class First:
@@ -81,8 +95,9 @@ class Second:
 def _parse_known_args():
     return 3
 ''', encoding='utf8')
-    args.path = directory / 'control.pyc'
-    py_compile.compile(str(source), cfile=str(args.path), dfile='control.py',
+    path = directory / 'control.pyc'
+    py_compile.compile(str(source), cfile=str(path), dfile='control.py',
                        doraise=True, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
-assert args.path is not None
-args.output.write_text(json.dumps(describe(args.path, args.names), indent=2) + '\n')
+assert path is not None
+output.write_text(json.dumps(describe(path, names), indent=2) + '\n')
+assert all(module not in sys.modules for module in ['argparse', 'typing']), 'Oracle loaded a target module'
