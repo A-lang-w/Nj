@@ -1,6 +1,6 @@
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { fc, it } from "@fast-check/vitest";
-import { describe, expect } from "vitest";
+import { describe, expect, vi } from "vitest";
 
 import { createAnalysisProfile } from "./analysisProfile.js";
 import {
@@ -13,10 +13,14 @@ import {
   parseEvidence,
   immutableEvidence,
   withEvidenceCallerInputPath,
+  rebindEvidenceToTargetPath,
 } from "./evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { freezeJsonSnapshot } from "./immutableJson.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -182,6 +186,59 @@ it("retains verbatim caller input without changing semantic identity or copying 
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
 });
+
+it.each([
+  ["caller path", ["caller"]],
+  ["subject path", ["subject"]],
+  ["caller then subject", ["caller", "subject"]],
+  ["subject then caller", ["subject", "caller"]],
+] as const)(
+  "preserves JSON ownership through %s updates without traversing payloads",
+  (_name, updates) => {
+    const original = createEvidence(
+      TARGET,
+      PROVIDER,
+      {
+        operation: "inspect",
+        parameters: {},
+        result: { nested: ["observed"] },
+        rawResult: { source: "provider" },
+      },
+      { immutable: true },
+    );
+    const ownNames = Object.getOwnPropertyNames;
+    const traversal = vi
+      .spyOn(Object, "getOwnPropertyNames")
+      .mockImplementation((value) => {
+        if (
+          value === original.normalized_result ||
+          value === original.raw_result
+        )
+          throw new Error(
+            "Metadata updates must borrow authenticated payloads",
+          );
+        return ownNames(value);
+      });
+    try {
+      let updated = original;
+      for (const field of updates)
+        updated =
+          field === "caller"
+            ? withEvidenceCallerInputPath(updated, "./selected")
+            : rebindEvidenceToTargetPath(updated, {
+                ...TARGET,
+                path: "/other/fixture",
+              });
+      expect(isImmutableJsonSnapshot(updated)).toBe(true);
+      expect(updated.normalized_result).toBe(original.normalized_result);
+      expect(updated.raw_result).toBe(original.raw_result);
+      expect(updated.evidence_id).toBe(original.evidence_id);
+      expect(parseEvidence(updated)).toBe(updated);
+    } finally {
+      traversal.mockRestore();
+    }
+  },
+);
 
 it("applies the JSON depth boundary to owned immutable results", () => {
   let result: JsonValue = 1;
