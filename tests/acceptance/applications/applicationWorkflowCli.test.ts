@@ -72,8 +72,11 @@ afterAll(async () => {
     await cliSession?.close();
   }
 });
-const WEBPACK_FACTORY_BODY = `
-  const key = "dynamic";
+/**
+ * The `__webpack_require__.d` helper webpack's runtime passes a factory. Only the
+ * CommonJS oracle defines it: inside the bundle's factory it is the parameter.
+ */
+const WEBPACK_REQUIRE_STUB = `
   const __webpack_require__ = {
     d(target, definitions) {
       for (const name of Object.keys(definitions))
@@ -83,6 +86,10 @@ const WEBPACK_FACTORY_BODY = `
         });
     },
   };
+`;
+
+const WEBPACK_FACTORY_BODY = `
+  const key = "dynamic";
   exports[key] = 1;
   exports["dot.key"] = 2;
   exports[""] = 3;
@@ -1112,7 +1119,7 @@ describe("Webpack factory CommonJS export keys", () => {
       "rea-webpack-export-oracle-",
     );
     const oraclePath = join(oracleRoot, "oracle.cjs");
-    await writeFile(oraclePath, WEBPACK_FACTORY_BODY);
+    await writeFile(oraclePath, WEBPACK_REQUIRE_STUB + WEBPACK_FACTORY_BODY);
     const actual = requireFixture(oraclePath) as Record<string, unknown>;
     expect(Reflect.ownKeys(actual).sort()).toEqual([
       "",
