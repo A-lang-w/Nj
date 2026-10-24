@@ -38,8 +38,10 @@ export const toolFamilyCatalog = (sources) => {
         ...sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
         ...sources.modelContracts.MODEL_TOOL_CONTRACTS,
         ...sources.rustContracts.RUST_TOOL_CONTRACTS,
+        ...sources.pythonPycContracts.PYTHON_PYC_TOOL_CONTRACTS,
         ...sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
         ...sources.wasmContracts.WASM_TOOL_CONTRACTS,
+        ...sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
         ...sources.sqliteContracts.SQLITE_TOOL_CONTRACTS,
         ...sources.captureContracts.CAPTURE_TOOL_CONTRACTS,
         ...sources.signalContracts.SIGNAL_TOOL_CONTRACTS,
@@ -294,6 +296,10 @@ export const providerCatalog = (sources) => {
       ),
     },
     {
+      identity: sources.apkSignatureProvider.APK_SIGNATURE_PROVIDER_IDENTITY,
+      contracts: sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
       contracts: sources.evmContracts.EVM_TOOL_CONTRACTS,
     },
@@ -316,6 +322,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.pythonPycProvider.PYTHON_PYC_PROVIDER_IDENTITY,
+      contracts: sources.pythonPycContracts.PYTHON_PYC_TOOL_CONTRACTS,
     },
     {
       identity: sources.erlangProvider.ERLANG_BEAM_PROVIDER_IDENTITY,

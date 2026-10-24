@@ -1,13 +1,14 @@
+import { MachoLoadCommandCursor } from "../domain/apple/machoLoadCommands.js";
 import { createHash } from "node:crypto";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
+import { decodeMachoName } from "./AppleMachoNames.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
   machoSubtypeRank,
 } from "./MachoArchitectureSelection.js";
 import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
-  machoLoadCommandAlignment,
   readFatSliceDeclarations,
   validateFatSlice,
   type FatSliceDeclaration,
@@ -198,15 +199,6 @@ export const parseMachoLayout = (
     });
     if (issue !== null) throw new TypeError(issue);
   }
-  if (is32Bit) {
-    if (MACHO_ARCHITECTURE_POLICIES[architecture]?.cpuType !== cpuType)
-      throw new TypeError(
-        `Mach-O CPU type does not match requested architecture ${architecture}`,
-      );
-    throw new UnsupportedMachoMetadataFormatError(
-      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
-    );
-  }
   if (selectedMagic === MH_CIGAM_64) {
     if (cpuType !== 0x01000012)
       throw new TypeError("Unsupported big-endian Mach-O CPU type");
@@ -214,6 +206,16 @@ export const parseMachoLayout = (
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
     );
   }
+  // A thin image has no FAT declaration to bind the requested CPU family.
+  // Admit its parsed header before consumers attach the caller's architecture.
+  if (MACHO_ARCHITECTURE_POLICIES[architecture]?.cpuType !== cpuType)
+    throw new TypeError(
+      `Mach-O CPU type does not match requested architecture ${architecture}`,
+    );
+  if (is32Bit)
+    throw new UnsupportedMachoMetadataFormatError(
+      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+    );
   const commands = bytes.readUInt32LE(slice + 16);
   const commandEnd = slice + 32 + bytes.readUInt32LE(slice + 20);
   if (commands > 4096 || commandEnd > sliceEnd)
@@ -229,24 +231,26 @@ export const parseMachoLayout = (
     chained: null,
     baseAddress: undefined,
   };
-  let cursor = slice + 32;
-  for (let index = 0; index < commands; index++) {
-    if (cursor + 8 > commandEnd) throw new RangeError("Truncated load command");
+  const framing = new MachoLoadCommandCursor({
+    wide: true,
+    littleEndian: true,
+    commandCount: commands,
+    commandBytes: commandEnd - slice - 32,
+  });
+  while (framing.nextOffset !== null) {
+    const cursor = slice + 32 + framing.nextOffset;
+    const frame = framing.read(bytes.subarray(cursor, cursor + 8));
+    if (!frame.ok) throw new RangeError(frame.error);
     const command = {
       cursor,
-      kind: bytes.readUInt32LE(cursor),
-      size: bytes.readUInt32LE(cursor + 4),
+      kind: frame.value.command,
+      size: frame.value.size,
     };
-    if (
-      command.size < 8 ||
-      command.size % machoLoadCommandAlignment(true) !== 0 ||
-      cursor + command.size > commandEnd
-    )
-      throw new RangeError("Invalid load command size");
     if (command.kind === 0x19) collectSegment(bytes, command, state);
     else collectFixupCommand(bytes, command, state);
-    cursor += command.size;
   }
+  const complete = framing.finish();
+  if (!complete.ok) throw new RangeError(complete.error);
   const { segments, sections, chained, binds, rebases, dylibs } = state;
   const offset = (address: bigint, size = 1): number => {
     const matches = segments.filter(
@@ -290,7 +294,7 @@ interface LayoutState {
   readonly sliceEnd: number;
   readonly segments: Segment[];
   readonly sections: Section[];
-  readonly dylibs: string[];
+  readonly dylibs: FixupCommands["dylibs"][number][];
   readonly binds: FixupCommands["binds"][number][];
   readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
@@ -385,6 +389,8 @@ const collectFixupCommand = (
     const end = bytes.indexOf(0, cursor + nameOffset);
     if (end < 0 || end >= cursor + size)
       throw new RangeError("Unterminated dylib install name");
-    state.dylibs.push(bytes.toString("utf8", cursor + nameOffset, end));
+    state.dylibs.push(
+      decodeMachoName(bytes.subarray(cursor + nameOffset, end)),
+    );
   }
 };

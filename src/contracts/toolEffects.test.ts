@@ -35,6 +35,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_go_binary: "reads embedded metadata without executing the target",
   inspect_rust_binary:
     "reads an embedded dependency list without executing the target",
+  inspect_python_pyc:
+    "states that it does not execute bytecode or invoke CPython",
   inspect_erlang_beam: "states that it does not execute bytecode",
   inspect_sqlite_database:
     "uses a trusted inspector worker without executing application code or caller SQL",
@@ -99,6 +101,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_adb_package: "reports install times without changing the device",
   list_adb_processes: "lists running processes without changing the device",
   inspect_web_event_listeners: "states it does not evaluate JavaScript",
+  inspect_apk_signature: "states that no Android code executes",
 };
 
 const declaresForeignAuthority = (name: string): boolean => {
@@ -110,6 +113,19 @@ const declaresForeignAuthority = (name: string): boolean => {
 };
 
 describe("tool effects", () => {
+  it("declares the web bundle worker's private file and child process effects", () => {
+    const contract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "analyze_web_bundle",
+    );
+    expect(contract?.effects).toMatchObject({
+      mutatesSession: true,
+      accessesNetwork: true,
+      launchesProcess: true,
+      writesFilesystem: true,
+      executesForeignCode: false,
+      mutatesTarget: false,
+    });
+  });
   it("audits every public tool exactly once", () => {
     expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(
       TOOL_CONTRACTS.map(({ name }) => name).sort(),
@@ -148,6 +164,7 @@ describe("tool effects", () => {
       "capture_electron_scenario",
       "capture_native_ui_scenario",
       "capture_process_scenario",
+      "close_frida_session",
       "close_gdb_session",
       "close_rizin_debug_session",
       "cutter_command",
@@ -222,5 +239,13 @@ describe("tool effects", () => {
       expect(contract.annotations, contract.name).toEqual(
         annotationsFromEffects(contract.effects),
       );
+  });
+});
+
+it("advertises signature inspection's temporary snapshot filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
   });
 });

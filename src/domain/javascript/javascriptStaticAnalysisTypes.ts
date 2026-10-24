@@ -22,6 +22,8 @@ export interface JavaScriptSourceRange {
 }
 
 interface JavaScriptStaticReferenceState {
+  /** Resolution discovers a target without loading or executing it. */
+  readonly operation: "load" | "resolve";
   readonly kind:
     | "static-import"
     | "dynamic-import"
@@ -31,6 +33,8 @@ interface JavaScriptStaticReferenceState {
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
+  /** Source-relative filename selected by a proven createRequire factory. */
+  readonly resolution_base_path?: string;
   readonly location: JavaScriptSourceRange;
 }
 
@@ -46,7 +50,10 @@ export interface JavaScriptStaticEndpoint {
   readonly kind: "route" | "network";
   readonly value: string;
   readonly mechanism: string;
-  /** An overloaded callee name suggests this value; its network receiver is unproven. */
+  /**
+   * Only a name suggests this value: an overloaded callee whose network receiver
+   * is unproven, or a `path`/`route` property outside a router record.
+   */
   readonly interpretation?: "candidate";
   /** The request target is unresolved source text rather than an exact value. */
   readonly resolution?: "partial";
