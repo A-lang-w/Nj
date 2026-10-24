@@ -101,9 +101,7 @@ const validReport = (
     report.coverage.images > input.max_images ||
     report.coverage.registers > input.max_registers ||
     report.coverage.threads !== report.threads.length ||
-    report.coverage.images !== report.images.length ||
-    report.threads.length > input.max_threads ||
-    report.images.length > input.max_images
+    report.coverage.images !== report.images.length
   )
     return false;
   let frames = 0;
