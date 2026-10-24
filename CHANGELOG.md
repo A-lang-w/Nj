@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-24)
+
+### Highlights
+
+- Read PE function extents from the image's exception directory, so a reverse engineer can map exact function boundaries in a protected or huge binary without a full analysis run.
+
+### Changes
+
+- **PE image layout:** PE header, section-table and data-directory facts now have one shared owner, `PeImageLayout`, used by the resource reader instead of being parsed twice. The resource reader keeps only its own mapping rules and messages. ([#3816](https://github.com/morluto/rea/pull/3816)).
+
+- **Exception directory:** `PeExceptionDirectory` decodes the PE exception directory as `RUNTIME_FUNCTION` records and reports measured function extents, partial coverage and tagged failure reasons instead of silently dropping extents that no section maps. ([#3816](https://github.com/morluto/rea/pull/3816)).
+
 ## [6.7.0](https://github.com/morluto/rea/compare/rea-agents-6.6.0...rea-agents-6.7.0) (2026-10-18)
 
 ### Highlights
