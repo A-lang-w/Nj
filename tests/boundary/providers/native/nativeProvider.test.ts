@@ -1320,12 +1320,9 @@ describe("native macOS provider inspection", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(
-      join(app, "Contents/Info.plist"),
-      await fixture("plist.xml"),
-    );
+    await writeFile(join(app, "Contents/Info.plist"), "fixture");
     const externalPlist = join(directory, "Outside.plist");
-    await writeFile(externalPlist, await fixture("plist.xml"));
+    await writeFile(externalPlist, "fixture");
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1373,10 +1370,7 @@ describe("native macOS provider raw results", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(
-      join(app, "Contents/Info.plist"),
-      await fixture("plist.xml"),
-    );
+    await writeFile(join(app, "Contents/Info.plist"), "fixture");
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1413,7 +1407,7 @@ describe("native plist defaults for iOS-style bundles", () => {
     const executable = join(app, "Flat");
     await mkdir(app, { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Info.plist"), await fixture("plist.xml"));
+    await writeFile(join(app, "Info.plist"), "fixture");
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
