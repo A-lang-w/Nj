@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { build } from "plist";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -39,6 +41,14 @@ import {
   nativeMachoTarget as machoTarget,
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
+
+/** The source bytes and simulated plutil response share one captured payload. */
+const plistFixtureSource = async (): Promise<string> =>
+  build(
+    z
+      .record(z.string(), z.string())
+      .parse(JSON.parse(await fixture("plist.json"))),
+  );
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
   const child = Object.assign(new EventEmitter(), {
@@ -1313,16 +1323,19 @@ describe("native macOS provider inspection", () => {
       error: { _tag: "ProviderAdapterError" },
     });
   });
+});
 
+describe("native macOS operation results", () => {
   it("supports architectures, signatures, plists, and ordered demangling", async () => {
     directory = await createTestTempDirectory("rea-native-");
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Contents/Info.plist"), "fixture");
+    const plistSource = await plistFixtureSource();
+    await writeFile(join(app, "Contents/Info.plist"), plistSource);
     const externalPlist = join(directory, "Outside.plist");
-    await writeFile(externalPlist, "fixture");
+    await writeFile(externalPlist, plistSource);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1343,6 +1356,7 @@ describe("native macOS provider inspection", () => {
     const defaultPlist = await client.execute("inspect_plist", {});
     expect(defaultPlist.ok && defaultPlist.value.result).toMatchObject({
       source_path: join(app, "Contents/Info.plist"),
+      bundle: { identifier: "com.example.fixture", version: "42" },
     });
     const plist = await client.execute("inspect_plist", {
       path: externalPlist,
@@ -1351,6 +1365,10 @@ describe("native macOS provider inspection", () => {
       bundle: { identifier: "com.example.fixture", version: "42" },
       source_path: externalPlist,
     });
+    expect(await readFile(join(app, "Contents/Info.plist"), "utf8")).toBe(
+      plistSource,
+    );
+    expect(await readFile(externalPlist, "utf8")).toBe(plistSource);
     const demangled = await client.execute("demangle_swift", {
       symbols: ["$s4Test3fooyyF", "plain_symbol"],
     });
@@ -1370,7 +1388,8 @@ describe("native macOS provider raw results", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Contents/Info.plist"), "fixture");
+    const plistSource = await plistFixtureSource();
+    await writeFile(join(app, "Contents/Info.plist"), plistSource);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1396,7 +1415,16 @@ describe("native macOS provider raw results", () => {
           expect.objectContaining({ tool: expect.any(String) }),
         ]),
       });
+      if (operation === "inspect_plist")
+        expect(execution.value.result).toMatchObject({
+          source_path: join(app, "Contents/Info.plist"),
+          bundle: { identifier: "com.example.fixture", version: "42" },
+          provenance: [{ tool: "file" }],
+        });
     }
+    expect(await readFile(join(app, "Contents/Info.plist"), "utf8")).toBe(
+      plistSource,
+    );
   });
 });
 
@@ -1407,7 +1435,8 @@ describe("native plist defaults for iOS-style bundles", () => {
     const executable = join(app, "Flat");
     await mkdir(app, { recursive: true });
     await writeFile(executable, "fixture");
-    await writeFile(join(app, "Info.plist"), "fixture");
+    const plistSource = await plistFixtureSource();
+    await writeFile(join(app, "Info.plist"), plistSource);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1420,7 +1449,9 @@ describe("native plist defaults for iOS-style bundles", () => {
     const plist = await client.execute("inspect_plist", {});
     expect(plist.ok && plist.value.result).toMatchObject({
       source_path: join(app, "Info.plist"),
+      bundle: { identifier: "com.example.fixture", version: "42" },
     });
+    expect(await readFile(join(app, "Info.plist"), "utf8")).toBe(plistSource);
   });
 });
 
