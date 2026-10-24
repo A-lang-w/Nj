@@ -11,6 +11,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   invokingPackageRunner,
+  registrationEntrypointPath,
   packageRunnerRegistrationCommand,
   type PackageRunner,
 } from "./ClientRegistrationIdentity.js";
@@ -21,13 +22,12 @@ import {
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import {
   installLinuxHopper,
-  LINUX_HOPPER_SETUP_HOSTS,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxHopperInstallHost,
 } from "./LinuxHopper.js";
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
-import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperPublisher.js";
+import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import {
   clientEvidencePaths,
   supportedClients,
@@ -70,13 +70,17 @@ export const setupRegistrationCommand = (
   platform: NodeJS.Platform,
   packageRunner: PackageRunner | undefined,
   entrypointPath: string | undefined,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
 ): readonly string[] => {
   if (packageRunner !== undefined)
     return packageRunnerRegistrationCommand(packageRunner, platform);
   if (entrypointPath === undefined || entrypointPath.length === 0) return [];
   return platform === "win32"
     ? [process.execPath, entrypointPath, "mcp"]
-    : [entrypointPath, "mcp"];
+    : [
+        registrationEntrypointPath(entrypointPath, environment, platform),
+        "mcp",
+      ];
 };
 
 /**
@@ -92,6 +96,7 @@ const setupRegistration = (
     platform,
     invokingPackageRunner(environment, platform),
     CURRENT_ENTRYPOINT_PATH,
+    environment,
   );
   const registrationCommandBlocker =
     registrationCommand.length === 0
@@ -121,25 +126,11 @@ export const filterClientsNeedingConfigure = async (
   return detectedClients.filter((_, index) => needs[index]);
 };
 
-export const hostRemediation = async (
-  host: SetupHost,
-  installHopper: boolean,
-): Promise<string | undefined> => {
-  if (!supportsNodeVersion(host.nodeVersion))
-    return `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
-  if (!installHopper) return undefined;
-  if (host.platform !== "darwin" && host.platform !== "linux")
-    return "REA supports Hopper on macOS and selected x86_64 Linux distributions.";
-  if (host.platform === "darwin") {
-    const version = await host.macosVersion();
-    return version === undefined || major(version) < 12
-      ? "Upgrade to macOS 12 or newer."
-      : undefined;
-  }
-  if ((await host.linuxDistribution())?.hopperSetupSupported === true)
-    return undefined;
-  return `Automated Hopper setup requires ${LINUX_HOPPER_SETUP_HOSTS}; configure an existing supported provider instead.`;
-};
+/** Refuse a Node.js runtime REA does not support before any setup work. */
+export const hostRemediation = (host: SetupHost): string | undefined =>
+  supportsNodeVersion(host.nodeVersion)
+    ? undefined
+    : `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
 export const systemSetupHost = (
@@ -228,7 +219,10 @@ export const systemSetupHost = (
         );
         const detail =
           result.verificationFailure?.message ??
-          result.pythonRuntimeFailure?.message;
+          result.pythonRuntimeFailure?.message ??
+          (result.operationFailure === undefined
+            ? undefined
+            : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`);
         return detail !== undefined
           ? {
               ...failure,
@@ -482,8 +476,6 @@ export const detectClients = async (
   return detected;
 };
 
-const major = (version: string): number =>
-  Number.parseInt(version.split(".")[0] ?? "0", 10);
 const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
   for (const path of clientEvidencePaths(client))
     if (await exists(path)) return true;

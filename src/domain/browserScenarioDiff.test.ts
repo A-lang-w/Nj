@@ -9,15 +9,49 @@ import {
 } from "./browserScenarioDiffValues.js";
 import {
   browserScenarioCaptureSchema,
+  retainedBrowserScenarioCaptureSchema,
   type BrowserScenarioCapture,
 } from "./browserScenarioCapture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "./browserScenarioCaptureLimits.js";
+import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "./browserScenarioCaptureValues.js";
 
 const noEventOmissions = {
   by_kind: [],
   network_transactions: [],
   network_transaction_range: null,
 } as const;
+
+it("admits legacy event-family omission only for retained capture consumers", () => {
+  const current = scenarioCapture({});
+  const { event_families: _selection, ...scenario } = current.scenario;
+  const legacy = { ...current, scenario };
+  expect(browserScenarioCaptureSchema.safeParse(legacy).success).toBe(false);
+  const admitted = retainedBrowserScenarioCaptureSchema.parse(legacy);
+  expect(admitted.scenario.event_families).toBeUndefined();
+  for (const [before_scenario, after_scenario] of [
+    [current, legacy],
+    [legacy, current],
+    [legacy, legacy],
+  ]) {
+    const result = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario,
+        after_scenario,
+      }),
+    );
+    expect(result.overall_status).toBe("unknown");
+    expect(
+      result.steps
+        .flatMap((step) => step.artifact_diffs)
+        .filter(({ artifact }) => artifact === "events"),
+    ).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        reason: expect.stringContaining("not recorded"),
+      }),
+    );
+  }
+});
 
 const networkCapture = (sourceSequence: number, receiptStep: number) => {
   const base = scenarioCapture({});
@@ -1190,6 +1224,7 @@ const storageScenarioCapture = (
         storage: {
           state: "captured",
           value: {
+            fingerprint_version: BROWSER_STORAGE_FINGERPRINT_VERSION,
             cookies: [],
             local_storage: [],
             session_storage: [],

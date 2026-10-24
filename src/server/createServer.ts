@@ -1,11 +1,18 @@
+import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "./toolResultEncoding.js";
-import { createPacketCaptureService } from "../composition/captures.js";
+import {
+  createPacketCaptureService,
+  tsharkHostSupported,
+} from "../composition/captures.js";
 import { registerCaptureTools } from "./registerCaptureTools.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
-import { createSignalRecordingService } from "../composition/signals.js";
+import {
+  createSignalRecordingService,
+  sigrokHostSupported,
+} from "../composition/signals.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
@@ -18,19 +25,23 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
   createPeCertificatesService,
+  createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
 } from "../composition/binaryDiagnostics.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
+import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
+import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
+  evmHostSupported,
   evmInterfaceModule,
   evmLimiterAvailability,
 } from "../composition/evm.js";
@@ -69,6 +80,7 @@ import { registerFridaTools } from "./registerFridaTools.js";
 import {
   createByteEntropyService,
   createBinaryLayoutService,
+  pwntoolsHostSupported,
 } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCatalogIdentity } from "../catalogIdentity.js";
@@ -87,6 +99,7 @@ import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
 import { isAbsolute } from "node:path";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { investigationEvidenceLookup } from "../application/investigation/InvestigationEvidence.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
@@ -118,7 +131,10 @@ import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.j
 import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
-import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
+import {
+  createJavaScriptRecoveryProvider,
+  wakaruHostSupported,
+} from "../composition/javascriptRecovery.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
@@ -127,7 +143,10 @@ import { registerManagedTools } from "./registerManagedTools.js";
 import { registerFirmwareTools } from "./registerFirmwareTools.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
-import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
+import {
+  createFirmwareAnalysisProvider,
+  firmwareHostSupported,
+} from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { registerApktoolTools } from "./registerApktoolTools.js";
 import { registerPcapTools } from "./registerPcapTools.js";
@@ -257,23 +276,76 @@ const installSessionToolAvailability = (
   fridaInstrumentation: FridaInstrumentationPort,
 ) => {
   if (session === undefined) return undefined;
-  const linux = process.platform === "linux";
-  const linuxX64 = linux && process.arch === "x64";
+  const { platform, arch } = process;
+  // Each provider owns its verified host; discovery and execution share it.
+  const verifiedHost = {
+    packetCapture: tsharkHostSupported(platform),
+    pcapCapture: pcapCaptureHostSupported(platform),
+    signalRecording: sigrokHostSupported(platform),
+    evmInterface: evmHostSupported(platform, arch),
+    pwntools: pwntoolsHostSupported(platform, arch),
+    firmware: firmwareHostSupported(platform),
+    javascriptRecovery: wakaruHostSupported(platform, arch),
+  };
   const pwntools =
-    linuxX64 && isAbsolute(environment.REA_PWNTOOLS_PYTHON ?? "");
+    verifiedHost.pwntools && isAbsolute(environment.REA_PWNTOOLS_PYTHON ?? "");
+  // Injected services own their availability on any host. Otherwise no
+  // configuration lets an integration pass its execution host check.
+  const outsideVerifiedHost = (injected: unknown, supported: boolean) =>
+    injected === undefined && !supported;
   const basePolicy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
+    hostUnsupported: {
+      pcapCapture: outsideVerifiedHost(
+        options.pcapAnalysis,
+        verifiedHost.pcapCapture,
+      ),
+      packetCapture: outsideVerifiedHost(
+        options.packetCapture,
+        verifiedHost.packetCapture,
+      ),
+      signalRecording: outsideVerifiedHost(
+        options.signalRecording,
+        verifiedHost.signalRecording,
+      ),
+      evmInterface: outsideVerifiedHost(
+        options.evmInterface,
+        verifiedHost.evmInterface,
+      ),
+      binaryLayout: outsideVerifiedHost(
+        options.binaryLayout,
+        verifiedHost.pwntools,
+      ),
+      recordedCrash: outsideVerifiedHost(
+        options.recordedCrash,
+        verifiedHost.pwntools,
+      ),
+      firmwareInspection: outsideVerifiedHost(
+        options.firmwareAnalysis,
+        verifiedHost.firmware,
+      ),
+      firmwareExtraction: outsideVerifiedHost(
+        options.firmwareAnalysis,
+        verifiedHost.firmware,
+      ),
+      javascriptRecovery: outsideVerifiedHost(
+        options.javascriptRecovery,
+        verifiedHost.javascriptRecovery,
+      ),
+    },
     optionalFeatures: {
       packetCaptureEnabled:
         options.packetCapture !== undefined ||
-        (linux && tsharkLocatable(environment)),
+        (verifiedHost.packetCapture && tsharkLocatable(environment)),
       signalRecordingEnabled:
         options.signalRecording !== undefined ||
-        (linux && isAbsolute(environment.REA_SIGROK_COMMAND ?? "")),
+        (verifiedHost.signalRecording &&
+          isAbsolute(environment.REA_SIGROK_COMMAND ?? "")),
       wasmArtifactEnabled:
         options.wasmArtifact !== undefined ||
         isAbsolute(environment.REA_WABT_BIN_DIRECTORY ?? ""),
-      evmInterfaceEnabled: options.evmInterface !== undefined || linuxX64,
+      evmInterfaceEnabled:
+        options.evmInterface !== undefined || verifiedHost.evmInterface,
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
         isAbsolute(environment.REA_BROWSER_EXECUTABLE ?? ""),
@@ -281,14 +353,17 @@ const installSessionToolAvailability = (
       binaryLayoutEnabled: options.binaryLayout !== undefined || pwntools,
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
-        (linux && isAbsolute(environment.REA_BINWALK_COMMAND ?? "")),
+        (verifiedHost.firmware &&
+          isAbsolute(environment.REA_BINWALK_COMMAND ?? "")),
       firmwareExtractionEnabled:
         options.firmwareAnalysis !== undefined ||
-        (linux && isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
+        (verifiedHost.firmware &&
+          isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
       javascriptRecoveryEnabled:
         options.javascriptRecovery !== undefined ||
-        (linuxX64 && isAbsolute(environment.REA_WAKARU_COMMAND ?? "")),
+        (verifiedHost.javascriptRecovery &&
+          isAbsolute(environment.REA_WAKARU_COMMAND ?? "")),
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
       electronAutomationEnabled:
@@ -314,7 +389,7 @@ const installSessionToolAvailability = (
   };
   return {
     policy,
-    ...(options.evmInterface !== undefined || !linuxX64
+    ...(options.evmInterface !== undefined || !verifiedHost.evmInterface
       ? {}
       : {
           evmLimiterAvailability: (signal: AbortSignal) =>
@@ -396,6 +471,7 @@ export const createServer = (
   const nativeExports = createNativeExportsService();
   const elfNotes = createElfNotesService();
   const peCertificates = createPeCertificatesService();
+  const peImports = createPeImportsService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const pythonPyc = options.pythonPyc ?? createPythonPycService();
   const webNetworkCapture =
@@ -507,6 +583,7 @@ export const createServer = (
       nativeExports.close(),
       elfNotes.close(),
       peCertificates.close(),
+      peImports.close(),
       electronFuses.close(),
       pythonPyc.close(),
       webNetworkCapture.close(),
@@ -575,6 +652,7 @@ export const createServer = (
     nativeExports,
     elfNotes,
     peCertificates,
+    peImports,
     electronFuses,
     pythonPyc,
     webNetworkCapture,
@@ -812,6 +890,7 @@ const registerConfiguredAnalysisTools = (
     nativeExports,
     elfNotes,
     peCertificates,
+    peImports,
     pythonPyc,
     webNetworkCapture,
     artifactResources,
@@ -826,7 +905,7 @@ const registerConfiguredAnalysisTools = (
 ): void => {
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(android),
+    new AndroidAnalysisService(android, recordEvidence),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -868,6 +947,7 @@ const registerConfiguredAnalysisTools = (
     nativeExports,
     toolLogger,
     recordEvidence,
+    evidenceById,
     withAdmittedAnalysis,
   );
   registerElfNotesTool(
@@ -880,6 +960,13 @@ const registerConfiguredAnalysisTools = (
   registerPeCertificatesTool(
     server,
     peCertificates,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerPeImportsTool(
+    server,
+    peImports,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -914,6 +1001,7 @@ const registerConfiguredAnalysisTools = (
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
+    evidenceById,
   );
   registerErlangTools(
     server,
@@ -921,6 +1009,7 @@ const registerConfiguredAnalysisTools = (
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
+    evidenceById,
   );
   registerWasmTools(
     server,
@@ -1013,11 +1102,7 @@ const createSessionRecorders = (
   session: BinarySessionPort | undefined,
 ) => ({
   evidenceById:
-    session === undefined
-      ? undefined
-      : (evidenceId: string) =>
-          session.evidenceForAnalysis?.(evidenceId) ??
-          session.evidenceById(evidenceId),
+    session === undefined ? undefined : investigationEvidenceLookup(session),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -1043,6 +1128,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly nativeExports: NativeExportsService;
   readonly elfNotes: ElfNotesService;
   readonly peCertificates: PeCertificatesService;
+  readonly peImports: PeImportsService;
   readonly electronFuses: ElectronFuseService;
   readonly pythonPyc: PythonPycService;
   readonly webNetworkCapture: WebNetworkCaptureService;

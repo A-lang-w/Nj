@@ -42,6 +42,7 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
 import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
+import { verifyViewportScreenshotE2e } from "./lib/browser-viewport-screenshot-e2e.mjs";
 import { verifyPopupEventCoverage } from "./lib/browser-popup-e2e.mjs";
 import { verifyBrowserNetworkEvidence } from "./lib/browser-network-e2e.mjs";
 import { verifyBrowserScriptExport } from "./lib/browser-script-export-e2e.mjs";
@@ -147,19 +148,18 @@ try {
         `Passive browser result included unselected structured data: ${secret}`,
       );
 
-  const withSource = await provider.inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: endpoint,
-      allowed_origins: [site.origin],
-      target_id: target,
-      observation_ms: 1_000,
-      include_accessibility_text: true,
-      include_script_sources: true,
-      include_console_text: true,
-      include_json_body_shapes: true,
-      include_websocket_shapes: true,
-    }),
-  );
+  const sourceCaptureInput = inspectWebPageInputSchema.parse({
+    cdp_endpoint: endpoint,
+    allowed_origins: [site.origin],
+    target_id: target,
+    observation_ms: 1_000,
+    include_accessibility_text: true,
+    include_script_sources: true,
+    include_console_text: true,
+    include_json_body_shapes: true,
+    include_websocket_shapes: true,
+  });
+  const withSource = await provider.inspectPage(sourceCaptureInput);
   if (!withSource.ok) throw withSource.error;
   const source = withSource.value.scripts.items.find(
     (script) =>
@@ -182,10 +182,14 @@ try {
 
   const bundle = await verifyPublicBundle(endpoint, target, site.origin);
 
+  // Equality needs the same selected facts on both sides. The earlier passive
+  // capture deliberately omits source, so it cannot establish source equality.
+  const repeatedSource = await provider.inspectPage(sourceCaptureInput);
+  if (!repeatedSource.ok) throw repeatedSource.error;
   const captureDiff = await provider.compareCaptures(
     compareWebCapturesInputSchema.parse({
-      before: { inspection: observed.value },
-      after: { inspection: withSource.value },
+      before: { inspection: withSource.value },
+      after: { inspection: repeatedSource.value },
     }),
   );
   if (!captureDiff.ok) throw captureDiff.error;
@@ -193,7 +197,16 @@ try {
     captureDiff.value.dimensions.dom_structure.status !== "unchanged" ||
     captureDiff.value.dimensions.scripts.status !== "unchanged"
   )
-    throw new Error("Real Chrome stable capture identities did not reconcile");
+    throw new Error(
+      `Real Chrome stable capture identities did not reconcile: ${JSON.stringify(
+        {
+          dom_structure: captureDiff.value.dimensions.dom_structure,
+          scripts: captureDiff.value.dimensions.scripts,
+          before_completeness: withSource.value.completeness,
+          after_completeness: repeatedSource.value.completeness,
+        },
+      )}`,
+    );
 
   const screenshot = await provider.captureScreenshot(
     captureWebScreenshotInputSchema.parse({
@@ -372,6 +385,11 @@ try {
 
   process.stderr.write("Browser verifier: large screenshot\n");
   const largeScreenshot = await verifyLargeScreenshotE2e(endpoint, site.origin);
+  process.stderr.write("Browser verifier: visual viewport screenshot\n");
+  const viewportScreenshot = await verifyViewportScreenshotE2e(
+    endpoint,
+    site.origin,
+  );
   process.stderr.write("Browser verifier: popup coverage\n");
   const popupEvents = await verifyPopupEventCoverage(executable);
   const networkEvidence = await verifyBrowserNetworkEvidence(
@@ -423,6 +441,7 @@ try {
     scenarioStorage,
     scenarioStorageFingerprints,
     scenarioServiceWorkers,
+    viewportScreenshot,
     verified: true,
   };
 } catch (cause) {

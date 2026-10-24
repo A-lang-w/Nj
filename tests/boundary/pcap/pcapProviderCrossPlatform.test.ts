@@ -13,6 +13,10 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
+import {
+  CAPINFOS_COMMAND_ENV,
+  TSHARK_COMMAND_ENV,
+} from "../../../src/pcap/PcapConfiguration.js";
 import { PcapSnapshot } from "../../../src/pcap/PcapSnapshot.js";
 import * as regularFile from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
@@ -124,12 +128,17 @@ it("projects a missing configured tool as a capability gap", async () => {
   });
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
     code: "capability_unavailable",
-    message: expect.stringContaining(
-      "Supply Wireshark 4.x tshark and capinfos",
-    ),
+    details: { provider_id: "pcap", operation: "inspect_pcap_client" },
   });
+  expect(projected.message).toContain(TSHARK_COMMAND_ENV);
+  expect(projected.message).toContain(CAPINFOS_COMMAND_ENV);
+  expect(projected.message).toContain("Wireshark 4.x");
+  expect(projected.message).toContain("PATH");
+  expect(projected.message).toContain("absolute");
+  expect(projected.message).toContain("does not install");
 });
 
 it.skipIf(isWindows)(
@@ -170,51 +179,86 @@ exit 2
   },
 );
 
-it("resolves a retained tool-probe error after its process owner closes", async () => {
-  let mayClean = false;
-  let launches = 0;
-  const launcher: PcapCommandLauncher = async (spawn) => {
-    const launched = await spawnOwnedProviderProcess(spawn);
-    launches++;
-    if (launches !== 1) return launched;
-    const cleanup =
-      launched.cleanup ?? (() => cleanupOwnedProcessGroup(launched.ownership));
-    return {
-      ...launched,
-      cleanup: async () => {
-        const result = await cleanup();
-        if (!mayClean) throw new Error("injected tool-probe cleanup failure");
-        return result;
-      },
+it.each([0, 7])(
+  "retains failed-probe cleanup across admission retry and resolves after owner close: exit=%s",
+  async (exitCode) => {
+    let mayClean = false;
+    let launches = 0;
+    const launcher: PcapCommandLauncher = async (spawn) => {
+      const launched = await spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: [
+          "-e",
+          `process.stdout.write("TShark (Wireshark) 4.6.6\\n"); process.exitCode = ${exitCode}`,
+        ],
+        expectedCommand: process.execPath,
+      });
+      launches++;
+      if (launches !== 1) return launched;
+      const cleanup =
+        launched.cleanup ??
+        (() => cleanupOwnedProcessGroup(launched.ownership));
+      return {
+        ...launched,
+        cleanup: async () => {
+          const result = await cleanup();
+          if (!mayClean) throw new Error("injected tool-probe cleanup failure");
+          return result;
+        },
+      };
     };
-  };
-  const provider = new PcapProvider({
-    environment: {
-      REA_TSHARK_COMMAND: tsharkStub,
-      REA_CAPINFOS_COMMAND: capinfosStub,
-    },
-    launcher,
-  });
-  onTestFinished(async () => {
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tsharkStub,
+        REA_CAPINFOS_COMMAND: capinfosStub,
+      },
+      launcher,
+    });
+    onTestFinished(async () => {
+      mayClean = true;
+      await provider.close();
+    });
+
+    const result = await provider.execute({
+      operation: "inspect_pcap_client",
+      input: {},
+    });
+    if (result.ok) throw new Error("Expected retained tool-probe cleanup");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    if (exitCode === 0)
+      expect(result.error.diagnostics).toMatchObject({
+        reason: "injected tool-probe cleanup failure",
+      });
+    else {
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        capturedOutput: { exit_code: 7 },
+      });
+    }
+    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+    const retry = await provider.execute({
+      operation: "inspect_pcap_client",
+      input: {},
+    });
+    if (retry.ok)
+      throw new Error("Expected retained cleanup to block admission");
+    expect(projectAnalysisError(retry.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: expect.arrayContaining([...result.error.cleanupResources]),
+      },
+    });
+    expect(retry.error.cleanupResources.length).toBeGreaterThan(0);
+    expect(launches).toBe(1);
+
     mayClean = true;
     await provider.close();
-  });
-
-  const result = await provider.execute({
-    operation: "inspect_pcap_client",
-    input: {},
-  });
-  if (result.ok) throw new Error("Expected retained tool-probe cleanup");
-  expect(result.error.cleanupIncomplete).toBe(true);
-  expect(result.error.diagnostics).toMatchObject({
-    reason: "injected tool-probe cleanup failure",
-  });
-
-  mayClean = true;
-  await provider.close();
-  expect(result.error.cleanupIncomplete).toBe(false);
-  expect(launches).toBe(1);
-});
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(retry.error.cleanupIncomplete).toBe(false);
+    expect(launches).toBe(1);
+  },
+);
 
 it.runIf(hasNativeBound)(
   "inspects a capture with metadata, endpoints, DNS, and protocol facts",
@@ -302,11 +346,23 @@ it.runIf(!hasNativeBound)(
     expect(result.ok).toBe(false);
     if (result.ok) return;
     const projected = projectAnalysisError(result.error);
-    expect(projected.code).toBe("capability_unavailable");
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      details: { provider_id: "pcap", operation: "inspect_pcap_capture" },
+    });
     // The refusal concerns this host, so it must not suggest another target.
-    expect(projected.message).toContain(
-      "Linux with util-linux prlimit, or Windows with owned Job Objects",
-    );
+    const reason =
+      projected.details &&
+      "reason" in projected.details &&
+      typeof projected.details.reason === "string"
+        ? projected.details.reason
+        : "";
+    expect(reason).toContain("Linux");
+    expect(reason).toContain("util-linux");
+    expect(reason).toContain("prlimit");
+    expect(reason).toContain("Windows");
+    expect(reason).toContain("owned");
+    expect(reason).toContain("Job Objects");
     expect(projected.remediation.action).toBe(projected.message);
   },
 );
@@ -344,3 +400,30 @@ it("retains a verification admission owner before translating cancellation", asy
     await owner.close();
   }
 });
+
+it.each(["tshark", "capinfos"] as const)(
+  "classifies directory-selected %s as a configuration refusal with its path",
+  async (tool) => {
+    const root = await createTestTempDirectory("rea-pcap-tool-directory-");
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tool === "tshark" ? root : tsharkStub,
+        REA_CAPINFOS_COMMAND: tool === "capinfos" ? root : capinfosStub,
+      },
+    });
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({
+      operation: "inspect_pcap_client",
+      input: {},
+    });
+    if (result.ok) throw new Error("Expected selected tool admission refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining(root),
+      details: { provider_id: "pcap", operation: "inspect_pcap_client" },
+    });
+    expect(projectAnalysisError(result.error).message).toContain(
+      "Wireshark 4.x",
+    );
+  },
+);

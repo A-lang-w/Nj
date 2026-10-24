@@ -4,9 +4,11 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { toolContract } from "../contracts/toolContracts.js";
 import { compareArtifacts } from "../domain/artifactComparison.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
-import { createEvidence, parseEvidence } from "../domain/evidence.js";
+import { createEvidence } from "../domain/evidence.js";
+import { readEvidence } from "../domain/evidenceValidation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { resolveArtifactComparisonEvidence } from "../application/artifacts/ArtifactComparisonEvidence.js";
+import { investigationEvidenceLookup } from "../application/investigation/InvestigationEvidence.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
@@ -22,9 +24,7 @@ export const registerArtifactComparisonTool = (
   contract: ReturnType<typeof toolContract<"compare_artifacts">>,
 ): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
-  const evidenceById = (evidenceId: string) =>
-    session.evidenceForAnalysis?.(evidenceId) ??
-    session.evidenceById(evidenceId);
+  const evidenceById = investigationEvidenceLookup(session);
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
@@ -39,15 +39,17 @@ export const registerArtifactComparisonTool = (
             context,
             contract.name,
             () => {
-              const suppliedLeft = parseEvidence(input.left);
-              const suppliedRight = parseEvidence(input.right);
+              const suppliedLeft = readEvidence(input.left);
+              if (!suppliedLeft.ok) throw suppliedLeft.error;
+              const suppliedRight = readEvidence(input.right);
+              if (!suppliedRight.ok) throw suppliedRight.error;
               const resolvedLeft = resolveArtifactComparisonEvidence(
-                suppliedLeft,
+                suppliedLeft.value,
                 evidenceById,
               );
               if (!resolvedLeft.ok) throw resolvedLeft.error;
               const resolvedRight = resolveArtifactComparisonEvidence(
-                suppliedRight,
+                suppliedRight.value,
                 evidenceById,
               );
               if (!resolvedRight.ok) throw resolvedRight.error;
@@ -93,7 +95,7 @@ export const registerArtifactComparisonTool = (
               artifactUnknownInput(
                 left,
                 right,
-                comparison.status,
+                comparison,
                 evidence.evidence_id,
               ),
             ),
@@ -106,22 +108,28 @@ export const registerArtifactComparisonTool = (
 const artifactUnknownInput = (
   left: { readonly evidence_id: string },
   right: { readonly evidence_id: string },
-  status: ReturnType<typeof compareArtifacts>["status"],
+  comparison: ReturnType<typeof compareArtifacts>,
   comparisonEvidenceId: string,
 ): RecordUnknownInput | undefined => {
+  const { status } = comparison;
   if (status === "unchanged") return undefined;
-  const contradictory =
-    (status === "changed" || status === "contradiction") &&
-    left.evidence_id !== right.evidence_id;
+  const sourceIds = [...new Set([left.evidence_id, right.evidence_id])];
+  const contradictingIds = comparison.integrity_mismatch_evidence_ids ?? [];
+  const contentContradictions =
+    status === "changed" && left.evidence_id !== right.evidence_id
+      ? [right.evidence_id]
+      : [];
+  const contradictions =
+    contradictingIds.length > 0 ? contradictingIds : contentContradictions;
   return {
     question: `Artifact comparison is ${status} (comparison ${comparisonEvidenceId})`,
     severity:
       status === "unknown" || status === "truncated" ? "high" : "medium",
     domain: "artifact-comparison",
-    supporting_evidence_ids: contradictory
-      ? [left.evidence_id]
-      : [...new Set([left.evidence_id, right.evidence_id])],
-    contradicting_evidence_ids: contradictory ? [right.evidence_id] : [],
+    supporting_evidence_ids: sourceIds.filter(
+      (id) => !contradictions.includes(id),
+    ),
+    contradicting_evidence_ids: contradictions,
     required_authority: "shipped-artifact",
     required_confidence: "observed",
     required_environment: null,

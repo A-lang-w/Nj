@@ -7,7 +7,11 @@ operation and the next useful step; after repair, continue the investigation.
 Commands below use an installed `rea`. If none is available, use the package
 invocation in `SKILL.md` when acquiring REA is authorized. Follow the connected
 server's schemas and the installed CLI's help rather than assuming repository
-main and an older release expose the same arguments.
+main and an older release expose the same arguments. Tool-name prefixes belong
+to the client: find the canonical REA operation in its actual tool listing and
+server association before concluding that it is absent. A shared prefix alone
+does not establish which server an approval wildcard covers. See
+[client tool names and discovery](https://github.com/morluto/rea/blob/main/docs/client-configuration.md#client-tool-names-and-discovery).
 
 ## Choose the remedy from the observed failure
 
@@ -80,6 +84,37 @@ For invalid arguments, use the connected tool's current input schema, or the
 installed CLI's command help. Refresh the catalog if stale; do not guess fields
 from an older skill or return the entire catalog to repair one field. Correct
 all reported fields before retrying.
+
+## Recovery ladder
+
+Follow the returned remediation. Change a request field or a `REA_*` setting
+only when that text explicitly recommends the change. Restart REA when it says
+the value is read at startup. A mention that a control does not raise a limit
+is not a recommendation to change it. Do not invent a setting. Host memory and
+`NODE_OPTIONS` do not raise a REA admission unless that remediation says so.
+
+- MCP connection dropped: retry that call once only when it is safe to repeat
+  or known not to have started. If it may already have changed the target, or
+  it fails again, tell the user REA's connection failed and ask them to restart
+  the MCP client. Do not run `rea doctor` for the drop itself.
+- REA could not start its connection: retry once, then tell the user and ask
+  them to restart the MCP client. Run `rea doctor` when REA could not start or
+  tools stay missing after that restart. Do not retry a startup failure that
+  returns the same unchanged result.
+- `cleanup_incomplete`, or retained cleanup owners in the error details: retry
+  that exact cleanup owner. Do not start new work that needs those resources
+  until that owner confirms release. Repeating the original call is not that
+  retry.
+- Capacity, when the result is `resource_constraint` and `retryable` is true:
+  wait for the active admission to finish, then retry within the reported
+  limits. Do not restart REA to free the slot.
+- `configuration_invalid`: correct the named setting in the environment that
+  starts REA (the shell or the MCP registration), then restart REA. Run
+  `rea doctor` to see the `runtime-configuration:` check. Re-run `rea setup`
+  for that client when the registration must carry the new setting, then
+  reconnect.
+- `invalid_request`: correct the reported fields from the current schema. Do
+  not repeat the unchanged call.
 
 ## Repair registration when needed
 
