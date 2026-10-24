@@ -30,7 +30,9 @@ same merge.
 ## Write plans over recorded captures
 
 The 69 captures the derived-values branch measured: 50 published, 18 Claude Code recorded from a prompt, and one timed
-Grafana recording.
+Grafana recording. After merging main `ed79bf93` (which bounds create learning), the census was run again against main
+with the scenario-timing branch: 124 served there, 132 with both branches, no write going from served to withheld; the
+columns below are the measurements before that merge, whose totals it reproduces.
 
 | Captures                  | Write plans | Served before both branches | Derived values | This branch |
 | ------------------------- | ----------- | --------------------------- | -------------- | ----------- |
