@@ -47,7 +47,9 @@ before building.
   pointers, never values, and never refuse a build; the scan cannot overflow the
   stack on deeply nested bodies. A browser scenario's retained header values and
   the query parameters of its recorded URLs are scanned as a HAR's headers and
-  query strings are.
+  query strings are, and so are its request bodies recorded without a media
+  type. Each occurrence of a repeated form field counts, as each repeated
+  header or query parameter does.
 - Nothing is written before the bundle stage; `--dry-run` writes nothing,
   reports the files a build would write and refuses the package tarballs a build
   refuses, admitting and releasing the tarball as a build does: a close it

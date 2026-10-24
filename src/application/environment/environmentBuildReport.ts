@@ -84,21 +84,26 @@ const member = (value: unknown, name: string): unknown =>
     ? Reflect.get(value, name)
     : undefined;
 
-/** A recorded body as JSON or form members, or undefined when it is neither. */
-const parsedBody = (text: unknown): unknown => {
+/** A recorded body: a JSON value to walk, or form fields in order with every occurrence kept, as headers and query strings are. */
+type ScannedBody =
+  | { readonly kind: "json"; readonly value: unknown }
+  | { readonly kind: "form"; readonly fields: readonly [string, string][] };
+
+/** A recorded body as JSON or form fields, or undefined when it is neither. */
+const parsedBody = (text: unknown): ScannedBody | undefined => {
   if (typeof text !== "string" || text.length > SCAN_BODY_LIMIT_BYTES)
     return undefined;
   const start = text.trimStart()[0];
   if (start === "{" || start === "[") {
     try {
-      return JSON.parse(text);
+      return { kind: "json", value: JSON.parse(text) };
     } catch {
       return undefined;
     }
   }
   if (!/^[^=&\s]+=[^&]*(?:&[^=&\s]+=[^&]*)*$/u.test(text)) return undefined;
   try {
-    return Object.fromEntries(new URLSearchParams(text));
+    return { kind: "form", fields: [...new URLSearchParams(text)] };
   } catch {
     return undefined;
   }
@@ -149,6 +154,13 @@ export const scanCredentialNames = (
       }
     }
   };
+  const scanBody = (body: ScannedBody | undefined, label: string): void => {
+    if (body?.kind === "json") walk(body.value, label);
+    else if (body?.kind === "form")
+      for (const [name, value] of body.fields)
+        if (credentialNamed(name) && holdsValue(value))
+          found(`${label} /${pointerToken(name)}`);
+  };
   for (const record of records) {
     const ordinal = String(record.ordinal);
     const request = member(record.reported, "request");
@@ -163,11 +175,11 @@ export const scanCredentialNames = (
     for (const [name, value] of namedValues(member(request, "queryString")))
       if (credentialNamed(name) && holdsValue(value))
         found(`record ${ordinal} request query ${name}`);
-    walk(
+    scanBody(
       parsedBody(member(member(request, "postData"), "text")),
       `record ${ordinal} request`,
     );
-    walk(
+    scanBody(
       parsedBody(
         readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES).bodyText,
       ),

@@ -125,9 +125,10 @@ const reportedRequest = (
           queryString: queryPairs(request.url.url),
         }
       : {}),
-    ...(text === undefined || mimeType === undefined
+    // Review scans every retained body, so one the capture could not classify keeps its text with an empty media type.
+    ...(text === undefined || (mimeType === undefined && purpose !== "review")
       ? {}
-      : { postData: { mimeType, text } }),
+      : { postData: { mimeType: mimeType ?? "", text } }),
   };
 };
 
