@@ -202,3 +202,60 @@ Android subsequently merges as `f2fa7f648de3dfbac5de69f3c091a54ffd571015` on
 that same main parent. Its CI built report has 14,251 passing / 220 skipped
 tests; the source worker and release-test failures match main. That is context
 for the combined snapshot, not the CI outcome of the newly published DOL head.
+
+## Procedure-search contract verification
+
+Source `95e4cdfa53b049855f0d2b68b0741dada41d3e68` replaces the remaining inline public
+`search_procedures` row definition with `nativeInventoryRowsSchemas.names`, the
+same owner used by complete native name/procedure inventories and retained
+views. The bridge decoder already preserved `symbol`; the old public schema
+rejected it. The previous all-five-tools test stripped symbol facts from its
+search fixture and therefore missed that consumer boundary.
+
+The test now replays both real captured rows (generated `FUN_80003100` and the
+pre-script's `__start`) with their source metadata. Before the fix, the standard
+SDK raises `Structured content does not match the tool's output schema` for
+the extra fields. After it, all **42** selected decoder, inventory-view, MCP,
+semantic-schema and DOL-session checks pass, covering complete, summary and
+retained-page delivery. The superseded inline row definition is removed;
+public search and list consumers share the domain row owner. Standalone lint,
+full formatting and cached build pass. Source checking reports only the same
+main release-test `includeFiles` error.
+
+A fresh real stock-Ghidra SDK task adds a matching `search_procedures` call to
+the earlier analyst question. The result keeps both rows' symbol metadata,
+passes the actual advertised SDK/Ajv schemas, and agrees with the list result.
+All earlier requested mapping, byte, pseudocode, limitation and input-identity
+facts remain equal. Final process lineage is verified with no live descendants.
+This adds real search coverage; the earlier six paired tasks did not exercise
+public procedure search.
+
+The first fresh task stops during Java readiness cleanup, before DOL import:
+Java exits 0 and its JDK 21 facts parse, but an observed process's ownership
+environment returns EACCES. Both recorded candidate PIDs are subsequently
+absent before a fresh session is attempted. The fresh session completes.
+Ownership checks remain enforced; no persistent cause was isolated, and the
+first attempt remains a failure. The row-schema correction is not claimed to
+fix that process-retirement observation.
+
+The completed analyst task includes that failed attempt and retry:
+
+| Attempt            | Outcome                       | Calls | Elapsed s | Accounted CPU s | Sampled peak family RSS MiB | Estimated RPC tokens |
+| ------------------ | ----------------------------- | ----: | --------: | --------------: | --------------------------: | -------------------: |
+| search-final       | Java readiness cleanup failed |     1 |    31.447 |          26.352 |                    1352.637 |            1,053,096 |
+| search-final-retry | passed                        |    12 |    77.911 |          91.108 |                    2039.742 |            1,139,433 |
+
+Measured invocations total **109.358 s**,
+**117.460 CPU s**, **2,192,529 estimated
+RPC tokens**, 13 calls and 36 messages. The largest sampled
+family RSS is 2039.742 MiB. Both catalog discoveries and
+the error reply are counted. The receipt-write span approximates
+180.355 s including intervening diagnostics;
+diagnostic/model tokens and CPU, prompts, stderr, transport framing and actual
+model-specific tool conversion remain unmeasured. Each catalog has 223 tools;
+its input subset remains 72,459 estimated tokens / 261,284 bytes per attempt.
+The successful attempt makes 12 calls; it is a different task from the earlier
+11-call pairs and does not establish a performance gain. Tokenx 1.3.0 estimates
+and the sampler limitations above still apply.
+
+Full formatting and documentation are checked again after this addendum.
