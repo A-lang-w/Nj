@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { chromium } from "playwright-core";
 
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { browserScenarioCaptureSchema } from "../../dist/domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
+import { performScenarioRequest } from "../../dist/browser/PlaywrightScenarioRequest.js";
+import { BrowserScenarioSecrets } from "../../dist/browser/BrowserScenarioSecrets.js";
 import {
   requestFixtureCsrf,
   requestFixtureToken,
@@ -233,6 +236,83 @@ const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
   );
 };
 
+/** A genuinely busy page must not dispatch a write after its deadline or host cancellation. */
+const assertQueuedWritesStopped = async (executable, site) => {
+  const browser = await chromium.launch({
+    executablePath: executable,
+    headless: true,
+  });
+  try {
+    const page = await browser.newPage({ serviceWorkers: "block" });
+    await page.goto(site.origin);
+    for (const cancelled of [false, true]) {
+      const scenario = browserScenarioSchema.parse({
+        ...writeSession(executable, site.origin),
+        actions: [
+          {
+            ...write("queued", "POST", "/api/items", {
+              json: { title: "must not be created" },
+              status: 201,
+            }),
+            headers: [
+              {
+                name: "X-CSRFToken",
+                value: { source: "literal", value: requestFixtureCsrf },
+              },
+              {
+                name: "Authorization",
+                value: {
+                  source: "literal",
+                  value: `Bearer ${requestFixtureToken}`,
+                },
+              },
+            ],
+            timeout_ms: cancelled ? 5000 : 50,
+          },
+        ],
+      });
+      const secrets = BrowserScenarioSecrets.resolve(scenario, {});
+      if (!secrets.ok) throw secrets.error;
+      // A preceding evaluation monopolizes the page thread while Node can
+      // still cancel. Its protocol request is queued before the request step.
+      const busy = page.evaluate(() => {
+        const until = Date.now() + 300;
+        while (Date.now() < until) {}
+      });
+      const controller = new AbortController();
+      const before = site.writes.length;
+      const request = performScenarioRequest({
+        page,
+        action: scenario.actions[0],
+        secrets: secrets.value,
+        startOrigin: site.origin,
+        signal: controller.signal,
+      });
+      const outcome = request.then(
+        () => ({ ok: true }),
+        (error) => ({ ok: false, error }),
+      );
+      const timer = cancelled
+        ? setTimeout(() => controller.abort("queued request cancelled"), 30)
+        : undefined;
+      try {
+        const result = await outcome;
+        assert.equal(result.ok, false, "queued write unexpectedly completed");
+        assert.equal(
+          site.writes.length,
+          before,
+          "the server received a late write",
+        );
+        await busy;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+};
+
 /**
  * Record a write session through request steps in a real browser, then build
  * an environment from it: every request lands in its own step, the page's
@@ -276,6 +356,7 @@ export async function verifyBrowserRequestSteps(
     );
 
     await assertUnexpectedStatusFails(entrypoint, scenario, site);
+    await assertQueuedWritesStopped(executable, site);
     return {
       request_steps: scenario.actions.filter(
         ({ action }) => action === "request",
@@ -283,6 +364,7 @@ export async function verifyBrowserRequestSteps(
       authenticated_writes: site.writes.length,
       served_writes: served,
       tool_count: built.tool_count,
+      queued_writes_refused: 2,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

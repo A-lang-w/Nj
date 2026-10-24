@@ -12,7 +12,8 @@ and at least one `actions` entry. Launch `headless` defaults to `true` and can
 be set to `false` where the host supports a visible browser. Navigations follow
 the destinations named by the scenario and the page's ordinary browser requests,
 and [request steps](#request-steps) send only to the start URL's origin;
-there is no separate origin allowlist or request-interception layer. Environment
+there is no separate origin allowlist. Request steps use a temporary dispatch
+gate for cancellation; ordinary page requests retain their browser behavior. Environment
 settings (including service workers blocked by default), empty storage, and a
 final sanitized URL capture are supplied by default. Set
 `environment.service_workers` to `allow` when the application requires them.
@@ -411,6 +412,11 @@ data you may change. This scenario creates one item:
   and the request: a step whose time runs out, or that is cancelled, before
   its request is sent sends nothing, but a request already sent can still reach
   the application after the step fails.
+  An absolute deadline also covers browser evaluation queued behind page work.
+  A temporary route checks cancellation again at network dispatch and is removed
+  when the request evaluation settles. A page controlled by a service worker
+  is refused because its fetch can bypass that dispatch gate; use the default
+  blocked service-worker policy for request steps.
 
 The request runs in the page's main world, so an application that wraps
 `fetch` sees it, and it goes through the same network observation as other

@@ -109,7 +109,14 @@ client with it. Match `wait_for` locators to exactly one element.
 2. Read with `request` steps: each collection the environment needs, twice
    before any write, so fields that change on their own show up; one item of
    each.
-3. Write with `request` steps, two numbered scratch objects per write type,
+3. Use `request` steps only when the API lets the caller choose each scratch
+   object's ID or a prior read already established it. Request paths are fixed
+   strings; no action substitutes a value from an earlier response. For
+   server-assigned IDs, create through the UI and open the new object's detail
+   view to record its read, edit and delete through UI actions. If that journey
+   cannot be scripted, leave the write unserved and report the limitation;
+   never guess an ID or create objects with no supported cleanup path.
+   Record two numbered scratch objects per write type,
    with varied free text. After each write, and before the next one, read the
    object back by id and then its list: create 1, read 1, list, create 2,
    read 2, list; never several writes before their reads.

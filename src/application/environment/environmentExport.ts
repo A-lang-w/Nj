@@ -205,7 +205,7 @@ const NOT_A_FILE_CODES = new Set([
 ]);
 
 /** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
-const headroomRefusal = (
+export const environmentExportHeadroomRefusal = (
   operation: string,
   path: string,
   inputBytes: number,
@@ -275,7 +275,11 @@ export const readEnvironmentExportFile = async (
     bytes = await readRegularFile(path, {
       resources,
       admit: (state) => {
-        const refused = headroomRefusal(operation, path, state.size);
+        const refused = environmentExportHeadroomRefusal(
+          operation,
+          path,
+          state.size,
+        );
         if (refused !== undefined) throw refused;
       },
     });

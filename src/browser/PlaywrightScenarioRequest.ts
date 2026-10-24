@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { Page, Route } from "playwright-core";
 
 import {
   HEADER_FIELD_VALUE,
@@ -74,13 +74,23 @@ const headerValue = async (
       );
   } else {
     const stored = await page.evaluate(
-      (key) =>
-        (
-          globalThis as {
-            readonly localStorage?: { getItem(key: string): string | null };
-          }
-        ).localStorage?.getItem(key) ?? null,
-      value.key,
+      ({ key, origin }) => {
+        if (
+          (globalThis as { readonly location?: { origin: string } }).location
+            ?.origin !== origin
+        )
+          throw new Error(
+            "The page moved off the start origin before its local storage was read.",
+          );
+        return (
+          (
+            globalThis as {
+              readonly localStorage?: { getItem(key: string): string | null };
+            }
+          ).localStorage?.getItem(key) ?? null
+        );
+      },
+      { key: value.key, origin: url.origin },
     );
     if (stored === null)
       throw new ScenarioRequestError(
@@ -137,7 +147,7 @@ interface PageRequest {
   readonly method: string;
   readonly headers: [string, string][];
   readonly body: string | undefined;
-  readonly timeoutMs: number | undefined;
+  readonly deadline: number | undefined;
 }
 
 /** Send the request with the page's own fetch, from the page's main world, and read the whole answer. */
@@ -150,11 +160,28 @@ const sendFromPage = (
     const here = (globalThis as { readonly location?: { origin: string } })
       .location?.origin;
     if (here !== request.origin) return { left: String(here) };
+    if (
+      (
+        globalThis as {
+          readonly navigator?: { serviceWorker?: { controller?: unknown } };
+        }
+      ).navigator?.serviceWorker?.controller
+    )
+      return {
+        error:
+          "Request steps require a page without a controlling service worker so cancellation can guard dispatch.",
+      };
+    const remaining =
+      request.deadline === undefined
+        ? undefined
+        : request.deadline - Date.now();
+    if (remaining !== undefined && remaining <= 0)
+      return { error: "The request ran out of time before it was sent." };
     const controller = new AbortController();
     const timer =
-      request.timeoutMs === undefined
+      remaining === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), request.timeoutMs);
+        : setTimeout(() => controller.abort(), remaining);
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -164,7 +191,15 @@ const sendFromPage = (
         signal: controller.signal,
         ...(request.body === undefined ? {} : { body: request.body }),
       });
-      await answer.arrayBuffer();
+      const reader = answer.body?.getReader();
+      if (reader !== undefined)
+        try {
+          while (!(await reader.read()).done) {
+            // Wait for completion without retaining a second response body.
+          }
+        } finally {
+          reader.releaseLock();
+        }
       return answer.type === "opaqueredirect"
         ? { redirected: true }
         : { status: answer.status };
@@ -229,14 +264,43 @@ export const performScenarioRequest = async (input: {
     throw new ScenarioRequestError(
       `Request step ${action.step_id} ran out of time before its request was sent.`,
     );
-  const response = await sendFromPage(page, {
+  const request = {
     url: target,
     origin: startOrigin,
     method: action.method,
     headers,
     body: action.json === undefined ? undefined : JSON.stringify(action.json),
-    timeoutMs: remaining,
-  });
+    deadline,
+  };
+  // The browser can queue evaluate behind a busy page. Keep a host-side gate
+  // until that evaluation settles, including after the step boundary stops
+  // waiting. A queued fetch then observes live cancellation at dispatch.
+  const dispatchUrl = new URL(target);
+  dispatchUrl.hash = "";
+  const matches = (url: URL): boolean => url.href === dispatchUrl.href;
+  const gate = async (route: Route): Promise<void> => {
+    const sent = route.request();
+    if (
+      sent.method() !== request.method ||
+      sent.postData() !== (request.body ?? null)
+    ) {
+      await route.fallback();
+      return;
+    }
+    if (
+      signal?.aborted === true ||
+      (deadline !== undefined && Date.now() >= deadline)
+    )
+      await route.abort("aborted");
+    else await route.fallback();
+  };
+  await page.route(matches, gate);
+  let response: PageResponse;
+  try {
+    response = await sendFromPage(page, request);
+  } finally {
+    await page.unroute(matches, gate);
+  }
   if ("error" in response)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} failed in the page: ${response.error}`,

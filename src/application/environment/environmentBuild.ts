@@ -326,6 +326,12 @@ export const buildEnvironment = async (
   );
   if (!records.ok) return records;
   const scanned = scanCredentialNames(records.value.records);
+  if (scanned.skipped !== undefined)
+    warnings.push({
+      code: "credential-scan-incomplete",
+      message: `${String(scanned.skipped.count)} recorded bodies exceed the 4 MiB credential-name scan limit; their values remain unscanned in evidence.json. Review these bodies before sharing.`,
+      pointers: scanned.skipped.pointers,
+    });
   if (scanned.count > 0)
     warnings.push({
       code: "credential-named-members",

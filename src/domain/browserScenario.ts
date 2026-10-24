@@ -91,7 +91,14 @@ const validateRequestSteps = (
   const origin = new URL(scenario.start_url.url).origin;
   scenario.actions.forEach((action, index) => {
     if (action.action !== "request") return;
-    if (new URL(action.path, origin).origin !== origin)
+    let requestOrigin: string | undefined;
+    try {
+      requestOrigin = new URL(action.path, origin).origin;
+    } catch {
+      // Boundary strings that the URL parser cannot interpret remain field
+      // validation issues, just like a path that resolves off-origin.
+    }
+    if (requestOrigin !== origin)
       addIssue(
         context,
         ["actions", index, "path"],

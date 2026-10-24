@@ -181,7 +181,10 @@ report's `credential-named-members` warning counts recorded header names, query
 parameter names and JSON or form body members whose names look like
 credentials (whole name segments such as `token`, `secret`, `password`,
 `api_key`, `authorization` or `session`) and hold a value, and lists the first
-20 by record and pointer, never by value. Names do not establish sensitivity,
+20 by record and pointer, never by value. Bodies larger than 4 MiB are not
+scanned; `credential-scan-incomplete` counts them and lists up to 20 record
+pointers, including base64 bodies whose decoded scan was cut. An empty name
+warning does not establish that these bodies were checked. Names do not establish sensitivity,
 so the build never refuses on them. Capture
 Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle

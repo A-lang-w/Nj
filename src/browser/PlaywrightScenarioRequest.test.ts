@@ -1,4 +1,4 @@
-import type { Page } from "playwright-core";
+import type { Page, Route } from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
@@ -106,6 +106,7 @@ describe("request step schema", () => {
       "//evil.test/x",
       "/\\evil.test/x",
       "https://evil.test/",
+      "/\n/[bad]",
     ])
       expect(issues([requestStep({ path })]).length, path).toBeGreaterThan(0);
   });
@@ -146,6 +147,7 @@ const fakePage = (options: {
   readonly sendingOrigin?: string;
   readonly cookies?: readonly { name: string; value: string }[];
   readonly cookieDelayMs?: number;
+  readonly evaluateDelayMs?: number;
   readonly storage?: Record<string, string>;
 }) => {
   const url = options.url ?? `${ORIGIN}/dashboard`;
@@ -156,6 +158,8 @@ const fakePage = (options: {
     origin: options.sendingOrigin ?? new URL(url).origin,
   });
   return {
+    route: async () => {},
+    unroute: async () => {},
     url: () => url,
     context: () => ({
       cookies: async () => {
@@ -169,7 +173,13 @@ const fakePage = (options: {
     evaluate: async <Arg, Result>(
       fn: (arg: Arg) => Result | Promise<Result>,
       arg: Arg,
-    ): Promise<Result> => fn(arg),
+    ): Promise<Result> => {
+      if (options.evaluateDelayMs !== undefined)
+        await new Promise((resolve) =>
+          setTimeout(resolve, options.evaluateDelayMs),
+        );
+      return fn(arg);
+    },
   } as unknown as Page;
 };
 
@@ -303,6 +313,108 @@ describe("request step execution", () => {
     await expect(
       perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
     ).rejects.toThrow("Failed to fetch");
+  });
+});
+
+describe("request dispatch boundary", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends nothing when browser evaluation starts after the absolute deadline", async () => {
+    const calls = stubFetch(200);
+    const parsed = scenario([requestStep({ timeout_ms: 5 })]);
+    await expect(
+      perform(
+        fakePage({ evaluateDelayMs: 30 }),
+        parsed.actions[0]!,
+        resolved(parsed),
+      ),
+    ).rejects.toThrow("ran out of time");
+    expect(calls).toEqual([]);
+  });
+
+  it("guards dispatch after cancellation while evaluation was queued, and removes its route", async () => {
+    const parsed = scenario([requestStep({})]);
+    const controller = new AbortController();
+    const page = fakePage({});
+    let gate: ((route: Route) => Promise<void>) | undefined;
+    vi.spyOn(page, "route").mockImplementation(async (_match, handler) => {
+      gate = handler as typeof gate;
+    });
+    const unroute = vi.spyOn(page, "unroute");
+    const sent = vi.fn();
+    vi.spyOn(page, "evaluate").mockImplementation(async (fn, arg) => {
+      controller.abort("abandoned while queued");
+      return (fn as (arg: unknown) => unknown)(arg);
+    });
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      if (gate === undefined) throw new Error("Missing dispatch owner");
+      await gate({
+        request: () => ({
+          method: () => init.method,
+          postData: () => init.body ?? null,
+        }),
+        fallback: sent,
+        abort: async () => {
+          throw new Error("aborted at dispatch");
+        },
+      } as unknown as Route);
+      return new Response("{}", { status: 200 });
+    });
+    await expect(
+      performPlaywrightScenarioAction({
+        page,
+        action: parsed.actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("aborted at dispatch");
+    expect(sent).not.toHaveBeenCalled();
+    expect(unroute).toHaveBeenCalledOnce();
+  });
+
+  it("refuses foreign-origin storage before reading its value", async () => {
+    const calls = stubFetch(200);
+    const read = vi.fn();
+    const parsed = scenario([
+      requestStep({
+        headers: [
+          {
+            name: "Authorization",
+            value: { source: "local_storage", key: "token" },
+          },
+        ],
+      }),
+    ]);
+    const page = fakePage({ sendingOrigin: "https://other.test" });
+    vi.stubGlobal("localStorage", { getItem: read });
+    await expect(
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("local storage");
+    expect(read).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("drains response chunks and releases the reader without materializing the body", async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce({ done: false, value: new Uint8Array(8) })
+      .mockResolvedValueOnce({ done: true });
+    const releaseLock = vi.fn();
+    const arrayBuffer = vi.fn();
+    vi.stubGlobal("fetch", async () => ({
+      status: 200,
+      type: "basic",
+      body: { getReader: () => ({ read, releaseLock }) },
+      arrayBuffer,
+    }));
+    const parsed = scenario([requestStep({})]);
+    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(releaseLock).toHaveBeenCalledOnce();
+    expect(arrayBuffer).not.toHaveBeenCalled();
   });
 });
 

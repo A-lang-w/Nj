@@ -67,6 +67,41 @@ describe("credentialNamed", () => {
 });
 
 describe("scanCredentialNames", () => {
+  it("reports request and response bodies beyond the scan limit, including cut base64", () => {
+    const large = record(
+      2,
+      { token: "x".repeat(4 * 1024 * 1024) },
+      { token: "x".repeat(4 * 1024 * 1024) },
+    );
+    expect(scanCredentialNames([large])).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: {
+        count: 2,
+        pointers: ["record 2 request", "record 2 response"],
+      },
+    });
+    const encoded = Buffer.from(
+      JSON.stringify({ token: "x".repeat(4 * 1024 * 1024) }),
+    ).toString("base64");
+    const binary = {
+      ...record(3, undefined, undefined),
+      reported: {
+        response: { content: { text: encoded, encoding: "base64" } },
+      },
+      binary_fields: [
+        {
+          pointer: "/response/content/text",
+          state: "retained",
+          content_base64: encoded,
+        },
+      ],
+    } as unknown as WebNetworkCaptureRecord;
+    expect(scanCredentialNames([binary])).toMatchObject({
+      skipped: { count: 1, pointers: ["record 3 response"] },
+    });
+  });
+
   it("counts string values under credential names in request and response bodies, by pointer and never by value", () => {
     const scanned = scanCredentialNames([
       record(

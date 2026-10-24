@@ -89,8 +89,7 @@ type ScannedBody =
 
 /** A recorded body as JSON or form fields, or undefined when it is neither. */
 const parsedBody = (text: unknown): ScannedBody | undefined => {
-  if (typeof text !== "string" || text.length > SCAN_BODY_LIMIT_BYTES)
-    return undefined;
+  if (typeof text !== "string") return undefined;
   const start = text.trimStart()[0];
   if (start === "{" || start === "[") {
     try {
@@ -125,8 +124,14 @@ const namedValues = (value: unknown): (readonly [string, unknown])[] =>
  */
 export const scanCredentialNames = (
   records: readonly WebNetworkCaptureRecord[],
-): { readonly count: number; readonly pointers: string[] } => {
+): {
+  readonly count: number;
+  readonly pointers: string[];
+  readonly skipped?: { readonly count: number; readonly pointers: string[] };
+} => {
   let count = 0;
+  let skippedCount = 0;
+  const skippedPointers: string[] = [];
   const pointers: string[] = [];
   const found = (pointer: string): void => {
     count++;
@@ -159,6 +164,19 @@ export const scanCredentialNames = (
         if (credentialNamed(name) && holdsValue(value))
           found(`${label} /${pointerToken(name)}`);
   };
+  const scanText = (text: unknown, label: string, cut = false): void => {
+    if (
+      cut ||
+      (typeof text === "string" &&
+        Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
+    ) {
+      skippedCount++;
+      if (skippedPointers.length < REPORTED_POINTERS)
+        skippedPointers.push(label);
+      return;
+    }
+    scanBody(parsedBody(text), label);
+  };
   for (const record of records) {
     const ordinal = String(record.ordinal);
     const request = member(record.reported, "request");
@@ -176,28 +194,37 @@ export const scanCredentialNames = (
     const postData = member(request, "postData");
     const text = member(postData, "text");
     // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
-    scanBody(
-      text === undefined
-        ? {
-            kind: "form",
-            fields: namedValues(member(postData, "params")).flatMap(
-              ([name, value]) =>
-                typeof value === "string"
-                  ? [[name, value] as [string, string]]
-                  : [],
-            ),
-          }
-        : parsedBody(text),
-      `record ${ordinal} request`,
+    if (text === undefined)
+      scanBody(
+        {
+          kind: "form",
+          fields: namedValues(member(postData, "params")).flatMap(
+            ([name, value]) =>
+              typeof value === "string"
+                ? [[name, value] as [string, string]]
+                : [],
+          ),
+        },
+        `record ${ordinal} request`,
+      );
+    else scanText(text, `record ${ordinal} request`);
+    const responseBody = readRecordedResponseBody(
+      record,
+      SCAN_BODY_LIMIT_BYTES,
     );
-    scanBody(
-      parsedBody(
-        readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES).bodyText,
-      ),
+    scanText(
+      responseBody.bodyText,
       `record ${ordinal} response`,
+      responseBody.bodyCut,
     );
   }
-  return { count, pointers };
+  return {
+    count,
+    pointers,
+    ...(skippedCount === 0
+      ? {}
+      : { skipped: { count: skippedCount, pointers: skippedPointers } }),
+  };
 };
 
 /** Whether an origin's host is a loopback name or an IP literal, which says nothing about the application. */
