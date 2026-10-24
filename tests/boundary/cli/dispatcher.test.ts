@@ -1,4 +1,4 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -16,7 +16,11 @@ const installCliRuntime = async (
   resultOutput = "export const createCliResultOutput = () => undefined;\n",
 ): Promise<void> => {
   await workspace.mkdir("scripts");
-  await workspace.mkdir("dist/cli-runtime");
+  await workspace.mkdir("dist");
+  // The bundle's entrypoints and shared chunks form one emitted runtime.
+  await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
+    recursive: true,
+  });
   await Promise.all([
     copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
     workspace.write(
@@ -113,28 +117,16 @@ describe("executable dispatcher", () => {
   workspaceCliTest(
     "reserves production MCP routing for bare mode arguments",
     async ({ processes, workspace }) => {
-      const scripts = await workspace.mkdir("scripts");
-      await workspace.mkdir("dist");
-      await workspace.mkdir("dist/cli-runtime");
+      await installCliRuntime(
+        workspace,
+        'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+      );
+      const scripts = workspace.path("scripts");
       await workspace.mkdir("dist/mcp");
       await Promise.all([
-        copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        workspace.write(
-          "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
-        ),
         workspace.write(
           "dist/mcp/main.js",
           'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = (args) => process.stdout.write(JSON.stringify({ adapter: "mcp-http", args }));\n',
-        ),
-        workspace.write(
-          "dist/cli-runtime/cli.js",
-          'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
-        ),
-        workspace.write("dist/cli-runtime/cliOutput.js", CLI_OUTPUT_RUNTIME),
-        workspace.write(
-          "dist/cli-runtime/cliResultOutput.js",
-          "export const createCliResultOutput = () => undefined;\n",
         ),
         workspace.write(
           "dist/cli-runtime/mcpDoctor.js",
@@ -154,10 +146,24 @@ describe("executable dispatcher", () => {
 
       await expect(invoke(["mcp"])).resolves.toEqual({ adapter: "mcp" });
       await expect(invoke(["--mcp"])).resolves.toEqual({ adapter: "mcp" });
-      await expect(invoke(["mcp", "doctor", "--json"])).resolves.toEqual({
-        adapter: "mcp-doctor",
-        args: ["--json"],
-        stdoutIsTerminal: false,
+      for (const args of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+      ]) {
+        await expect(invoke(args)).resolves.toEqual({
+          adapter: "mcp-doctor",
+          args: args.includes("--json") ? ["--json"] : ["--format", "json"],
+          stdoutIsTerminal: false,
+        });
+      }
+      await expect(
+        invoke(["--filter-output", "mcp", "doctor"]),
+      ).resolves.toEqual({
+        adapter: "cli",
+        args: ["--filter-output", "mcp", "doctor"],
       });
       await expect(invoke(["mcp", "add"])).resolves.toEqual({
         adapter: "cli",

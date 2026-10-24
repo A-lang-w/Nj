@@ -119,7 +119,12 @@ cliTest(
       const expected = {
         code: "invalid_request",
         details: {
-          issues: [{ path: ["protobuf", "schema"], reason: "invalid_format" }],
+          issues: [
+            {
+              path: ["protobuf", "schema", "descriptor_set_path"],
+              reason: "invalid_format",
+            },
+          ],
         },
       };
       expect(output.exitCode, variant).toBe(1);

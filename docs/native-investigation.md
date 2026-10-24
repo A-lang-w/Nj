@@ -96,6 +96,14 @@ After metadata edits, snapshot saves and imports remain unavailable in that
 session. Use `export_evidence_bundle` to retain the observations, close without
 `snapshot_path`, and reopen the target before importing or saving a snapshot.
 
+Hopper executable opens use an owned private image verified against the digest
+selected by `open_binary`. The ordinary ELF/PE path and configured loader overrides
+copy the whole source; default Mach-O opens retain their selected-image checks.
+A changed source fails before the launcher reads it. The bridge binds its Hopper document to that private
+loaded path, while Evidence retains the selected original artifact identity. Hopper
+database opens retain their separate database semantics. Real Hopper conformance for ordinary
+copies and loader overrides remains unverified by the source regression tests.
+
 Ghidra checks its private import copy against the artifact digest selected by
 `open_binary`. If the source changes before that copy is acquired, the query
 reports `artifact_changed` with the selected path and both digests. Reopen the
@@ -175,6 +183,14 @@ remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
 
+Each batch schedules one provider read at a time, but has no shared input-count
+or aggregate retained-output allowance. It retains every requested row and full
+pseudocode body through Evidence construction. The MCP response budget checks
+complete delivery afterward; it does not bound provider work or retained batch
+state. Select small explicit batches when using this workflow. A general batch
+admission/output policy, including completed per-item facts when capacity is
+exhausted, remains unresolved.
+
 `decompile_all` (`rea decompile-all <target> --output <directory>`) writes one
 pseudocode file per analyzed function and returns only a manifest: counts, the
 output directory, capped failure reasons, provider identity, and the
@@ -247,9 +263,16 @@ observed source encoding. Hopper can split long literals into adjacent
 unterminated objects; search matches each object's decoded bytes independently.
 Undecodable objects retain native display text with `decoding.available: false`
 and a reason, so one uncertain object does not block unrelated inspections.
-Function dossiers retain this same string evidence. Native call edges retain
+Function dossiers and `trace_feature` string matches retain this same string
+evidence, including decoding uncertainty; procedure matches keep their own
+named observation fields without invented string qualifications. Native call edges retain
 Hopper's partial `CallReference` classification and exact endpoints; detailed
-reference flags remain unavailable rather than being invented.
+reference flags remain unavailable rather than being invented. Caller and callee
+procedure inventories come from independent Hopper APIs; REA retains observed
+relationships but reports their completeness as unknown. In particular, a resolved
+tail call observed in one direction does not prove that the reverse inventory is
+complete. An empty Hopper inventory cannot establish that no such call exists.
+No whole-binary reverse scan is performed.
 Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
 matching deadline and a worker old-generation heap. Deadline or cancellation
 stops matching while leaving the Hopper API available. The deadline is
@@ -351,8 +374,12 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 stable IDs for endpoints outside that page.
 
 Within one value trace, each exact procedure selector is attempted at most once,
-including failed analyses. Failures remain unknown observations and do not
-establish canonical function identity. A new trace can retry those selectors.
+including failed analyses. A failed seed returns the provider's original typed
+failure and corrective guidance; it cannot establish a trace or target identity.
+Failures while expanding a validated seed remain unknown observations and do not
+establish canonical function identity. A successful seed without a native def-use
+model still returns its procedure and an explicit coverage unknown. A new trace
+can retry failed selectors.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
@@ -383,6 +410,20 @@ proven count and preserves unknowns for other forms. Real ELF and host ARM64
 Mach-O fixtures check each case against source-owned return values.
 
 ## Static inspection
+
+Thin Mach-O admission and each admitted FAT slice walk declared load-command headers, checking
+width-specific alignment, command sizes and exact `ncmds`/`sizeofcmds` agreement
+before opening a provider. Headers beyond the initial probe use another
+4096-byte window; admission skips command payloads. Native image readers use
+the same framing owner and perform their own payload checks. This validation
+does not add a global command-table byte cap.
+
+Native target admission checks Mach-O slice headers before assigning FAT
+identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
+images receives the generic unsupported-format refusal, including JVM class
+files larger than the bounded admission probe. This does not identify a partial
+prefix as a validated JVM class. Malformed recognized FAT declarations retain
+their format-specific reasons.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -427,6 +468,12 @@ their own error categories.
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
 totals and exit status. `truncated: true` means those excerpts are incomplete.
+
+A dSYM companion that `dyld_info` refuses for an unbacked text section reports
+`unsupported_target`, retaining the exact diagnostic and directing inspection
+to the linked Mach-O. This classification requires both the recognized native
+refusal and an independently parsed dSYM Mach header; other tool failures keep
+their failure outcome.
 
 `inspect_macho.selected_architecture` identifies the exact selected lipo slice
 and its `container_file_offset` in the input file. A thin Mach-O has a known
@@ -483,7 +530,17 @@ complete observation.
   `inventory_coverage` describes traversal of source entries and remains
   `unknown` when the reader cannot represent a filename. Represented symlinks
   are inventoried but their targets remain uninspected, with a limitation.
-  Image extraction and undocumented rendition interpretation are unsupported.
+  `catalog_coverage` and `resource_key_coverage` separately describe examined
+  catalog metadata and the UI join; an unmatched key cannot establish absence
+  when either source is incomplete. Resource wrappers retain their serialized
+  class and authored runtime class, including AppKit `NSCustomResource` names.
+  Invalid producer JSON and subprocess failures retain captured output with
+  their typed failure reason. Catalog-reader cleanup retains the primary
+  integrity, utility or cancellation failure and its cleanup resources; the
+  provider retains catalog, Interface Builder and keyed-archive readers until
+  cleanup is confirmed. A catalog failure also retains cleanup failures from
+  its parallel Interface Builder join. Image extraction and undocumented rendition
+  interpretation are unsupported.
 - `inspect_keyed_archive` / `rea inspect-keyed-archive <plist>` reads XML or
   binary Foundation keyed archives without instantiating classes. For an active
   app, provide its relative archive path as the second CLI argument or MCP
@@ -491,7 +548,12 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
-  Object `kind` describes the decoded archive value: data, dates and numbers
+  Binary references retain their serialized type-8 UID identity; ordinary
+  dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
+  Foundation's single numeric `CF$UID` dictionary convention for references;
+  a numeric `UID` dictionary remains authored data. Reference identity follows
+  the parsed format, rather than the displayed key alone. Object `kind`
+  describes the decoded archive value: data, dates and numbers
   remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
   dictionary with the same fields remains `dictionary`.
   XML must be well-formed. Data literals use
@@ -520,6 +582,12 @@ complete observation.
   comments do not change that handling. XML key names combine their text and
   CDATA segments without trimming or expanding literal CDATA entities. Other
   values and the original archive digest are preserved.
+  Symbol fallback accepts complete Objective-C class/metaclass symbol leaves,
+  including qualified names. Pointer/string labels that merely contain a class
+  marker do not establish classes. Provider namespace method labels are not
+  interpreted as Objective-C declarations; class definition versus import origin
+  remains unsupported coverage rather than an inferred classification.
+
 - `decode_interface_builder` / `rea decode-interface-builder <app>` reads
   compiled storyboard and nib resources into objects, outlets, actions,
   connections and controller/class names. A full app graph is often several
@@ -543,7 +611,11 @@ complete observation.
   still identify the original serialized bytes. Bundle resolution reports
   malformed bytes and unsupported encodings against the original plist path
   before looking up the executable. Interface Builder decoding
-  limits aggregate input archives to 32 MiB.
+  accepts recognized NSKeyedArchiver or ibtool document structures and native
+  NIBArchive records; an ordinary plist renamed `.nib` remains undecoded with
+  partial `archive_decode` coverage. An explicitly empty ibtool object document
+  remains a recognized empty document. The decoder limits aggregate input
+  archives to 32 MiB.
   Before decoding, it also bounds the serialized structure: expanded binary
   plist references, NIB table records, XML elements and text, plus their
   projected representations must fit the 256 MiB aggregate decode budget.
@@ -563,6 +635,17 @@ complete observation.
   coverage. Source I/O and identity failures retain their acquisition error
   instead of being labeled invalid archive content. Rejected plist decodes
   release their representation reservation for later documents.
+  Repeated NIBArchive fields retain all serialized values in order. Array
+  outlet connections resolve each serialized member and retain the collection
+  object ID and member position on the outlet observation. AppKit object-parent
+  registries use paired keys and parents; objects paired with `NSRoot` are
+  top-level, while nested objects keep their recorded parent. Conflicting or
+  unreadable registry pairs remain incomplete hierarchy evidence.
+  Embedded `UINib` archive data remains retained and undecoded; affected
+  object, connection, class and hierarchy coverage is partial. Recognized
+  `UIStoryboardShowSegueTemplate` source records similarly qualify connection
+  coverage until their navigation semantics are decoded.
+
 - `inspect_native_dispatch_metadata` /
   `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
@@ -572,6 +655,10 @@ complete observation.
   non-generic, non-resilient class vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  The selected Mach-O header must match the requested CPU family for both thin
+  files and universal slices before metadata decoding. CPU subtypes and
+  capability bits remain source facts; an `arm64` request may select an
+  `arm64e` image under the existing slice preference policy.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -594,6 +681,14 @@ complete observation.
   examined type records and fully decoded declarations. Class vtable recovery
   reads the same descriptors, so an unreadable type record also keeps
   `swift_class_vtable_descriptors` partial.
+  Nominal declarations, conformance type references and class vtables share one
+  snapshot-scoped name/context reader. Conformance `type_name` and dispatch
+  `owner` retain enclosing named types; conformances carry the known module.
+  Unresolved parents preserve the leaf name and a partial identity reason,
+  while independently readable witness implementations remain available.
+  Protocol instance properties use the same property-list reader as classes.
+  Unreadable instance properties and unimplemented class-property lists keep
+  the protocol's methods and record with partial protocol coverage.
   The `swift_class_vtable_descriptors` coverage counters count examined vtable
   slots and successfully decoded slots, rather than type-section entries.
   The `objc_class_method_ivar_metadata` counters count admitted class and
@@ -683,6 +778,19 @@ capture or automatic permission prompts. Executable bytes and process launch
 time guard against a different target or PID reuse. AX selection requires one
 unique geometry match; ambiguity fails closed.
 
+Accessibility node values preserve strings, finite numbers and booleans as their
+original JSON scalar types. Values that JSON cannot represent faithfully,
+including unsafe integers, negative zero and non-finite numbers, remain null
+with a path-specific gap and incomplete capture coverage. Null alone does not
+establish that an accessibility value was successfully read or absent.
+
+An initial PID or window mismatch is `invalid_request` on `pid` or
+`window_id` and leaves provider availability intact. An unavailable executable
+URL or unresolved executable path leaves identity unknown and reports
+`capability_unavailable`. Identity or window loss
+after the initial capture remains an observation failure with collected facts.
+Permission and other helper failures retain their specific remediation text.
+
 `capture_native_ui_scenario` takes AX child-index paths for press, increment/
 decrement scrolling and text-value entry, or bounded waits. No global event
 injection is used. Unsupported AX actions fail explicitly. The result preserves
@@ -714,9 +822,25 @@ caller-selected entries, records them and continues:
 - Objective-C methods by selector, optionally limited to one class and to
   instance or class methods.
 
+LLDB discovery uses a separate 60000 ms `xcrun` deadline with no runtime
+override. Discovery timeouts report `provider_timeout` and retain timeout
+recovery, captured diagnostics and cleanup state. Output-budget and I/O failures
+retain their own error categories; only actual discovery unavailability reports
+missing LLDB. `duration_ms` controls the later target observation window.
+
 ```sh
 rea observe-native-calls /Applications/Example.app '{"breakpoints":[{"kind":"objc-method","class_name":"NSURLSession","selector":"dataTaskWithRequest:completionHandler:"},{"kind":"function","name":"open","module":"libsystem_kernel.dylib"}],"duration_ms":5000,"backtrace_frames":4}' --json
 ```
+
+Function names select LLDB runtime symbols. On Darwin, a C function reported as
+`_main` by `inspect_macho` or `nm` can resolve as `main` in LLDB. REA preserves the
+exact selected name; it does not remove underscores or translate static names.
+Use `{"kind":"function","name":"main","module":"Example"}` to limit that
+runtime symbol to the executable image named `Example`, then inspect the reported
+locations and image paths. Omitting `module` deliberately matches every loaded
+image, including system libraries. A match outside the executable is valid for
+that request and does not by itself make coverage partial. This C naming example
+does not establish a translation rule for Swift, C++ or other mangled symbols.
 
 Each event is an observation: thread, image, symbol, load and file address,
 the raw integer argument registers, optional caller frames and, for an
@@ -734,6 +858,9 @@ verified, the result or error preserves that uncertainty. The result reports:
 Launch errors keep the fact that LLDB created a process separate from whether
 it remains alive. An exited `SBProcess` is reported as exited only after LLDB
 confirms that state; unresolved ownership remains retained for cleanup retry.
+An invalid process returned by `Launch`, including a rejected working directory,
+reports explicit no-process creation. With no target PID or other retained
+resource, REA releases that runtime and admits the next observation.
 Cancellation observed while output and Evidence are finalized returns partial
 cancellation Evidence, even if the target has already exited.
 
@@ -741,7 +868,7 @@ cancellation Evidence, even if the target has already exited.
   while excess bytes are drained and counted without growing capture files).
   Each stream reports `complete`; when draining could not finish, its byte
   count is an observed lower bound and truncation is explicit;
-- caller-selected arguments, working directory, and environment overrides;
+- caller-selected arguments, working directory, and environment overrides, including literal JSON environment names such as `__proto__`;
 - `selected_file_sha256` and LLDB module identity observations. These checks do
   not pin the executable against concurrent mutation; `loaded_image_sha256`
   remains unknown;
@@ -832,6 +959,13 @@ macOS ARM64 is the real host verified during this implementation. Admission of
 macOS Intel does not claim an Intel verification run. Unsupported metadata and
 unresolved runtime/value semantics remain visible in results.
 
+Signature inspection requests the selected architecture explicitly for identity,
+hashes, designated requirements, entitlements and runtime flags. For universal
+inputs, other slices receive signing-state probes; their detailed metadata is
+not included in the selected result, and coverage states that boundary. The
+digest-verified temporary snapshot writes to the filesystem; discovery declares
+that effect even though the selected artifact is unchanged.
+
 ## Interface Builder hierarchy coverage
 
 Bundle archive selection preserves directory traversal uncertainty, including
@@ -842,6 +976,12 @@ omissions. Either gap makes `archive_decode` partial and the graph truncated
 while preserving decoded documents. Its `examined` count remains actual decode
 attempts, and asset-catalog UI joins retain their existing incomplete-graph
 qualification.
+
+UI dispatch joins use the authored receiver's class independently of its
+presentation kind (controller, view, control or another object). An unresolved
+action receiver remains an examined, unresolved dispatch relationship and makes
+`ui_to_objc_dispatch` partial. Graph object limits retain their own cause in
+connection coverage, rather than being attributed to a connection budget.
 
 A document's `hierarchy_complete` flag follows its own hierarchy coverage.
 If graph limits omit a hierarchy source or destination, or prevent a hierarchy
@@ -976,3 +1116,21 @@ skipped uninitialized blocks. A missing match does not establish absence from
 uninitialized memory or across block boundaries. See
 [Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
+
+Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
+inventory order cannot select one silently. Duplicate rows at one address remain
+a singular match, and a missing name remains an unresolved observation.
+
+Hopper procedure names must identify a procedure entry. A non-entry symbol returns
+an input diagnostic with its coordinate and containing procedure; an explicit
+numeric address still selects its containing procedure. Use
+`resolve_containing_procedure` to request containment directly. IDA and Hopper
+reject reserved `file-offset:` selectors before name lookup; source-file offset
+selection belongs to the Ghidra import mapping.
+
+Native function names carry observed symbol metadata where available. Ghidra uses
+its function symbol's source and dynamic flags; Hopper and IDA leave origin
+unknown because this adapter has no verified origin API. Comparison and matching
+cannot use unknown labels as cross-artifact identity, even when their spelling
+looks meaningful. Original labels remain in Evidence. This qualification does not
+change address equality in a known common native coordinate context.

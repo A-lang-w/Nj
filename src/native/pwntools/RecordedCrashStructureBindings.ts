@@ -5,8 +5,8 @@ import {
   type RecordedCrashArchitecture,
 } from "../../domain/native/recordedCrash.js";
 
-// Base plus machine-specific projections from pinned pyelftools 0.33. A name
-// establishes the original p_type only in the architecture that emits it.
+// Pinned pyelftools 0.33 display projections depend on the machine. Validate
+// them separately from the original numeric p_type identity bound below.
 const baseSegmentKinds = new Map([
   [0, "PT_NULL"],
   [1, "PT_LOAD"],
@@ -33,15 +33,6 @@ const segmentKinds: Readonly<
     [0x70000001, "PT_AARCH64_UNWIND"],
   ]),
 };
-const noteKinds = new Map([
-  [1, "NT_PRSTATUS"],
-  [2, "NT_FPREGSET"],
-  [3, "NT_PRPSINFO"],
-  [4, "NT_TASKSTRUCT"],
-  [6, "NT_AUXV"],
-  [0x53494749, "NT_SIGINFO"],
-  [0x46494c45, "NT_FILE"],
-]);
 const matchesKind = (
   raw: number,
   reported: string | number,
@@ -60,6 +51,7 @@ const segmentMatches = (
 ): boolean => {
   const type = raw.readUInt32LE(0);
   return (
+    type === segment.type_id &&
     matchesKind(type, segment.type, kinds) &&
     BigInt(segment.flags) === BigInt(raw.readUInt32LE(4)) &&
     segment.file_backing ===
@@ -136,19 +128,8 @@ export function validateRecordedCrashStructure(
     if (
       BigInt(note.owner_location.bytes) !== BigInt(raw.readUInt32LE(0)) ||
       BigInt(note.descriptor_location.bytes) !== BigInt(raw.readUInt32LE(4)) ||
-      !matchesKind(raw.readUInt32LE(8), note.type, noteKinds)
+      raw.readUInt32LE(8) !== note.type_id
     )
-      fail();
-    const owner = bytesAt(
-      BigInt(note.owner_location.offset),
-      raw.readUInt32LE(0),
-    );
-    const terminator = owner.indexOf(0);
-    const display =
-      owner.length === 0
-        ? null
-        : owner.subarray(0, terminator).toString("utf8");
-    if ((owner.length > 0 && terminator < 0) || note.owner_display !== display)
       fail();
   }
 }

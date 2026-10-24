@@ -13,6 +13,7 @@ import {
   listItems,
   pointerTo,
   pointerTokens,
+  recordedItemCount,
   same,
   scalarText,
   type JsonObject,
@@ -43,19 +44,21 @@ export const listFacts = (
       items.forEach((item) => union.add(item));
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
       const counted = itemTotals(parent, plan.pointer).filter(
-        ([, value]) => countOf(value) !== undefined,
+        ([, value]) => recordedItemCount(value) !== undefined,
       );
       counting.set(
         record.ordinal,
         counted
-          .filter(([, value]) => value === items.length)
+          .filter(([, value]) => recordedItemCount(value) === items.length)
           .map(([counter]) => counter),
       );
       // Only a line that pages at most can hold its whole collection; a total that differs from
       // the number listed, or a next page, shows it is partial.
       if (
         !startsAtBeginning(record.query) ||
-        counted.some(([, value]) => countOf(value) !== items.length) ||
+        counted.some(
+          ([, value]) => recordedItemCount(value) !== items.length,
+        ) ||
         Object.keys(parent).some((name) => continues(name, parent[name]))
       )
         return;
@@ -112,14 +115,6 @@ export const isItemTotal = (name: string): boolean => {
     )
   );
 };
-
-/** A count recorded as a number or as a string of digits. */
-const countOf = (value: JsonValue | undefined): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
 
 const CONTINUATION_NAMES = new Set([
   "hasmore",

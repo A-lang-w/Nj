@@ -4,6 +4,8 @@ import { literalSubstringPredicate } from "../analysisSearch.js";
 import { directionOf, orderRole } from "./environmentStateOrderParameters.js";
 import {
   isObject,
+  recordedItemCount,
+  formatItemCount,
   renderStateList,
   scalarText,
   type JsonObject,
@@ -577,13 +579,11 @@ export const learnQuery = (
 export const queryTotalCount = (
   value: JsonValue | undefined,
 ): number | undefined => {
-  const count =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value)
-        ? Number(value)
-        : undefined;
-  return count !== undefined && Number.isSafeInteger(count) && count >= 0
+  const count = recordedItemCount(value);
+  return count !== undefined &&
+    Number.isSafeInteger(count) &&
+    count >= 0 &&
+    (typeof value !== "string" || String(count) === value)
     ? count
     : undefined;
 };
@@ -602,11 +602,7 @@ export const renderQueryList = (
       const recorded = counterAt(base, name);
       return queryTotalCount(recorded) === undefined
         ? body
-        : withCounter(
-            body,
-            name,
-            typeof recorded === "string" ? String(total) : total,
-          );
+        : withCounter(body, name, formatItemCount(total, recorded!));
     },
     renderStateList(view, base, items),
   );

@@ -23,6 +23,7 @@ const auxiliaryHeader = (
   report.segments = report.segments.map((segment) => ({
     ...segment,
     type: reportedType,
+    type_id: rawType,
     file_size: "0x4",
     memory_size: "0x4",
   }));

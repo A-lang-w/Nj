@@ -400,7 +400,15 @@ it("stamps a held clock only on a call that sends the value the entity holds", (
 
 it("renews no child rows on an entity that holds none", () => {
   const { asked, result } = update({ title: "New Title" }, RENEWING_PLAN);
-  expect(result.ok && result.value).not.toHaveProperty("steps");
+  expect(result).toEqual(
+    ok({
+      ...BEFORE,
+      ...ADVANCED,
+      title: "New Title",
+      slug: "new-title",
+      versionId: "ref-9",
+    }),
+  );
   expect(asked.map((rule) => rule.rule)).toEqual(["clock", "unique"]);
 });
 

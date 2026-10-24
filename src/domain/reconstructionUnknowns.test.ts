@@ -64,7 +64,7 @@ it("keeps explicit dependencies while excluding unrelated scoped unknowns", () =
     ]),
     comparisonId,
     [ev("b")],
-    "calls",
+    ["calls"],
   );
   expect(selected.map(({ unknown_id }) => unknown_id)).toEqual([
     calls.unknown_id,
@@ -94,9 +94,9 @@ it("aggregates constituent unknowns without importing another comparison's scope
     [foreign.unknown_id, foreign],
   ]);
   expect(
-    reconstructionClaimUnknowns(heads, ev("a"), [ev("b")], "overall"),
+    reconstructionClaimUnknowns(heads, ev("a"), [ev("b")], ["overall"]),
   ).toEqual([own]);
   expect(
-    reconstructionClaimUnknowns(heads, ev("a"), [ev("b")], "assembly"),
+    reconstructionClaimUnknowns(heads, ev("a"), [ev("b")], ["assembly"]),
   ).toEqual([]);
 });
