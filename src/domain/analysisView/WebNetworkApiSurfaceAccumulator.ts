@@ -6,10 +6,7 @@ import {
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import type {
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { UnsignedAnalysisView } from "./analysisView.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import {
   CAPTURE_CONTAINER_BYTES,
@@ -59,16 +56,6 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     readonly includeResponseCoverage = false,
   ) {
     super(maximumBytes, "API-surface");
-  }
-
-  /** Share selection interpretation between pre-admission and direct projection. */
-  static forView(view: AnalysisViewRequest): WebNetworkApiSurfaceAccumulator {
-    return new WebNetworkApiSurfaceAccumulator(
-      undefined,
-      view.kind === "api-surface" &&
-        view.include_query_parameter_names === true,
-      view.kind === "api-surface" && view.include_response_coverage === true,
-    );
   }
 
   #exclude(

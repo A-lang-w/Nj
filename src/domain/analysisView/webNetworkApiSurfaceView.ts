@@ -89,11 +89,22 @@ export const apiSurfaceFields = {
     }),
   ),
 };
+
+/** Create the budget and opt-in facts shared by admission and projection. */
+export const createApiSurfaceAccumulator = (
+  view: AnalysisViewRequest,
+): WebNetworkApiSurfaceAccumulator =>
+  new WebNetworkApiSurfaceAccumulator(
+    undefined,
+    view.kind === "api-surface" && view.include_query_parameter_names === true,
+    view.kind === "api-surface" && view.include_response_coverage === true,
+  );
+
 /** Group retained HAR request lines; format matches do not establish handler identity. */
 export const projectWebNetworkApiSurfaceView = (
   parent: AnalysisViewParent,
   view: AnalysisViewRequest,
-  accumulator = WebNetworkApiSurfaceAccumulator.forView(view),
+  accumulator = createApiSurfaceAccumulator(view),
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   if (view.kind !== "api-surface")
     return err(

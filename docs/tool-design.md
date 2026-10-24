@@ -53,6 +53,11 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Use strict inputs with explicit target identity and required fields. Preserve
   meaningful target, action, capture, and output choices; remove ignored options
   and repeated permission declarations.
+  One-shot binary CLI analysis retains the caller's verbatim target spelling in
+  Evidence `caller_input_path`, including a result loaded from a snapshot. The
+  subject keeps the inspected file identity. Provider inspections also retain
+  the established `parameters.input_path` field for existing consumers. Keep
+  request provenance separate from provider arguments and snapshot queries.
 - Return the requested facts inline with artifact/provider identity, source
   locations, Evidence references, coverage, and relevant confidence and
   limitations. Use supported selection, summaries or views when they answer
@@ -235,6 +240,17 @@ through the producing owner and affected CLI/MCP consumers.
 Put provider protocols/parsing in adapters and shared CLI/MCP workflows in the
 application layer. Share Evidence provenance, unknown projection, and session
 retention semantics; matching payloads alone do not establish parity.
+
+Let `createEvidence` own JSON validation and snapshotting of ordinary observation
+payloads. `EvidenceObservationInput` accepts semantically parsed parameters,
+results, and raw results whose JSON validity still needs admission. Keep format,
+selection, and identity validation at their producing boundary. Invalid JSON
+issues are rooted at `parameters`, `normalized_result`, or `raw_result` in the
+Evidence envelope.
+
+`EvidenceObservation` retains the stronger JSON contract used by producer
+helpers and `createImmutableEvidenceSteps`. The cooperative constructor also
+requires an authenticated immutable result; preserve that ownership proof.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,
