@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
@@ -12,13 +9,14 @@ import { browserScenarioCaptureSchema } from "../../dist/domain/browserScenarioC
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { performScenarioRequest } from "../../dist/browser/PlaywrightScenarioRequest.js";
 import { BrowserScenarioSecrets } from "../../dist/browser/BrowserScenarioSecrets.js";
+import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 import {
   requestFixtureCsrf,
   requestFixtureToken,
   startBrowserRequestSite,
 } from "../fixtures/browser-request-site.mjs";
-
-const run = promisify(execFile);
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
 
 const authenticated = [
   { name: "X-CSRFToken", value: { source: "cookie", name: "csrftoken" } },
@@ -108,9 +106,10 @@ const writeSession = (executable, origin) =>
     },
   });
 
-const runCli = async (entrypoint, args, maxBuffer) =>
+/** Run the CLI under the owner, which stops it and every browser it launched on timeout or failure. */
+const cliOf = (commands, entrypoint) => async (args, maxBuffer) =>
   (
-    await run(process.execPath, [entrypoint, ...args, "--json"], {
+    await commands.exec(process.execPath, [entrypoint, ...args, "--json"], {
       env: {
         ...process.env,
         REA_LOG_LEVEL: "silent",
@@ -121,9 +120,8 @@ const runCli = async (entrypoint, args, maxBuffer) =>
     })
   ).stdout;
 
-const captureOf = async (entrypoint, scenario, maxBuffer) => {
-  const stdout = await runCli(
-    entrypoint,
+const captureOf = async (cli, scenario, maxBuffer) => {
+  const stdout = await cli(
     ["capture-browser-scenario", JSON.stringify(scenario)],
     maxBuffer,
   );
@@ -201,7 +199,7 @@ const assertPageValuesRedacted = (evidence, capture) => {
 };
 
 /** A status outside expected_status fails the step and cancels the rest; a redirect to another origin is not followed. */
-const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
+const assertUnexpectedStatusFails = async (cli, scenario, site) => {
   const failing = browserScenarioSchema.parse({
     ...scenario,
     actions: [
@@ -209,7 +207,7 @@ const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
       read("after", "/api/items"),
     ],
   });
-  const { capture } = await captureOf(entrypoint, failing, 16 * 1024 * 1024);
+  const { capture } = await captureOf(cli, failing, 16 * 1024 * 1024);
   const missing = capture.steps.find(
     ({ step_id }) => step_id === "delete-missing",
   );
@@ -223,7 +221,7 @@ const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
     ...scenario,
     actions: [read("elsewhere", "/api/elsewhere")],
   });
-  const followed = await captureOf(entrypoint, redirected, 16 * 1024 * 1024);
+  const followed = await captureOf(cli, redirected, 16 * 1024 * 1024);
   const step = followed.capture.steps.find(
     ({ step_id }) => step_id === "elsewhere",
   );
@@ -324,11 +322,15 @@ export async function verifyBrowserRequestSteps(
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
 ) {
   const site = await startBrowserRequestSite();
-  const root = await mkdtemp(join(tmpdir(), "rea-request-e2e-"));
-  try {
+  let root;
+  let commands;
+  const proof = async () => {
+    root = await PrivateRuntimeRoot.create({ prefix: "rea-request-e2e-" });
+    commands = await createPackageVerifierCommands({ workspace: root });
+    const cli = cliOf(commands, entrypoint);
     const scenario = writeSession(executable, site.origin);
     const { stdout, evidence, capture } = await captureOf(
-      entrypoint,
+      cli,
       scenario,
       64 * 1024 * 1024,
     );
@@ -337,12 +339,11 @@ export async function verifyBrowserRequestSteps(
     assert.ok(site.writes.every(({ csrf, bearer }) => csrf && bearer));
     assertPageValuesRedacted(evidence, capture);
 
-    const capturePath = join(root, "items.capture.json");
+    const capturePath = join(root.path, "items.capture.json");
     await writeFile(capturePath, stdout);
     const built = JSON.parse(
-      await runCli(
-        entrypoint,
-        ["environment-build", capturePath, join(root, "env")],
+      await cli(
+        ["environment-build", capturePath, join(root.path, "env")],
         16 * 1024 * 1024,
       ),
     );
@@ -355,7 +356,7 @@ export async function verifyBrowserRequestSteps(
       JSON.stringify(built.coverage),
     );
 
-    await assertUnexpectedStatusFails(entrypoint, scenario, site);
+    await assertUnexpectedStatusFails(cli, scenario, site);
     await assertQueuedWritesStopped(executable, site);
     return {
       request_steps: scenario.actions.filter(
@@ -366,8 +367,10 @@ export async function verifyBrowserRequestSteps(
       tool_count: built.tool_count,
       queued_writes_refused: 2,
     };
-  } finally {
-    await rm(root, { recursive: true, force: true });
-    await site.close();
-  }
+  };
+  // The owner stops its commands' processes before removing the root; a failed stop keeps the root and is reported.
+  return withVerifierCleanup(proof, [
+    () => (commands === undefined ? root?.close() : commands.close()),
+    () => site.close(),
+  ]);
 }

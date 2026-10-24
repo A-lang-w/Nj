@@ -12,11 +12,15 @@ eeab0bda), and on Ubuntu 24.04 VMs for the end-to-end runs.
   in this environment (16,326 passed, 2 failed there); none is new.
 - Boundaries: the bundle tool, analysis view, tool schema validity, environment-build CLI, setup skill and client
   lifecycle suites (123 passed), and every browser and scenario MCP and CLI boundary suite (68 passed).
-- Real Chrome: `verify:browser:request` (new: 22 request steps, the CSRF cookie and stored token authenticate six
-  writes and never reach the Evidence, the build serves the three write tools, an unexpected status fails the step and
+- Real Chrome: `verify:browser:request` (new: 22 request steps, the CSRF cookie and stored token authenticate seven
+  writes and never reach the Evidence, two queued writes are refused, the build serves the three write tools, an unexpected status fails the step and
   cancels the rest, and a redirect to another origin is not followed, the other origin receiving nothing) and
   `verify:browser:network` passed. `verify:browser` stops at "Real Chrome stable capture identities did not
   reconcile", an `inspect_web_page` comparison this change does not touch, and fails the same way on the base.
+- `verify:browser:request` runs each CLI call under the shared package verifier command owner, which stops the CLI and
+  the browser it launched on timeout, output overflow or failure before the lane's private root is removed, and reports
+  a failed stop with the root retained; `browserRequestVerifierOwnership.test.ts` proves a still-running CLI's
+  separately grouped browser is stopped before the root goes.
 
 Scenarios without request steps are unchanged: the action union gains a member, the secrets refactor compiles the same
 patterns, the request-step limitation appears only with request steps, and the browser suites and the network lane pass.
