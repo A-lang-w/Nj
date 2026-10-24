@@ -2,7 +2,6 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
-  semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -24,6 +23,8 @@ import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
+  semanticEffectTimingAtStore,
+  type SemanticBeforeStore,
 } from "./javascriptSemanticMutationInitializers.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
@@ -36,8 +37,6 @@ import {
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
-
-import type { SemanticBeforeStore } from "./javascriptSemanticProjectedSources.js";
 
 // These static builtins do not give their namespace receiver to user code.
 const NATIVE_NAMESPACE_METHODS = {
@@ -152,14 +151,6 @@ export const semanticStoreMayReachAmbientSetter = (
     )
   )
     return false;
-  const pendingTargets = new Set<t.Node>([store.target]);
-  if (t.isAssignmentExpression(store.mutation)) {
-    let pending = false;
-    for (const target of semanticWriteTargets(store.mutation.left)) {
-      pending ||= target === store.target;
-      if (pending) pendingTargets.add(target);
-    }
-  }
   const mayIntercept = (
     effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
   ) => {
@@ -174,13 +165,7 @@ export const semanticStoreMayReachAmbientSetter = (
       candidates.some(
         ({ slot, prototype }) =>
           overlaps(slot, false) || overlaps(prototype, true),
-      ) &&
-      !(
-        effect.node === store.mutation &&
-        effect.storeTarget !== undefined &&
-        pendingTargets.has(effect.storeTarget)
-      ) &&
-      semanticEffectTiming(store.mutation, effect.node, state) !== "after"
+      ) && semanticEffectTimingAtStore(store, effect, state) !== "after"
     );
   };
   return (

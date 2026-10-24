@@ -7,10 +7,7 @@ import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
-import {
-  semanticWriteTargets,
-  unwrapJavaScriptExpression,
-} from "./javascriptAstValues.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -21,6 +18,8 @@ import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
+  semanticEffectTimingAtStore,
+  type SemanticBeforeStore,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -33,12 +32,6 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
-
-/** A pattern store is applied after RHS evaluation and preceding sibling stores. */
-export interface SemanticBeforeStore {
-  readonly mutation: t.Node;
-  readonly target: t.MemberExpression | t.OptionalMemberExpression;
-}
 
 export interface SemanticCapturedSelection {
   readonly at: t.Node;
@@ -244,20 +237,6 @@ const projectedSourceFactsAtRead = (
     }
   | undefined => {
   const { retainEligibility = false, beforeStore } = context;
-  const pendingStoreTargets =
-    beforeStore === undefined
-      ? undefined
-      : new Set<t.Node>([beforeStore.target]);
-  if (
-    beforeStore !== undefined &&
-    t.isAssignmentExpression(beforeStore.mutation)
-  ) {
-    let pending = false;
-    for (const target of semanticWriteTargets(beforeStore.mutation.left)) {
-      pending ||= target === beforeStore.target;
-      if (pending) pendingStoreTargets?.add(target);
-    }
-  }
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
   const captured = [
     ...read.binding.initializers,
@@ -329,15 +308,6 @@ const projectedSourceFactsAtRead = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
     includeDescendants = false,
   ) =>
-    (beforeStore === undefined ||
-      effect.node !== beforeStore.mutation ||
-      effect.assignedSources === undefined ||
-      effect.assignedSources.length === 0 ||
-      !effect.assignedSources.every(
-        (source) =>
-          source.target !== undefined &&
-          pendingStoreTargets?.has(source.target) === true,
-      )) &&
     (effect.receiverInitializers === undefined ||
       effect.receiverInitializers.length === 0 ||
       captured.length === 0 ||
@@ -364,8 +334,10 @@ const projectedSourceFactsAtRead = (
         )
       );
     }) &&
-    semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
-      "after" &&
+    (beforeStore === undefined ||
+    captureForDepth(effect.path.length) !== undefined
+      ? semanticEffectTiming(selectedAt(effect.path.length), effect.node, state)
+      : semanticEffectTimingAtStore(beforeStore, effect, state)) !== "after" &&
     !targetsReplacedPrefix(effect);
   const writes = binding.memberWrites.filter((effect) => matches(effect));
   let replacement:

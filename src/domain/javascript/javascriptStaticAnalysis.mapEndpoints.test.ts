@@ -383,3 +383,54 @@ it.each([
     }),
   );
 });
+
+const installInheritedSetter =
+  'Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}})';
+it.each([
+  [`[box.p,box[(${installInheritedSetter},"q")]]=[Map.prototype,0]`, false],
+  [`[box[(${installInheritedSetter},"q")],box.p]=[0,Map.prototype]`, true],
+  [
+    `({first:box.p,[(${installInheritedSetter},"later")]:box.q}={first:Map.prototype,later:0})`,
+    false,
+  ],
+  [
+    `[box.p,box.q=(${installInheritedSetter},0)]=[Map.prototype,undefined]`,
+    false,
+  ],
+  [
+    `[box.q=(${installInheritedSetter},0),box.p]=[undefined,Map.prototype]`,
+    true,
+  ],
+  [
+    `[box.p,{value:box[(${installInheritedSetter},"q")]}]=[Map.prototype,{value:0}]`,
+    false,
+  ],
+  [
+    `[box.p,{value:box.q}=(${installInheritedSetter},{value:0})]=[Map.prototype,undefined]`,
+    false,
+  ],
+  [
+    `[{value:box.p}=(${installInheritedSetter},{value:Map.prototype})]=[undefined]`,
+    true,
+  ],
+  [`[box.p=(${installInheritedSetter},Map.prototype)]=[undefined]`, true],
+  [`box[(${installInheritedSetter},"p")]=Map.prototype`, true],
+  [`box.p=(${installInheritedSetter},Map.prototype)`, true],
+])(
+  "orders inherited setters at each target completion: %s",
+  (assignment, invoked) => {
+    const source = `const box={};${assignment};new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);

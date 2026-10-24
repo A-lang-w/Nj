@@ -73,7 +73,7 @@ export const inspectCall = (
     bindings,
     accumulator.factoryRequireBindingIds,
   );
-  const deferredRequireResolve = requireFact?.resolverReceiver !== undefined;
+  const deferredRequireResolve = requireFact?.resolverReadSite !== undefined;
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
     semanticModuleRequireCallAt(node, bindings, false) ||
@@ -287,11 +287,13 @@ export const finishModuleRequireCalls = (
       index.bindings,
       context.accumulator.factoryRequireBindingIds,
     );
-    const receiver = callFact?.resolverReceiver;
+    const resolverReadSite = callFact?.resolverReadSite;
     const resolveMemberChanged =
-      receiver !== undefined &&
+      resolverReadSite !== undefined &&
       index
-        .effectsForReferenceAt(node, receiver, ["resolve"])
+        .effectsForReferenceAt(resolverReadSite, resolverReadSite.object, [
+          "resolve",
+        ])
         .effects.some(
           ({ kind, timing }) =>
             timing !== "after" &&

@@ -1,6 +1,7 @@
 import { Module, createRequire } from "node:module";
 import * as path from "node:path";
 import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -511,3 +512,70 @@ it("retains unknown historical .js loader scope until a package manifest establi
       }),
     ]);
 });
+
+it.each([
+  [
+    "before the callee read",
+    "load.resolve=custom;",
+    "{paths:[__dirname]}",
+    "",
+    false,
+  ],
+  [
+    "in a call argument",
+    "",
+    "(load.resolve=custom,{paths:[__dirname]})",
+    "",
+    true,
+  ],
+  [
+    "after the invocation",
+    "",
+    "{paths:[__dirname]}",
+    "load.resolve=custom;",
+    true,
+  ],
+  [
+    "receiver replacement in an argument",
+    "",
+    "(load=custom,{paths:[__dirname]})",
+    "",
+    true,
+  ],
+] as const)(
+  "captures resolver identity with replacement %s",
+  (_name, before, argument, after, native) => {
+    const source = `${imported}let load=make(import.meta.url);${before}const selected=load.resolve('node:path',${argument});${after}selected;`;
+    const selected = runInNewContext(
+      source.replace(imported, "").replace("import.meta.url", "filename"),
+      {
+        make: createRequire,
+        filename: import.meta.url,
+        __dirname: path.dirname(fileURLToPath(import.meta.url)),
+        custom: () => "custom",
+      },
+    );
+    expect(selected).toBe(native ? "node:path" : "custom");
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(
+      analysis.references.filter(({ kind }) => kind === "require"),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "require",
+        operation: native ? "resolve" : "load",
+        specifier: native ? "node:path" : null,
+      }),
+    ]);
+    const addon = analyzeJavaScriptStaticSource(
+      source.replace("'node:path'", "'./addon.node'"),
+    );
+    expect(addon.references.filter(({ kind }) => kind === "require")).toEqual([
+      expect.objectContaining({
+        operation: native ? "resolve" : "load",
+        specifier: native ? "./addon.node" : null,
+      }),
+    ]);
+    expect(addon.electron.native_addon_bindings).toEqual([]);
+  },
+);

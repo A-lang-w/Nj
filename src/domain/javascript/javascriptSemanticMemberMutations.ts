@@ -42,7 +42,6 @@ import {
   semanticNormalizeCapturedSelections,
   semanticCapturedSelectionsAfterPropertyRead,
   type SemanticCapturedSelection,
-  type SemanticBeforeStore,
 } from "./javascriptSemanticProjectedSources.js";
 
 import {
@@ -68,6 +67,7 @@ import {
   semanticMutationInitializers,
   semanticBindingAtRead,
   semanticScopeExitEffect,
+  type SemanticBeforeStore,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";

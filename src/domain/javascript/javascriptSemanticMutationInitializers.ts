@@ -9,6 +9,7 @@ import {
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticScopeId } from "./javascriptSemanticState.js";
@@ -16,7 +17,14 @@ import type {
   JavaScriptSemanticBindingState,
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticEffectTiming,
+  JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
+
+/** Receiver selection and store completion are distinct evaluation points. */
+export interface SemanticBeforeStore {
+  readonly mutation: t.Node;
+  readonly target: t.MemberExpression | t.OptionalMemberExpression;
+}
 
 interface StatementPosition {
   readonly body: readonly t.Statement[];
@@ -310,6 +318,83 @@ export const semanticEffectTiming = (
   return "unknown";
 };
 
+/** Order an effect against the selected leaf's completion, before its own write. */
+export const semanticEffectTimingAtStore = (
+  store: SemanticBeforeStore,
+  effect: Pick<
+    JavaScriptSemanticMemberEffect,
+    "node" | "storeTarget" | "assignedSources"
+  >,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticEffectTiming => {
+  const node = effect.node;
+  if (node === undefined) return "unknown";
+  const mutation = store.mutation;
+  if (!t.isAssignmentExpression(mutation))
+    return semanticEffectTiming(mutation, node, state);
+  if (node === mutation) {
+    const targets =
+      effect.storeTarget === undefined
+        ? effect.assignedSources?.map((source) => source.target)
+        : [effect.storeTarget];
+    if (
+      targets !== undefined &&
+      targets.length > 0 &&
+      targets.every((target) => target !== undefined)
+    ) {
+      const ordered: readonly t.Node[] = [
+        ...semanticWriteTargets(mutation.left),
+      ];
+      const selected = ordered.indexOf(store.target);
+      const positions = targets.map((target) => ordered.indexOf(target!));
+      if (selected >= 0 && positions.every((position) => position >= 0)) {
+        if (positions.every((position) => position < selected)) return "before";
+        if (positions.every((position) => position >= selected)) return "after";
+      }
+    }
+    return "unknown";
+  }
+  const parents = state.parentsByNode;
+  const contains = (ancestor: t.Node, child: t.Node): boolean => {
+    for (
+      let current: t.Node | undefined = child;
+      current !== undefined;
+      current = parents.get(current)
+    ) {
+      if (current === ancestor) return true;
+      // A nested callable's body is not executed merely by selecting its value.
+      if (t.isFunction(current) || t.isClass(current)) return false;
+    }
+    return false;
+  };
+  if (contains(mutation, node)) {
+    // Simple assignment evaluates its RHS after selecting the receiver/key,
+    // but before PutValue. Destructuring evaluates the whole RHS first.
+    if (contains(mutation.right, node)) return "before";
+    const pattern = unwrapJavaScriptExpression(mutation.left).node;
+    if (!t.isArrayPattern(pattern) && !t.isObjectPattern(pattern))
+      return "before";
+    if (contains(store.target, node)) return "before";
+    for (let current: t.Node = store.target; current !== mutation;) {
+      const parent = parents.get(current);
+      if (parent === undefined) break;
+      // A default value is selected before completing the store of its left
+      // target, even when that target's receiver/key was selected first.
+      if (
+        t.isAssignmentPattern(parent) &&
+        parent.left === current &&
+        contains(parent.right, node)
+      )
+        return "before";
+      current = parent;
+    }
+    const order = expressionEvaluationOrder(store.target, node, parents);
+    if (order === "before") return "after";
+    if (order === "after") return "before";
+  }
+  return semanticEffectTiming(mutation, node, state);
+};
+
 const semanticEnclosingIteration = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -381,8 +466,10 @@ const expressionChildIndices = (
   if (cached !== undefined) return cached;
   const children = ((): readonly (t.Node | null)[] | null => {
     if (t.isSequenceExpression(node)) return node.expressions;
-    if (t.isArrayExpression(node)) return node.elements;
-    if (t.isObjectExpression(node)) return node.properties;
+    if (t.isArrayExpression(node) || t.isArrayPattern(node))
+      return node.elements;
+    if (t.isObjectExpression(node) || t.isObjectPattern(node))
+      return node.properties;
     if (t.isObjectProperty(node))
       return node.computed ? [node.key, node.value] : [node.value];
     if (
@@ -391,6 +478,12 @@ const expressionChildIndices = (
       t.isNewExpression(node)
     )
       return node.arguments;
+    if (t.isAssignmentPattern(node)) {
+      const target = unwrapJavaScriptExpression(node.left).node;
+      return t.isObjectPattern(target) || t.isArrayPattern(target)
+        ? [node.right, node.left]
+        : [node.left, node.right];
+    }
     if (t.isAssignmentExpression(node)) {
       const target = unwrapJavaScriptExpression(node.left).node;
       // References capture their base/key before the RHS. Destructuring instead
