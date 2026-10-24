@@ -118,27 +118,6 @@ describe("selected captured module artifact boundary", () => {
     if (!response.ok)
       expect(projectAnalysisError(response.error).code).toBe("invalid_request");
   });
-  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
-    const f = await fixture();
-    const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: f.manifestPath,
-      script_index: 5,
-    });
-    if (response.ok) throw new Error("expected an out-of-range index");
-    expect(projectAnalysisError(response.error)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["script_index"],
-            reason: "out_of_range",
-            minimum: 0,
-            maximum: 0,
-          },
-        ],
-      },
-    });
-  });
   it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
     "attributes selected source UTF-8 failure to the artifact for %s",
     async (operation) => {
@@ -313,5 +292,29 @@ describe("caller-selected web module files", () => {
     expect(projectAnalysisError(response.error).details?.detail).not.toMatch(
       /^script_index:/u,
     );
+  });
+});
+
+describe("selected captured script index", () => {
+  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
+    const f = await fixture();
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: f.manifestPath,
+      script_index: 5,
+    });
+    if (response.ok) throw new Error("expected an out-of-range index");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["script_index"],
+            reason: "out_of_range",
+            minimum: 0,
+            maximum: 0,
+          },
+        ],
+      },
+    });
   });
 });
