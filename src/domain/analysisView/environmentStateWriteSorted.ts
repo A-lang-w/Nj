@@ -103,6 +103,7 @@ interface Candidates {
 export class SortedArrays {
   readonly #candidates = new Map<string, Candidates>();
   readonly #adopted = new Map<string, string[]>();
+  readonly #inconsistent = new Set<string>();
   /** Values each type's initial entities held, per candidate field. */
   readonly #existing = new Map<string, Set<string>>();
 
@@ -130,7 +131,14 @@ export class SortedArrays {
   }
 
   /** The view with the array fields it was shown to sort. */
-  view<View extends StateView>(view: View): View {
+  view(view: StateView): StateView {
+    if (view.shape !== "item" && view.shape !== "list") return view;
+    if (this.#inconsistent.has(view.tool))
+      return {
+        tool: view.tool,
+        shape: "recorded",
+        reason: view.shape === "item" ? "fields-differ" : "list-differs",
+      };
     const adopted = this.#adopted.get(view.tool);
     return adopted === undefined ? view : { ...view, sorted_arrays: adopted };
   }
@@ -158,12 +166,10 @@ export class SortedArrays {
       return read.outcome;
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
-    // A read listing a learned field unsorted is checked again as the view now lists it.
-    const current = this.#unlearn(view.tool, shown)
-      ? { ...view, sorted_arrays: this.#adopted.get(view.tool) ?? [] }
-      : view;
-    const failed =
-      current === view ? read.outcome : (check(current) ?? read.outcome);
+    // A contradictory ordering invalidates the view's earlier checks; a raw retry cannot preserve their proof.
+    if (this.#unlearn(view.tool, shown)) return read.outcome;
+    const current = view;
+    const failed = read.outcome;
     const candidates = this.#candidates.get(view.tool)?.fields;
     if (failed.pass || candidates === undefined) return failed;
     const passing = (fields: readonly string[]) => {
@@ -212,13 +218,14 @@ export class SortedArrays {
       this.#candidates.set(tool, { ...entry, fields: left });
   }
 
-  /** A read listing a learned field unsorted shows its view does not sort it after all; whether one was. */
+  /** Contradictory ordering makes the view recorded and invalidates its earlier confirmations. */
   #unlearn(tool: string, shown: readonly JsonObject[]): boolean {
     const adopted = this.#adopted.get(tool) ?? [];
     const kept = adopted.filter((field) => listedSorted(shown, field));
     if (kept.length === adopted.length) return false;
-    if (kept.length === 0) this.#adopted.delete(tool);
-    else this.#adopted.set(tool, kept);
+    this.#inconsistent.add(tool);
+    this.#adopted.delete(tool);
+    this.#candidates.delete(tool);
     return true;
   }
 

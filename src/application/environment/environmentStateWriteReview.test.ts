@@ -9,6 +9,7 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { servedCatalog } from "./environmentState.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import {
   BOOK_NOT_FOUND,
@@ -348,3 +349,63 @@ it.each([
     }
   },
 );
+
+it("keeps a create's nested reference pinned when an unobserved call varies its id", () => {
+  const card = (id: number, name: string, collection_id: number) => ({
+    id,
+    name,
+    collection_id,
+    collection: {
+      id: collection_id,
+      name: collection_id === 8 ? "Ledger" : "Other",
+    },
+  });
+  const first = card(1, "First", 8);
+  const second = card(2, "Second", 9);
+  const third = card(3, "Third", 8);
+  const fourth = card(4, "Fourth", 9);
+  const cards = servedFrom([
+    ["GET", "/api/cards", [first, second]],
+    ["GET", "/api/cards/1", first],
+    ["GET", "/api/cards/2", second],
+    ["POST", "/api/cards", third, 201, { name: "Third", collection_id: 8 }],
+    ["GET", "/api/cards/3", third],
+    ["POST", "/api/cards", fourth, 201, { name: "Fourth", collection_id: 9 }],
+  ]);
+  const plan = cards.state.writes.get("post_cards");
+  expect(plan?.body?.fixed).toContainEqual({
+    member: "collection_id",
+    sent: 8,
+  });
+  expect(plan).toMatchObject({ served: false });
+  const catalog = servedCatalog(cards.source, cards.state, "cards");
+  if (!catalog.ok) throw catalog.error;
+  expect(catalog.value.tools.map(({ name }) => name)).not.toContain(
+    "post_cards",
+  );
+});
+
+it("drops a write's confirmation when its read view later disproves learned array sorting", () => {
+  const tagged = (book: typeof FIRST_BOOK, tags: string[]) => ({
+    ...book,
+    tags,
+  });
+  const first = tagged(FIRST_BOOK, ["alpha", "beta"]);
+  const second = tagged(SECOND_BOOK, ["gamma", "omega"]);
+  const written = tagged(SECOND_BOOK, ["zeta", "delta"]);
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/2", written, 200, { tags: ["zeta", "delta"] }],
+    ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ["GET", "/api/books/2", written],
+  ]);
+  expect(books.state.views.get("get_books_by_id")).toMatchObject({
+    shape: "recorded",
+  });
+  expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+    served: false,
+    checked_record_ordinals: [],
+  });
+});

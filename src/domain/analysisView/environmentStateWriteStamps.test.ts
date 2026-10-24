@@ -8,6 +8,7 @@ import {
 import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 import {
+  RequestVariation,
   envelopeOf,
   nestedClockValue,
   pinnedQuery,
@@ -640,4 +641,31 @@ it("does not explain nested opaque-token references as independent generation", 
     );
     expect(update.unexplained).toContain("version");
   }
+});
+
+it("compares repeated large request members within a bounded retained budget", () => {
+  let retained = 0;
+  const variation = new RequestVariation((bytes) => {
+    retained += bytes;
+    if (retained > 4096)
+      throw new Error("request variation exhausted its retained budget");
+  });
+  for (let index = 0; index < 80; index++)
+    variation.observe({
+      payload: "x".repeat(96 * 1024),
+      status: index % 2 ? "draft" : "published",
+    });
+  expect([...variation.members]).toEqual(["status"]);
+  expect(retained).toBeLessThan(4096);
+});
+
+it("propagates admission refusal before retaining another request member", () => {
+  const refused = new Error("representation budget exhausted");
+  const variation = new RequestVariation(() => {
+    throw refused;
+  });
+  expect(() => variation.observe({ payload: "x".repeat(96 * 1024) })).toThrow(
+    refused,
+  );
+  expect([...variation.members]).toEqual([]);
 });

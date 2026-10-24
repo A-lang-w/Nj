@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { jsonParts } from "../jsonSerialization.js";
+import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -442,21 +445,30 @@ export const stampProblem = (
   return undefined;
 };
 
-/** The members whose values the tool's recorded calls varied. */
-export const variedMembers = (
-  bodies: readonly (JsonValue | undefined)[],
-): Set<string> => {
-  const seen = new Map<string, string>();
-  const varied = new Set<string>();
-  for (const body of bodies)
-    if (body !== undefined && isObject(body))
-      for (const [member, value] of Object.entries(body)) {
-        const text = JSON.stringify(value);
-        if (seen.has(member) && seen.get(member) !== text) varied.add(member);
-        seen.set(member, text);
-      }
-  return varied;
-};
+/** Compare one borrowed body at a time, retaining only budgeted member fingerprints. */
+export class RequestVariation {
+  readonly #seen = new Map<string, string>();
+  readonly members = new Set<string>();
+
+  constructor(private readonly retain: (bytes: number) => void) {}
+
+  observe(body: JsonValue | undefined): void {
+    if (body === undefined || !isObject(body)) return;
+    for (const [member, value] of Object.entries(body)) {
+      if (this.members.has(member)) continue;
+      if (!this.#seen.has(member))
+        this.retain(ENTRY_BYTES + textBytes(member.length) + 128);
+      const hash = createHash("sha256");
+      for (const part of jsonParts(value)) hash.update(part);
+      const fingerprint = hash.digest("hex");
+      const previous = this.#seen.get(member);
+      if (previous !== undefined && previous !== fingerprint) {
+        this.members.add(member);
+        this.#seen.delete(member);
+      } else this.#seen.set(member, fingerprint);
+    }
+  }
+}
 
 /** The identity values of the objects an entity nests, by the stem of the field each sits under: what a member like `collection_id` names. */
 const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
@@ -503,7 +515,7 @@ const stateOf = (
 
 /**
  * Echoed members accepted only with their recorded value: one naming an object the entity nests, which serving
- * would keep as recorded, and on a create a state other fields go with, unless the recorded calls varied it.
+ * would keep as recorded, and on a create a state other fields go with unless recorded calls varied that state.
  */
 export const pinnedEchoes = (
   entity: JsonObject,
@@ -523,10 +535,10 @@ export const pinnedEchoes = (
   };
   return new Set(
     Object.entries(body).flatMap(([member, value]) =>
-      !context.varied.has(member) &&
-      (namesNested(member, value) ||
-        (context.type !== undefined &&
-          stateOf(entity, member, value, context.type)))
+      namesNested(member, value) ||
+      (!context.varied.has(member) &&
+        context.type !== undefined &&
+        stateOf(entity, member, value, context.type))
         ? [member]
         : [],
     ),

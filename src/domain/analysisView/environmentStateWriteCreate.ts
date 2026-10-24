@@ -23,7 +23,7 @@ import {
   isOpaqueToken,
   restampedFields,
   sameQuery,
-  variedMembers,
+  RequestVariation,
 } from "./environmentStateWriteStamps.js";
 import {
   recordedPathValues,
@@ -155,18 +155,24 @@ const buildCreate = (
   const held = fieldsOf(context.state.ofType(type));
   // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
   const calls = new Set(step.tool.record_ordinals);
-  const taken = context.records.filter(
-    (record) =>
-      calls.has(record.ordinal) &&
-      succeeded(record) &&
-      sameQuery(record.query, step.record.query),
-  );
   const request = requestBodyPlan(
     context,
     step,
     draft,
     evidence.observed.object,
   )!;
+  const variation = new RequestVariation((bytes) => context.io.retain(bytes));
+  for (const record of context.records) {
+    if (
+      !calls.has(record.ordinal) ||
+      !succeeded(record) ||
+      !sameQuery(record.query, step.record.query)
+    )
+      continue;
+    context.io.withRequestBody(record.ordinal, (parsed) => {
+      variation.observe(unenveloped(requestJson(parsed), request.envelope));
+    });
+  }
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
@@ -175,12 +181,7 @@ const buildCreate = (
     collection: members,
     type: held,
     named: (id) => context.state.named(id),
-    varied: variedMembers(
-      taken.map(({ ordinal }) => {
-        const body = requestJson(context.io.requestBody(ordinal));
-        return unenveloped(body, request.envelope);
-      }),
-    ),
+    varied: variation.members,
   });
   const explainedFields = new Set(explained.rules.map((rule) => rule.field));
   if (

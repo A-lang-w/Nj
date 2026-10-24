@@ -6,6 +6,7 @@ import {
   listsAll,
   normalizedPath,
   type JsonObject,
+  type ParsedRequestBody,
   type StateEntity,
   type StateRecordFacts,
   type StateToolFacts,
@@ -221,9 +222,23 @@ export class EnvironmentStateWriteSimulation {
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
-    return [...this.#drafts.values()].map((draft) =>
-      writeVerdict(draft, this.#input),
+    const views = new Map(
+      this.views([...this.#input.views.values()]).map((view) => [
+        view.tool,
+        view,
+      ]),
     );
+    return [...this.#drafts.values()].map((draft) => {
+      // A view that became recorded cannot supply proof for a served write.
+      let kept = 0;
+      for (const ordinal of draft.confirmed) {
+        const tool = this.#toolOf.get(ordinal)?.name;
+        if (tool !== undefined && views.get(tool)?.shape !== "recorded")
+          draft.confirmed[kept++] = ordinal;
+      }
+      draft.confirmed.length = kept;
+      return writeVerdict(draft, this.#input);
+    });
   }
 
   #step(record: StateRecordFacts, index: number): void {
@@ -244,11 +259,27 @@ export class EnvironmentStateWriteSimulation {
     );
   }
 
-  #context(writer: string): EffectContext {
+  #context(
+    writer: string,
+    request?: { readonly ordinal: number; readonly body: ParsedRequestBody },
+  ): EffectContext {
     return {
       isWrite: (record) => this.#isWrite(record),
       state: this.#state,
-      io: this.#input.io,
+      io:
+        request === undefined
+          ? this.#input.io
+          : {
+              ...this.#input.io,
+              requestBody: (ordinal) =>
+                ordinal === request.ordinal
+                  ? request.body
+                  : this.#input.io.requestBody(ordinal),
+              withRequestBody: (ordinal, use) =>
+                ordinal === request.ordinal
+                  ? use(request.body)
+                  : this.#input.io.withRequestBody(ordinal, use),
+            },
       records: this.#input.records,
       timed: this.#input.timed,
       viewOf: (ordinal) => {
@@ -293,35 +324,40 @@ export class EnvironmentStateWriteSimulation {
       this.#unseen.unplanned(index);
       return;
     }
-    const observeOnly = draft.plan.reason !== null;
-    if (!observeOnly) draft.calls += 1;
-    // Serving pins the exemplar's query, so a call with another may do something else and confirms nothing.
-    const pinned =
-      !built(draft) ||
-      sameQuery(
-        this.#input.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
-        record.query,
-      );
-    const step: WriteStep = { record, index, tool, observeOnly, pinned };
-    const context = this.#context(tool.name);
-    const { address } = draft.plan;
-    const results =
-      address !== undefined && address.by !== "action"
-        ? applyBulk(context, draft, step)
-        : [APPLY[effect](context, draft, step)];
-    // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
-    if (
-      results.some((result) => result.kind === "unknown") &&
-      (!built(draft) || draft.linked !== undefined)
-    )
-      this.#unseen.unplanned(index);
-    for (const result of results)
-      this.#settle(result, {
-        index,
-        tool: tool.name,
-        path: record.path,
-        end: record.end,
+    this.#input.io.withRequestBody(record.ordinal, (body) => {
+      const observeOnly = draft.plan.reason !== null;
+      if (!observeOnly) draft.calls += 1;
+      // Serving pins the exemplar's query, so a call with another may do something else and confirms nothing.
+      const pinned =
+        !built(draft) ||
+        sameQuery(
+          this.#input.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
+          record.query,
+        );
+      const step: WriteStep = { record, index, tool, observeOnly, pinned };
+      const context = this.#context(tool.name, {
+        ordinal: record.ordinal,
+        body,
       });
+      const { address } = draft.plan;
+      const results =
+        address !== undefined && address.by !== "action"
+          ? applyBulk(context, draft, step)
+          : [APPLY[effect](context, draft, step)];
+      // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
+      if (
+        results.some((result) => result.kind === "unknown") &&
+        (!built(draft) || draft.linked !== undefined)
+      )
+        this.#unseen.unplanned(index);
+      for (const result of results)
+        this.#settle(result, {
+          index,
+          tool: tool.name,
+          path: record.path,
+          end: record.end,
+        });
+    });
   }
 
   /** Attribute an applied effect to its tool; a recorded outcome is the state's new baseline; an unknown one taints. */
@@ -501,6 +537,7 @@ export class EnvironmentStateWriteSimulation {
       blocked,
     );
     view = this.#viewOf(original);
+    if (view.shape === "recorded") return;
     keys = [...outcome.targets, ...outcome.unheld];
     let exercised = exercisedBy(this.#touched, keys, borrowers);
     if (borrowers !== undefined) {
