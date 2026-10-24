@@ -27,6 +27,8 @@ export interface RegistrationRunnerLaunch {
   readonly stderr: string;
   readonly timedOut: boolean;
   readonly spawnError?: string;
+  /** Terminal interrupt that was forwarded to the runner tree, if any. */
+  readonly interruptedSignal?: string;
 }
 
 /** Launch shape shared with the supervised spawn so tests can observe it. */
@@ -78,6 +80,7 @@ export const materializeRegistrationRunnerCache = async (
   });
   return launch.timedOut ||
     launch.spawnError !== undefined ||
+    launch.interruptedSignal !== undefined ||
     launch.exitCode !== 0
     ? { status: "failed", reason: prewarmFailureReason(launch) }
     : { status: "warmed" };
@@ -115,24 +118,49 @@ export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
       env: options.env,
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      // POSIX runs the runner in its own group so one signal stops the tree.
+      // POSIX runs the runner in its own group so one signal stops the tree;
+      // an interrupt must therefore be forwarded below, because the detached
+      // group no longer receives the terminal's signal.
       ...(options.platform === "win32" ? {} : { detached: true }),
     });
     const stdout = boundedStream(child.stdout);
     const stderr = boundedStream(child.stderr);
     let timedOut = false;
     let spawnError: string | undefined;
+    let interruptedSignal: string | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       void stopRunnerTree(child, options.platform).finally(() => {
         child.kill("SIGKILL");
       });
     }, options.timeoutMs);
+    const detachSignalForwarding = () => {
+      for (const [signal, handler] of signalHandlers)
+        process.removeListener(signal, handler);
+    };
+    const signalHandlers = new Map<NodeJS.Signals, () => void>(
+      FORWARD_SIGNALS.map((signal) => [
+        signal,
+        () => {
+          if (interruptedSignal !== undefined) return;
+          interruptedSignal = signal;
+          clearTimeout(timer);
+          void stopRunnerTree(child, options.platform).finally(() => {
+            child.kill("SIGKILL");
+            detachSignalForwarding();
+            // Restore default termination for the interrupt that arrived.
+            process.kill(process.pid, signal);
+          });
+        },
+      ]),
+    );
+    for (const [signal, handler] of signalHandlers) process.on(signal, handler);
     child.on("error", (error: NodeJS.ErrnoException) => {
       spawnError = error.message;
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      detachSignalForwarding();
       resolve({
         exitCode: code ?? signal,
         signal: signal ?? null,
@@ -140,9 +168,13 @@ export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
         stderr: stderr(),
         timedOut,
         ...(spawnError === undefined ? {} : { spawnError }),
+        ...(interruptedSignal === undefined ? {} : { interruptedSignal }),
       });
     });
   });
+
+/** Terminal interrupts that must also stop a detached package-runner tree. */
+const FORWARD_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
 const boundedStream = (
   stream: NodeJS.ReadableStream | null,
@@ -159,11 +191,13 @@ const prewarmFailureReason = (launch: RegistrationRunnerLaunch): string => {
   const observed =
     launch.spawnError !== undefined
       ? launch.spawnError
-      : launch.timedOut
-        ? `the package runner timed out after the bounded prewarm window`
-        : `exit ${launch.exitCode === null ? "unknown" : String(launch.exitCode)}${
-            launch.stderr.trim() === "" ? "" : `: ${launch.stderr.trim()}`
-          }`;
+      : launch.interruptedSignal !== undefined
+        ? `the package runner was stopped by ${launch.interruptedSignal}`
+        : launch.timedOut
+          ? `the package runner timed out after the bounded prewarm window`
+          : `exit ${launch.exitCode === null ? "unknown" : String(launch.exitCode)}${
+              launch.stderr.trim() === "" ? "" : `: ${launch.stderr.trim()}`
+            }`;
   const normalized = observed
     .replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\([0-9A-Za-z]|[@-Z\\^_])/gu, "")
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")

@@ -133,6 +133,17 @@ describe("materializeRegistrationRunnerCache", () => {
     if (result.status !== "failed") return;
     expect(result.reason).toContain("spawn npx ENOENT");
   });
+
+  it("reports a forwarded interrupt as a failure", async () => {
+    const result = await materializeRegistrationRunnerCache(
+      ["npx", "-y", specifier, "mcp"],
+      {},
+      async () => launch({ exitCode: null, interruptedSignal: "SIGINT" }),
+    );
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.reason).toContain("stopped by SIGINT");
+  });
 });
 
 describe("launchRegistrationRunnerCommand", () => {
