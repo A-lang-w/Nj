@@ -692,9 +692,10 @@ export async function verifyIndirectBranches(client) {
     procedure: computed.address,
     comment: warningText,
   });
-  const retained = annotated.dossier.native_api?.unresolved_indirect_branches?.find(
-    (branch) => branch.branch_address === branchAddress,
-  );
+  const retained =
+    annotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
   if (
     annotated.annotations.comment !== warningText ||
     retained?.decompiler_outcome !== "jump_table_recovery_failed" ||
@@ -704,6 +705,32 @@ export async function verifyIndirectBranches(client) {
   )
     throw new Error(
       `Stored comment hid genuine jump-table warning at ${branchAddress}: ${JSON.stringify(retained)}`,
+    );
+  // A caller comment that spells the whole warning is rendered as a second
+  // warning line. Only that line is discounted, so the real one still counts.
+  const forged = `WARNING: ${warningText}`;
+  const reannotated = await functionCall(client, "annotate_native_function", {
+    procedure: computed.address,
+    comment: forged,
+  });
+  const renderedWarnings =
+    reannotated.dossier.pseudocode.match(
+      /WARNING:\s+Could not recover jumptable at/gu,
+    )?.length ?? 0;
+  const kept =
+    reannotated.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
+  if (
+    reannotated.annotations.comment !== forged ||
+    renderedWarnings < 2 ||
+    kept?.decompiler_outcome !== "jump_table_recovery_failed" ||
+    !kept.evidence.some(
+      (evidence) => evidence.source === "ghidra-decompiler-warning",
+    )
+  )
+    throw new Error(
+      `A stored copy of the warning hid the genuine jump-table warning at ${branchAddress} (${String(renderedWarnings)} rendered): ${JSON.stringify(kept)}`,
     );
   // The tail call's classification depends on Ghidra's own heuristics, so it
   // is recorded rather than asserted.

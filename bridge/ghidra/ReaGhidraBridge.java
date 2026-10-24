@@ -2517,18 +2517,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Map<Address, String> warnings = new HashMap<>();
         if (!sawComment) return warnings;
-        Map<String, Integer> callerWarnings = callerAuthoredJumpTableWarnings(function);
+        Map<Address, List<String>> rendered = new LinkedHashMap<>();
         java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(text);
         while (matcher.find()) {
             if (commentText.nextClearBit(matcher.start()) < matcher.end()) continue;
-            String warning = matcher.group(1).replaceAll("\\s+", " ").trim();
-            int callerMatches = callerWarnings.getOrDefault(warning, 0);
-            if (callerMatches > 0) {
-                callerWarnings.put(warning, callerMatches - 1);
-                continue;
-            }
             Address address = warningAddress(matcher.group(2));
-            if (address != null) warnings.putIfAbsent(address, warning);
+            if (address == null) continue;
+            rendered.computeIfAbsent(address, ignored -> new ArrayList<>())
+                .add(matcher.group(1).replaceAll("\\s+", " ").trim());
+        }
+        if (rendered.isEmpty()) return warnings;
+        // Each rendered caller-authored warning line accounts for one match at its
+        // address. Matching by address rather than text keeps the accounting right
+        // when Ghidra wraps a long comment line and the rendered text is cut short.
+        Map<Address, List<String>> callerWarnings = callerAuthoredJumpTableWarnings(function);
+        for (Map.Entry<Address, List<String>> entry : rendered.entrySet()) {
+            List<String> remaining = new ArrayList<>(entry.getValue());
+            for (String authored : callerWarnings.getOrDefault(entry.getKey(), List.of())) {
+                if (remaining.isEmpty()) break;
+                int index = remaining.indexOf(authored);
+                remaining.remove(index >= 0 ? index : remaining.size() - 1);
+            }
+            if (!remaining.isEmpty()) warnings.put(entry.getKey(), remaining.get(0));
         }
         return warnings;
     }
@@ -2544,14 +2554,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     /**
-     * Caller-authored warnings actually eligible for rendering by Ghidra.
+     * Caller-authored warnings Ghidra would render, keyed by the address they name.
      * Count occurrences rather than excluding every matching string: an
      * identical decompiler warning is a separate observation.
      */
-    private Map<String, Integer> callerAuthoredJumpTableWarnings(Function function) throws Exception {
+    private Map<Address, List<String>> callerAuthoredJumpTableWarnings(Function function) throws Exception {
         DecompileOptions options = decompiler.getOptions();
         Listing listing = currentProgram.getListing();
-        Map<String, Integer> authored = new HashMap<>();
+        Map<Address, List<String>> authored = new HashMap<>();
         AddressIterator addresses = listing.getCommentAddressIterator(
             functionObservationScope(function), true
         );
@@ -2575,8 +2585,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     comment.replace("\r", "").replace('\t', ' ')
                 );
                 while (matcher.find()) {
-                    String warning = matcher.group(1).replaceAll("\\s+", " ").trim();
-                    authored.merge(warning, 1, Integer::sum);
+                    Address named = warningAddress(matcher.group(2));
+                    if (named == null) continue;
+                    authored.computeIfAbsent(named, ignored -> new ArrayList<>())
+                        .add(matcher.group(1).replaceAll("\\s+", " ").trim());
                 }
             }
         }
