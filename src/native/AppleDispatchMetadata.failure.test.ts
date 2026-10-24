@@ -2,8 +2,9 @@ import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { appleDispatchMetadataFailure } from "./AppleDispatchMetadata.js";
 
+// The metadata target is already bound, so losing it is a change to that artifact rather than a new input error.
 it.each(["integrity", "path"] as const)(
-  "keeps %s bound-target refusals distinct from provider execution failures",
+  "reports a %s source-read refusal as a change to the bound target, not a provider failure",
   (reason) => {
     const cause = new ArtifactReaderFailure(reason, "source boundary refused");
     expect(appleDispatchMetadataFailure(cause, "/selected")._tag).toBe(
