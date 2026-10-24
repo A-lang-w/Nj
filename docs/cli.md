@@ -259,8 +259,8 @@ The command decodes a version 24, 27, 29, 31 or 39 `global-metadata.dat` and rep
 images, type, method and member names, string literals, index ranges, header
 sections and SHA-256. With `--binary PATH` it also reads the matching
 `GameAssembly.dylib`, `GameAssembly.dll` or `libil2cpp.so` (never runs it) and
-links each method to its code address; `--ghidra-seeds PATH` then writes Ghidra
-function seeds. It does not decrypt metadata. MCP defaults to compact counts
+links each method to its code address; `--generic-instances` adds generic
+method instances and `--ghidra-seeds PATH` then writes Ghidra function seeds. It does not decrypt metadata. MCP defaults to compact counts
 with retained Evidence; query indexed rows with filters, batch indices and
 selected fields. The CLI defaults to complete Evidence;
 `--detail summary --evidence_output FILE` exports the full result to a new file
@@ -375,7 +375,7 @@ Run `rea --help` or a command's `--help` for arguments and output options.
 The [generated catalog](mcp-contracts.md#generated-catalog) lists all CLI commands and MCP
 tools. Provider-specific target support is described in the
 [native guide](native-investigation.md), [DOS guide](ghidra-dos.md),
-[raw binary guide](raw-binary.md), and
+[raw binary guide](raw-binary.md), [GameCube DOL guide](ghidra-dol.md), and
 [Windows Ghidra guide](windows-ghidra-p0.md).
 
 ## Choose a provider
