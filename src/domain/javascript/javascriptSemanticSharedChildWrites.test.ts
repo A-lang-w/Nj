@@ -1,6 +1,7 @@
+import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import * as t from "@babel/types";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
@@ -120,16 +121,31 @@ it.each(
           .replaceAll("SLOT", value.slot)
           .replaceAll("READ", value.read),
         expression: shape.read.replaceAll("READ", value.read),
-        // The public module/delegate owner retains unknown after the copy's child
-        // escapes into the new parent. Factory result selection can exclude it.
-        expected: shared ? !value.host || value.slot !== "make" : value.host,
+        expected: shared ? !value.host : value.host,
       })),
     ),
   ),
 )(
   "distinguishes shared and newly allocated descendant receivers: $source",
   ({ source, expression, expected }) => {
-    const result = analyzeJavaScriptStaticSource(source);
+    // Execute with an inert module host to independently check whether a
+    // copied child still reaches its loader after the parent/slot writes.
+    const loads: string[] = [];
+    let failure: unknown;
+    try {
+      runInNewContext(
+        source,
+        { module: { require: (specifier: string) => loads.push(specifier) } },
+        { timeout: 1000 },
+      );
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(loads).toEqual(expected ? ["./shared.cjs"] : []);
+    if (expected) expect(failure).toBeUndefined();
+    else if (failure !== undefined)
+      expect(failure).toMatchObject({ name: "TypeError" });
+    const result = analyzeCommonJsStaticFixture(source);
     expect(result.parse_error_count).toBe(0);
     expect(
       result.references.filter(
@@ -199,7 +215,7 @@ it.each([
   "retains a possible shared receiver when identity is incomplete: %s",
   (replacement) => {
     const expression = "box.child.inner.make().require('./shared.cjs')";
-    const result = analyzeJavaScriptStaticSource(
+    const result = analyzeCommonJsStaticFixture(
       `const old={child:{inner:{make:()=>({})}}};const box={...old};${replacement}old.child.inner.make=()=>module;${expression};`,
     );
     expect(result.parse_error_count).toBe(0);
@@ -217,7 +233,7 @@ it.each([16, 600])(
       (_, index) => `p${index}:{make:()=>({})}`,
     ).join(",");
     const expression = "box.child.inner.make().require('./shared.cjs')";
-    const result = analyzeJavaScriptStaticSource(
+    const result = analyzeCommonJsStaticFixture(
       `const old={child:{inner:{make:()=>({})}}};const box={...old};old.child={${properties}};old.child[key].make=()=>module;${expression};`,
     );
     expect(result.parse_error_count).toBe(0);

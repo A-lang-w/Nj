@@ -283,8 +283,12 @@ const localAccessorMethods = (
       (t.isObjectExpression(node) || t.isArrayExpression(node))
     ) {
       const [selected, ...remaining] = current.path;
+      // Array literal slots are data properties. Selecting the slot itself
+      // cannot invoke an accessor on the value stored in that slot.
       const references = t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? remaining.length === 0
+          ? []
+          : semanticArrayPropertyReferences(node, [selected!])
         : remaining.length === 0
           ? semanticObjectAccessorReferences(
               node,
