@@ -103,11 +103,41 @@ const reportedRequest = (
   };
 };
 
+/** Each transaction's browser-timed duration, from its single finished or failed event. */
+const elapsedByTransaction = (
+  events: RetainedBrowserScenarioCapture["events"]["items"],
+): ReadonlyMap<string, number | undefined> => {
+  const elapsed = new Map<string, number | undefined>();
+  for (const event of events) {
+    if (event.kind !== "request-finished" && event.kind !== "request-failed")
+      continue;
+    // A transaction ending twice has no single duration.
+    elapsed.set(
+      event.transaction_id,
+      elapsed.has(event.transaction_id) ? undefined : event.elapsed_ms,
+    );
+  }
+  return elapsed;
+};
+
+/** HAR timing for a record: when the request was observed and how long it took (0 when the browser reported no duration). */
+const recordTiming = (
+  request: RequestEvent,
+  elapsed: ReadonlyMap<string, number | undefined>,
+): { readonly startedDateTime: string; readonly time: number } | undefined =>
+  request.observed_at === undefined
+    ? undefined
+    : {
+        startedDateTime: request.observed_at,
+        time: elapsed.get(request.transaction_id) ?? 0,
+      };
+
 const record = (
   ordinal: number,
   observed: { readonly event: RequestEvent; readonly item: number },
   index: BrowserScenarioTransactionIndex,
   purpose: "manifest" | "replay",
+  timing: ReturnType<typeof recordTiming>,
 ): {
   readonly record: WebNetworkCaptureRecord;
   readonly responseBody: ScenarioResponseBodyRetention;
@@ -147,6 +177,7 @@ const record = (
       ordinal,
       location,
       reported: {
+        ...timing,
         request: reportedRequest(request, requestContent, purpose),
         ...(response === undefined
           ? {}
@@ -186,11 +217,21 @@ export const scenarioCaptureRecords = (
   purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
+  const elapsed = elapsedByTransaction(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   const responseBodies = new Map<number, ScenarioResponseBodyRetention>();
+  let timed = false;
   for (const [item, event] of capture.events.items.entries()) {
     if (event.kind !== "request") continue;
-    const projected = record(records.length, { event, item }, index, purpose);
+    const timing = recordTiming(event, elapsed);
+    timed ||= timing !== undefined;
+    const projected = record(
+      records.length,
+      { event, item },
+      index,
+      purpose,
+      timing,
+    );
     records.push(projected.record);
     if (purpose === "manifest")
       responseBodies.set(projected.record.ordinal, projected.responseBody);
@@ -201,6 +242,11 @@ export const scenarioCaptureRecords = (
     responseBodies,
     limitations: [
       "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
+      ...(timed
+        ? [
+            "Scenario record start times are when the provider observed each request, shortly after the browser started it; durations are the browser's own timing.",
+          ]
+        : []),
       ...(capture.events.dropped > 0
         ? [
             `The scenario capture omitted ${String(capture.events.dropped)} events; the manifest covers only retained transactions.`,
