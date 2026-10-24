@@ -80,3 +80,23 @@ exactly as main does. Its findings, all addressed:
 - The `no-observation` hint now covers updates and deletes of entities the state never held; the docs no longer claim
   the build launches no process, state the conditions of byte-equality, and name the headers inspection excludes; the
   MCP tool description names the view.
+
+## Review round on main `584120e8`
+
+The branch merged main `584120e8`: the export's file read now returns permission refusals through `Result`, as main
+does, under the build's operation name, and the `environment-coverage` sentence sits in main's `inspect_analysis_view`
+description. Four automated review findings were fixed, each with a test that fails on the merge:
+
+- A browser scenario's retained header values and the query parameters of its recorded URLs are scanned for credential
+  names as a HAR's are; the manifest and replay record projections are unchanged.
+- `--dry-run --package-tarball` admits and releases the tarball through the export's own regular-file scope, so a close
+  it cannot confirm is retried and then reported as incomplete cleanup that keeps its owner.
+- A dry run checks for cancellation after reading the tarball, before it reports a plan.
+- Evidence is serialized into one exactly sized buffer instead of chunks joined by a copy. Those bytes are still parsed
+  and sealed before authentication, so authentication reads exactly what ships.
+
+On macOS with Node v22.23.1: the static gates passed (`npm run jscpd`: 3.53%), `npx vitest run --project domain
+--project services` passed (9753, 6 skipped), the environment boundary projects passed (102), and the focused build,
+export, export-inputs, serve and analysis-view boundaries with tool schema validity passed (9 files, 96). Rebuilt over
+the same 50 captures and four HARs, all 54 bundles are byte-identical to the three-step path's, with the same coverage,
+served writes and warnings as before the round.
