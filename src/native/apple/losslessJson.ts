@@ -82,25 +82,6 @@ export const parseLosslessJson = (
   return { value, end: parser.position };
 };
 
-export const asString = (value: LosslessJson | undefined): string | null =>
-  value?.kind === "string" ? value.value : null;
-
-export const asBoolean = (value: LosslessJson | undefined): boolean | null =>
-  value?.kind === "boolean" ? value.value : null;
-
-export const asInteger = (value: LosslessJson | undefined): string | null =>
-  value?.kind === "integer" ? value.decimal : null;
-
-export const asObject = (
-  value: LosslessJson | undefined,
-): Readonly<Record<string, LosslessJson>> | null =>
-  value?.kind === "object" ? value.members : null;
-
-export const asArray = (
-  value: LosslessJson | undefined,
-): readonly LosslessJson[] | null =>
-  value?.kind === "array" ? value.items : null;
-
 class Parser {
   position: number;
 

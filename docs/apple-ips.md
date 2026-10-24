@@ -43,6 +43,11 @@ documented meaning (`P` process, `S` shared cache, `C` shared cache library,
 `K` kernel, `U` kernel cache, `T` kernel text exec, `A` absolute). Keys the
 documentation does not list remain in `unlisted_keys` or `unlisted_body_keys`.
 
+Each frame's `image_index` refers to its entry in `images`. Image architecture,
+UUID and `uuid_unknown` are retained once on that image. Resolve the reference
+when using those facts; an absent or out-of-range index leaves the image
+unknown. This avoids repeating image text for every stack frame.
+
 A present value whose JSON type differs from the documented one is never read
 as absent: it is listed in `coverage.type_mismatches` with its path, the
 expected type, and the observed type, and `coverage.status` becomes

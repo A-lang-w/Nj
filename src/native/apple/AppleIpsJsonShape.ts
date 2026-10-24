@@ -3,7 +3,6 @@ import {
   AppleIpsFormatFailure,
   AppleIpsResourceFailure,
   type AppleIpsFixedBoundary,
-  type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import {
   parseLosslessJson,
@@ -43,12 +42,11 @@ const unlistedKeys = fixedAllowance(
   "unlisted keys in one object",
 );
 
-/** One running count per caller-selected budget, checked before each row. */
+/** One running count per selected row collection, checked before each row. */
 const selectedAllowances = (input: InspectAppleIpsInput) => {
   const counts = { threads: 0, frames: 0, images: 0, registers: 0 };
   const take =
-    (boundary: AppleIpsSelectedBoundary, maximum: number, noun: string) =>
-    () => {
+    (boundary: keyof typeof counts, maximum: number, noun: string) => () => {
       counts[boundary] += 1;
       if (counts[boundary] > maximum)
         throw new AppleIpsResourceFailure(

@@ -154,9 +154,11 @@ const registerSchema = z.strictObject({
 const frameSchema = z.strictObject({
   thread_index: uint,
   frame_index: uint,
-  image_index: uint.nullable(),
-  image_uuid: uuidSchema.nullable(),
-  arch: z.string().min(1).nullable(),
+  image_index: uint
+    .nullable()
+    .describe(
+      "Recorded index into images; image metadata and its uncertainty belong to that row.",
+    ),
   image_offset: recordedIntegerSchema.nullable(),
   runtime_address: recordedIntegerSchema.nullable(),
   role: z.enum([

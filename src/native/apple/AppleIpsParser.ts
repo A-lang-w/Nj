@@ -251,8 +251,6 @@ const threadsOf = (
         thread_index: threadIndex,
         frame_index: frameIndex,
         image_index: imageIndex,
-        image_uuid: image?.uuid ?? null,
-        arch: image?.arch ?? null,
         image_offset: imageOffset,
         runtime_address: read.add(image?.base ?? null, imageOffset),
         role,

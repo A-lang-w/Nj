@@ -33,6 +33,25 @@ const integerAmplificationBytes = (): Buffer => {
   );
 };
 
+it("retains image metadata once while frames refer to its owner", () => {
+  const arch = "unknown_arch_" + "x".repeat(20000);
+  const uuid = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+  const frames = Array.from(
+    { length: 512 },
+    () => '{"imageIndex":0,"imageOffset":1}',
+  ).join(",");
+  const bytes = Buffer.from(
+    `${appleIpsMetadataLine()}\n{"faultingThread":0,"threads":[{"frames":[${frames}]}],"usedImages":[{"base":4294967296,"size":4096,"arch":${JSON.stringify(arch)},"uuid":${JSON.stringify(uuid)}}]}`,
+  );
+  const report = parseAppleIps(bytes, artifact(bytes), input);
+  expect(report.images[0]).toMatchObject({ arch, uuid });
+  expect(report.threads[0]?.frames).toHaveLength(512);
+  expect(report.threads[0]?.frames[0]?.image_index).toBe(0);
+  const serialized = JSON.stringify(report);
+  expect(serialized.split(arch)).toHaveLength(2);
+  expect(serialized.split(uuid)).toHaveLength(2);
+});
+
 it("refuses integer text amplification before retaining every derived address", () => {
   const bytes = integerAmplificationBytes();
   expect(bytes.length).toBeLessThan(input.max_file_bytes);

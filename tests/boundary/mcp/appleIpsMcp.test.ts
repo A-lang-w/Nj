@@ -5,6 +5,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { appleIpsBytes } from "../../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -22,9 +23,12 @@ mcpTest(
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
-      const advertised = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_apple_ips",
-      );
+      const {
+        toolDefinition: advertised,
+        ajv,
+        inputSchema,
+        outputSchema,
+      } = await advertisedMcpToolSchemas(client, "inspect_apple_ips");
       expect(advertised?.annotations).toMatchObject({
         readOnlyHint: false,
         idempotentHint: true,
@@ -32,11 +36,34 @@ mcpTest(
       const root = await createTestTempDirectory("rea-apple-ips-mcp-");
       const path = join(root, "report.ips");
       await writeFile(path, appleIpsBytes());
+      expect(
+        ajv.validate(inputSchema, { path, max_integer_text_bytes: 1 }),
+      ).toBe(true);
+      const constrained = await client.callTool({
+        name: "inspect_apple_ips",
+        arguments: { path, max_integer_text_bytes: 1 },
+      });
+      expect(constrained.isError).toBe(true);
+      expect(parseMcpToolError(constrained).error).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          reported_limits: { boundary: "integer_text", maximum: 1 },
+          remediation: {
+            action: expect.stringContaining(
+              "Raise max_integer_text_bytes on the next call",
+            ),
+          },
+        },
+      });
       const response = await client.callTool({
         name: "inspect_apple_ips",
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, response.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
       const evidence = toolContract("inspect_apple_ips").outputSchema.parse(
         response.structuredContent,
       );
