@@ -287,6 +287,22 @@ describe("scanCredentialNames over structured and unattributed records", () => {
 });
 
 describe("scanCredentialNames coverage", () => {
+  it("measures the scan limit in UTF-8 bytes, not UTF-16 code units", () => {
+    // 1.5 million three-byte characters: under 4 Mi code units, over 4 MiB of UTF-8.
+    const wide = JSON.stringify({
+      token: "t-wide",
+      pad: "\u754c".repeat(1_500_000),
+    });
+    const multibyte = record(9, undefined, undefined);
+    (
+      multibyte.reported as { request: { postData?: unknown } }
+    ).request.postData = { mimeType: "application/json", text: wide };
+    expect(scanCredentialNames([multibyte])).toMatchObject({
+      count: 0,
+      skipped: { count: 1, pointers: ["record 9 request"] },
+    });
+  });
+
   it("reports text bodies too large to scan by record and side, never by content", () => {
     const large = JSON.stringify({
       token: "t-large",
