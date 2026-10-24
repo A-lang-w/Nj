@@ -44,17 +44,17 @@ export const setupCleanupReason = (error: AnalysisError): string =>
     ? error.diagnostics.reason
     : error.message);
 
-/** One admitted child generation and its actual source of cleanup confirmation. */
+/** One child callback and the conjunctive authorities reported by its generation. */
 class SetupCleanupChild {
   #generation = {};
   #attempted: object | undefined;
   #completed: object | undefined;
-  #failure: AnalysisError | undefined;
+  #report: AnalysisError | undefined;
+  #reportedErrors = new WeakSet<AnalysisError>();
+  #delegated: AnalysisError | undefined;
+  #delegatedErrors = new WeakSet<AnalysisError>();
   #reason = "";
   #resources: readonly string[] = [];
-  #delegated = false;
-  #delegatedSource: AnalysisError | undefined;
-  #delegatedErrors = new WeakSet<AnalysisError>();
   #attempt: ReturnType<SetupCleanupTask["close"]> = Promise.resolve();
   #lease = this.#newLease();
 
@@ -70,13 +70,14 @@ class SetupCleanupChild {
   get failure():
     | { readonly error: AnalysisError; readonly reason: string }
     | undefined {
-    if (this.#failure !== undefined && !this.#failure.cleanupIncomplete) {
+    if (this.#report !== undefined && !this.#report.cleanupIncomplete) {
       this.#completed = this.#attempted;
-      this.#failure = undefined;
+      this.#report = undefined;
+      this.#reportedErrors = new WeakSet();
     }
-    return this.#failure === undefined
+    return this.#report === undefined
       ? undefined
-      : { error: this.#failure, reason: this.#reason };
+      : { error: this.#report, reason: this.#reason };
   }
 
   close(): Promise<void> {
@@ -86,8 +87,7 @@ class SetupCleanupChild {
     if (this.#lease.released || this.#completed !== undefined) {
       this.#lease = this.#newLease();
       this.#completed = undefined;
-      this.#delegated = false;
-      this.#delegatedSource = undefined;
+      this.#delegated = undefined;
       this.#delegatedErrors = new WeakSet();
     }
     const generation = this.#generation;
@@ -108,14 +108,7 @@ class SetupCleanupChild {
   }
 
   get cleanupResources(): readonly string[] {
-    return [
-      ...new Set([
-        ...this.#resources,
-        ...(this.#delegatedSource?.cleanupIncomplete
-          ? this.#delegatedSource.cleanupResources
-          : []),
-      ]),
-    ];
+    return this.#resources;
   }
 
   async #execute(): Promise<void> {
@@ -141,36 +134,34 @@ class SetupCleanupChild {
           : this.task.rejectedPrefix + ": ") +
         (cause instanceof Error ? cause.message : String(cause));
     }
-    // Once this callback owns an earlier report, a different source owner's
-    // recovery cannot confirm that delegated work. Only a successful callback
-    // releases this generation; preserve the independent error as its cause.
-    const delegatedSource =
-      this.#delegated &&
-      failure.hasCleanupOwner &&
-      !this.#delegatedErrors.has(failure);
-    if (delegatedSource) {
-      this.#delegatedSource = failure;
-      const observation: AnalysisCleanupObservation = {
-        reason: this.#reason,
-        resources: this.cleanupResources,
-      };
-      failure = new ProviderCleanupError(
-        "setup",
-        observation.resources,
-        { reason: observation.reason },
-        { cause: failure, cleanup: observation, operation: "setup" },
-      );
-    }
-    this.#failure = failure;
-    // Existing source leases remain authoritative. A reason-only child instead
-    // delegates retry authority to this registered close callback.
-    if (failure.cleanupIncomplete && !failure.hasCleanupOwner) {
-      if (!delegatedSource) this.#resources = [...failure.cleanupResources];
-      this.#delegated = true;
-      this.#delegatedErrors.add(failure);
+    if (!failure.hasCleanupOwner) {
+      this.#resources = [...failure.cleanupResources];
       new AnalysisCleanupLeaseGroup(failure, [this.#lease]);
+      this.#delegatedErrors.add(failure);
+      // Every delegated report shares this exact lease. Retain one dependency
+      // rather than retaining an error for every unsuccessful callback attempt.
+      this.#delegated ??= failure;
     }
+    const dependency = this.#delegatedErrors.has(failure)
+      ? this.#delegated
+      : failure;
+    if (dependency !== undefined && dependency.cleanupIncomplete) {
+      if (!this.#reportedErrors.has(dependency)) {
+        if (this.#report === undefined || !this.#report.cleanupIncomplete) {
+          this.#report = setupCleanupError(
+            new AggregateError([dependency], "Setup child cleanup authorities"),
+            { reason: this.#reason, resources: [] },
+          );
+          this.#reportedErrors = new WeakSet();
+        } else this.#report.retainSecondaryFailure(dependency);
+        this.#report.bindCleanupDependencies([dependency]);
+        this.#reportedErrors.add(dependency);
+      }
+    }
+    // A source's release cannot confirm an earlier delegated callback, and a
+    // successful callback cannot release an independently owned source.
     if (failure.cleanupIncomplete) throw failure;
+    if (this.#delegated?.cleanupIncomplete) throw this.#delegated;
   }
 }
 

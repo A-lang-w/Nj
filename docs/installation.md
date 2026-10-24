@@ -750,8 +750,12 @@ result reports `needs_human` and includes `cleanup.reason` with the identified
 paths in `cleanup.resources`. A thrown typed failure reports the same retained
 paths in `details.resources`, preserving the primary failure separately. Reasons
 that do not identify a resource remain explicit without guessing paths from text.
-For in-process callers retaining the setup host, a successful retry of its close
+For in-process callers retaining REA's setup host, a successful retry of its close
 updates the original failure's cleanup state and removes released resource labels.
+Custom `SetupHost` implementations must bind returned or thrown cleanup errors
+to their resource owners to provide the same live recovery. An ownerless error
+remains an unconfirmed snapshot: `runSetup` does not observe later direct calls
+to the caller's port or replace that port's methods.
 
 The supported Linux demo forwards additional launches into its existing
 application, even across private displays. REA therefore reserves one Linux

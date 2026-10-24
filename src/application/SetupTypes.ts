@@ -110,7 +110,9 @@ export interface SetupHost {
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
-  /** Retry retained owners; a returned typed failure follows their live release state. */
+  /** Retry retained owners. Returned or thrown errors with explicit cleanup
+   * owners follow live release state; ownerless failures remain unconfirmed.
+   * runSetup does not observe later direct calls to a caller-supplied host. */
   close?(): Promise<AnalysisError | undefined>;
   detectedClients(): Promise<readonly SetupClient[]>;
   supportedClients(): Promise<readonly SetupClient[]>;

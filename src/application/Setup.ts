@@ -58,6 +58,7 @@ export const runSetup = async (
   } catch (cause: unknown) {
     cleanup = setupCleanupError(cause);
   }
+  if (cleanup !== undefined && !cleanup.cleanupIncomplete) cleanup = undefined;
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)

@@ -221,3 +221,81 @@ it("recognizes its own delegated typed error when the same producer returns it a
   expect(first?.cleanupIncomplete).toBe(false);
   expect(second?.cleanupIncomplete).toBe(false);
 });
+
+it("keeps both authorities pending when the callback succeeds before its independent source", async () => {
+  const source = new ProviderCleanupError("fixture", ["/independent"], {});
+  const sourceLease = new AnalysisCleanupLease(async () => {}, [
+    "/independent",
+  ]);
+  new AnalysisCleanupLeaseGroup(source, [sourceLease]);
+  let calls = 0;
+  const owner = new SetupCleanupOwner([
+    {
+      close: async () => {
+        calls++;
+        if (calls === 1)
+          return {
+            reason: "delegated work pending",
+            resources: ["/delegated"],
+          };
+        if (calls === 2) return source;
+        return undefined;
+      },
+    },
+  ]);
+  const first = await owner.close();
+  const second = await owner.close();
+  const third = await owner.close();
+  expect(source.cleanupIncomplete).toBe(true);
+  for (const report of [first, second, third]) {
+    expect(report?.cleanupIncomplete).toBe(true);
+    expect(report?.cleanupResources).toEqual(["/independent"]);
+  }
+  expect(await owner.close()).toBeDefined();
+  expect(calls).toBe(3);
+  await sourceLease.release();
+  expect(await owner.close()).toBeUndefined();
+  expect(calls).toBe(3);
+  for (const report of [first, second, third])
+    expect(report?.cleanupIncomplete).toBe(false);
+});
+
+it("starts a fresh report when a prior source resolves inside a retry before a new source fails", async () => {
+  const firstSource = new ProviderCleanupError(
+    "fixture",
+    ["/first-source"],
+    {},
+  );
+  const secondSource = new ProviderCleanupError(
+    "fixture",
+    ["/second-source"],
+    {},
+  );
+  const firstLease = new AnalysisCleanupLease(async () => {}, [
+    "/first-source",
+  ]);
+  const secondLease = new AnalysisCleanupLease(async () => {}, [
+    "/second-source",
+  ]);
+  new AnalysisCleanupLeaseGroup(firstSource, [firstLease]);
+  new AnalysisCleanupLeaseGroup(secondSource, [secondLease]);
+  let calls = 0;
+  const owner = new SetupCleanupOwner([
+    {
+      close: async () => {
+        calls++;
+        if (calls === 1) return firstSource;
+        await firstLease.release();
+        return secondSource;
+      },
+    },
+  ]);
+  const first = await owner.close();
+  const second = await owner.close();
+  expect(first?.cleanupIncomplete).toBe(false);
+  expect(second?.cleanupIncomplete).toBe(true);
+  expect(second?.cleanupResources).toEqual(["/second-source"]);
+  await secondLease.release();
+  expect(await owner.close()).toBeUndefined();
+  expect(calls).toBe(2);
+});

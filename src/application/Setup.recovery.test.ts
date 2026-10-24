@@ -341,9 +341,14 @@ describe("setup opaque failure cleanup", () => {
 });
 
 describe("setup returned result cleanup", () => {
-  it.each(["ready", "needs_human"] as const)(
-    "preserves %s result facts and reports retained resources",
-    async (state) => {
+  it.each([
+    { state: "ready", outcome: "return" },
+    { state: "ready", outcome: "throw" },
+    { state: "needs_human", outcome: "return" },
+    { state: "needs_human", outcome: "throw" },
+  ] as const)(
+    "preserves $state result facts and reports retained resources: $outcome",
+    async ({ state, outcome }) => {
       let held = true;
       const cleanup = new SetupCleanupOwner([
         {
@@ -357,7 +362,11 @@ describe("setup returned result cleanup", () => {
         },
       ]);
       class HostWithCleanup extends FakeSetupHost {
-        close = () => cleanup.close();
+        close = async () => {
+          const failure = await cleanup.close();
+          if (outcome === "throw" && failure !== undefined) throw failure;
+          return failure;
+        };
       }
       const host = new HostWithCleanup();
       const control = new FakeSetupHost();
@@ -694,3 +703,48 @@ describe("setup Hopper install eligibility", () => {
     },
   );
 });
+
+it("leaves ownerless caller-host failures unconfirmed after an unobserved direct retry", async () => {
+  const failure = setupCleanupError(undefined, {
+    reason: "Unknown cleanup authority",
+    resources: ["/fixture/unconfirmed"],
+  });
+  let held = true;
+  class Host extends FakeSetupHost {
+    close = async () => {
+      if (held) throw failure;
+      return undefined;
+    };
+  }
+  const host = new Host();
+  const result = await runSetup(options(true), host);
+  const report = result.cleanup;
+  held = false;
+  expect(await host.close()).toBeUndefined();
+  expect(failure.hasCleanupOwner).toBe(false);
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(report?.resources).toEqual(["/fixture/unconfirmed"]);
+  expect(result.cleanup).toBeDefined();
+});
+
+it.each(["return", "throw"] as const)(
+  "does not report already confirmed host cleanup: %s",
+  async (outcome) => {
+    let held = true;
+    const cleanup = new SetupCleanupOwner([
+      { close: async () => (held ? "held" : undefined) },
+    ]);
+    const resolved = await cleanup.close();
+    held = false;
+    await cleanup.close();
+    class Host extends FakeSetupHost {
+      close = async () => {
+        if (outcome === "throw") throw resolved;
+        return resolved;
+      };
+    }
+    const input = options(true);
+    const control = await runSetup(input, new FakeSetupHost());
+    expect(await runSetup(input, new Host())).toEqual(control);
+  },
+);
