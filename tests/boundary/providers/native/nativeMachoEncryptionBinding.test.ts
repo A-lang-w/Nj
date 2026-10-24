@@ -108,8 +108,8 @@ it("refuses a target the reader cannot bind instead of reporting encryption unre
   const result = await client.execute("inspect_macho", {});
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a symlinked-target refusal");
-  // Matches inspect_native_dispatch_metadata, which reads the same target.
-  expect(result.error._tag).toBe("ProviderAdapterError");
+  // Matches inspect_native_dispatch_metadata, which reads the same bound target.
+  expect(result.error._tag).toBe("AnalysisArtifactChangedError");
 });
 
 /** Replay fixture output while appending to the target once otool reads it. */

@@ -614,6 +614,57 @@ describe("Mach-O encryption reader: universal files", () => {
       ],
     });
   });
+
+  it("covers Apple's hidden ARM64 slice after the declared rows", async () => {
+    const armv7 = { type: 12, subtype: 9 };
+    const bytes = fatImage([
+      { cpu: armv7, bytes: machoImage({ cpu: armv7 }) },
+      {
+        cpu: CPU.arm64,
+        bytes: padded(
+          machoImage({
+            commands: [
+              text(),
+              encryption({ cryptoff: 0x4000, cryptsize: 0x4000, cryptid: 1 }),
+            ],
+          }),
+        ),
+      },
+    ]);
+    // nfat_arch 1 leaves the ARM64 row hidden in the table-to-slice gap.
+    new DataView(bytes.buffer, bytes.byteOffset).setUint32(4, 1);
+    expect(await read(bytes)).toMatchObject({
+      status: "parsed",
+      slices: [
+        { cpu_type: armv7.type, status: "absent" },
+        { cpu_type: CPU.arm64.type, status: "encrypted" },
+      ],
+    });
+  });
+
+  it("keeps the declared slice when the hidden ARM64 row's range is invalid", async () => {
+    const armv7 = { type: 12, subtype: 9 };
+    const bytes = fatImage([
+      { cpu: armv7, bytes: machoImage({ cpu: armv7 }) },
+      { cpu: CPU.arm64, bytes: padded(machoImage({ commands: [text()] })) },
+    ]);
+    const view = new DataView(bytes.buffer, bytes.byteOffset);
+    view.setUint32(4, 1);
+    // The hidden row's size runs past the end of the file.
+    view.setUint32(8 + 20 + 12, bytes.byteLength);
+    expect(await read(bytes)).toMatchObject({
+      status: "parsed",
+      slices: [
+        { cpu_type: armv7.type, status: "absent" },
+        {
+          cpu_type: CPU.arm64.type,
+          status: "malformed",
+          reason: "FAT architecture 1 slice range extends beyond the file",
+          commands: [],
+        },
+      ],
+    });
+  });
 });
 
 describe("Mach-O encryption reader: large universal files", () => {

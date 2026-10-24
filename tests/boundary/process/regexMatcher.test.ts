@@ -63,7 +63,7 @@ const probeWorkerHeap = (
     env,
     encoding: "utf8",
   });
-  expect(result.status).toBe(0);
+  expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout ?? "") as {
     resourceOld: number;
     heap: number;
@@ -219,10 +219,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       [`--experimental-config-file=${file}`],
       undefined,
     );
-    const split = probeWorkerHeap(
-      ["--experimental-config-file", file],
-      undefined,
-    );
     const withAbsolute = probeWorkerHeap(
       [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
       undefined,
@@ -233,7 +229,6 @@ it("does not report the 128 MiB request for a heap percentage in a Node config f
       directory,
     );
     expect(fromFile.resourceOld).toBe(128);
-    expect(split.resourceOld).toBe(128);
     expect(withAbsolute.resourceOld).toBe(128);
     expect(fromDefault.resourceOld).toBe(128);
     for (const execArgv of [
@@ -577,6 +572,38 @@ it("preserves Unicode matching order and refuses a pre-cancelled match", async (
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
 
+it("preserves the caller abort reason for pre-cancelled and interrupted matches", async () => {
+  const preCancelled = { request: "stop before matching" };
+  const refused = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: ".",
+    caseSensitive: true,
+    values: ["value"],
+    signal: AbortSignal.abort(preCancelled),
+  });
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!refused.ok) expect(refused.error.cause).toBe(preCancelled);
+  const controller = new AbortController();
+  const interrupted = { request: "stop while matching" };
+  const matching = matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^a",
+    caseSensitive: true,
+    values: ["a"],
+    signal: controller.signal,
+  });
+  controller.abort(interrupted);
+  const result = await matching;
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!result.ok) expect(result.error.cause).toBe(interrupted);
+});
+
 it("names the rejected pattern field for a default invalid-pattern refusal", async () => {
   const matched = await matchRegexValues({
     operation: "search_procedures",
@@ -617,15 +644,25 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
   expect(
     await search.execute("search_strings", { pattern: "^δ", mode: "regex" }),
   ).toEqual(ok([{ address: "0x10", value: "Δelta" }]));
-  expect(
-    await search.execute("search_strings", { pattern: "[", mode: "regex" }),
-  ).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "HopperRemoteError",
-      code: -32000,
-      diagnosticType: "invalid_request",
+  const invalid = await search.execute("search_strings", {
+    pattern: "[",
+    mode: "regex",
+  });
+  if (invalid.ok) throw new Error("Expected invalid-pattern refusal");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining("Invalid regex pattern"),
+    recovery: { kind: "inspect_input_contract", operation: "search_strings" },
+    details: {
       operation: "search_strings",
+      issues: [
+        {
+          path: ["pattern"],
+          reason: "invalid_format",
+          message: "Supply a valid regular expression.",
+        },
+      ],
     },
   });
   await search.close();

@@ -41,9 +41,15 @@ export const readMachoEncryption = async (
       status: "parsed",
       slices: [await readSlice(readAt, { offset: 0, size, fat: null })],
     };
+  // Apple's hidden ARM64 slice is part of the file's coverage, so an
+  // undecodable hidden row (a short read) leaves the slice set itself
+  // unknown before any declared slice is read.
+  const { hidden } = container;
+  if (hidden !== null && hidden.status !== "declared")
+    return { status: hidden.status, reason: hidden.reason };
   const slices: MachoSliceEncryption[] = [];
-  for (const [index, declaration] of container.slices.entries()) {
-    const rangeIssue = container.rangeIssues[index] ?? null;
+  for (const [index, declaration] of container.header.slices.entries()) {
+    const rangeIssue = container.header.rangeIssues[index] ?? null;
     slices.push(
       rangeIssue === null
         ? await readSlice(readAt, {
@@ -58,6 +64,16 @@ export const readMachoEncryption = async (
           ),
     );
   }
+  if (hidden !== null)
+    slices.push(
+      hidden.rangeIssue === null
+        ? await readSlice(readAt, {
+            offset: hidden.declaration.offset,
+            size: hidden.declaration.size,
+            fat: hidden.declaration,
+          })
+        : unread(hidden.declaration, "malformed", hidden.rangeIssue),
+    );
   return { status: "parsed", slices };
 };
 

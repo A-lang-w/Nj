@@ -31,7 +31,7 @@ export const createReader = (
     return new ZipArtifactReader(path, format, undefined, rootSource);
   switch (format) {
     case "directory":
-      return new DirectoryArtifactReader(path);
+      return new DirectoryArtifactReader(path, "omit");
     case "asar":
       return new AsarArtifactReader(
         path,
@@ -106,6 +106,8 @@ export const inventoryCoverage = (
     };
   return {
     coverage: { scope: "root", status: "complete" },
-    limitations: ["Artifact has no child container entries."],
+    limitations: [
+      "Inventory covers root bytes only; child container entries were not examined.",
+    ],
   };
 };

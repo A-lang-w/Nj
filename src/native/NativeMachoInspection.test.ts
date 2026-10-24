@@ -551,3 +551,52 @@ describe("Mach-O encryption reporting", () => {
     );
   });
 });
+
+it.each(["10", "DSYM", "2"])(
+  "classifies the unbacked-text dyld refusal using observed file type %s",
+  async (fileType) => {
+    const diagnostic =
+      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type\n";
+    const runner = new NativeFixtureRunner({
+      otool: [
+        "Mach header",
+        "magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
+        `0xfeedfacf 16777228 0 0x00 ${fileType} 0 0 0x0`,
+      ].join("\n"),
+    });
+    const result = await inspectNativeMacho({
+      target: nativeMachoTarget("/fixture/debug-companion"),
+      run: async (tool, args, _signal, acceptNonZeroIf) => {
+        const captured = await runner.run(tool, args);
+        if (!captured.ok || tool !== "dyld_info") return captured;
+        const refused = {
+          ...captured.value,
+          stdout: diagnostic,
+          stdoutBytes: Buffer.byteLength(diagnostic),
+          exitCode: 1,
+        };
+        if (acceptNonZeroIf?.(refused)) return ok(refused);
+        return err(
+          new AnalysisOutputError("inspect_macho", "unaccepted native failure"),
+        );
+      },
+      readEncryption: unreadEncryption,
+      invocation: () => {
+        throw new Error(
+          "Refused target does not produce inspection provenance",
+        );
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe(
+      fileType === "2"
+        ? "AnalysisOutputError"
+        : "AnalysisUnsupportedTargetError",
+    );
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: diagnostic,
+      exit_code: 1,
+    });
+  },
+);

@@ -50,6 +50,7 @@ const subjectFormatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "gamecube-dol",
   "zip",
   "ipa",
   "apk",
@@ -81,7 +82,7 @@ const subjectBaseSchema = z.strictObject({
 // The format owns the architecture claim, including nested Evidence subjects.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
+    format: subjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
     architecture: z
       .enum(BINARY_ARCHITECTURES)
       .exclude([...RAW_ONLY_ARCHITECTURES])
@@ -90,6 +91,10 @@ const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
     architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("gamecube-dol"),
+    architecture: z.literal("powerpc"),
   }),
 ]);
 /** Source location attached to an evidence observation. */
@@ -184,7 +189,9 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
       context.addIssue({
         code: "custom",
         path: ["evidence_id"],
-        message: "Evidence semantic identifier does not match its record",
+        message: usesPre66NullCoverageIdentity(withoutId, evidenceId)
+          ? "Evidence uses an earlier relationship_coverage identity commitment: explicit null was omitted from that digest. Recreate this observation with the current REA release; re-exporting the old bundle cannot update its identity."
+          : "Evidence semantic identifier does not match its record",
       });
   },
 );
@@ -227,11 +234,7 @@ export const rebindEvidenceSubjectTargetPath = (
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
-export interface EvidenceProvider {
-  readonly id: string;
-  readonly name: string;
-  readonly version: string | null;
-}
+export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 
 export interface EvidenceObservation {
   readonly predicateType?: string;
@@ -253,7 +256,9 @@ export interface EvidenceObservation {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
+const semanticProjection = (
+  evidence: EvidenceWithoutId,
+): Record<string, JsonValue> => ({
   subject:
     evidence.subject === null
       ? null
@@ -281,6 +286,20 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
 /** Hash semantic content, including raw results and excluding display-subject fields. */
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
   `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
+
+/** Recognize an obsolete commitment for diagnosis only; never admit or rewrite it. */
+const usesPre66NullCoverageIdentity = (
+  evidence: EvidenceWithoutId,
+  evidenceId: string,
+): boolean => {
+  if (evidence.relationship_coverage !== null) return false;
+  const legacyProjection = semanticProjection(evidence);
+  delete legacyProjection.relationship_coverage;
+  return (
+    evidenceId ===
+    `ev_${digestCanonicalValue(legacyProjection, "Historical Evidence identity")}`
+  );
+};
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {

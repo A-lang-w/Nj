@@ -43,7 +43,7 @@
     "rea-agents": "scripts/rea.mjs"
   },
   "engines": {
-    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "packageManager": "npm@11.16.0",
   "files": [
@@ -52,6 +52,7 @@
     "bridge/hopper_bridge.py",
     "bridge/cutter/rea_bridge.py",
     "bridge/native/NativeUIChildren.swift",
+    "bridge/native/NativeUIValues.swift",
     "bridge/native/ReaNativeUI.swift",
     "bridge/native/rea_lldb_tracer.py",
     "bridge/process/ProcessRunTokenReader.swift",
@@ -65,9 +66,11 @@
     "bridge/ghidra/ReaGhidraNoReturnFix.java",
     "bridge/ghidra/ReaGhidraMipsSoftFloat.java",
     "bridge/ghidra/ReaGhidraPrepareRaw.java",
+    "bridge/ghidra/ReaGhidraPrepareDol.java",
     "bridge/android/ReaJadxBridge.java",
     "bridge/mitmproxy/capture.py",
     "scripts/rea.mjs",
+    "scripts/lib/cli-process-environment.mjs",
     "scripts/rea-android-workspace-guardian.mjs",
     "scripts/electron-active-hook.cjs",
     "scripts/electron-active-hook-boundaries.cjs",
@@ -194,6 +197,7 @@
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",
     "verify:ghidra:mips": "npm run build:cached && node scripts/verify-real-ghidra-mips.mjs",
     "verify:ghidra:ppc": "npm run build:cached && node scripts/verify-real-ghidra-ppc.mjs",
+    "verify:ghidra:dol": "npm run build:cached && node scripts/verify-real-ghidra-dol.mjs",
     "verify:ghidra:riscv": "npm run build:cached && node scripts/verify-real-ghidra-riscv.mjs",
     "verify:ghidra:6502": "npm run build:cached && node scripts/verify-real-ghidra-6502.mjs",
     "verify:ghidra:m68k": "npm run build:cached && node scripts/verify-real-ghidra-m68k.mjs",
@@ -396,6 +400,7 @@
     "lint-staged": "16.4.0",
     "oxfmt": "0.72.0",
     "oxlint": "1.87.0",
+    "release-please": "17.3.0",
     "rolldown": "1.2.12",
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "tsx": "4.23.15",
