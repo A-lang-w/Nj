@@ -13,10 +13,18 @@ import {
   parseEvidence,
   immutableEvidence,
   withEvidenceCallerInputPath,
+  rebindEvidenceToTargetPath,
 } from "./evidence.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
+import {
+  MAX_JSON_DEPTH,
+  jsonValueSchema,
+  type JsonValue,
+} from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { freezeJsonSnapshot } from "./immutableJson.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -182,6 +190,41 @@ it("retains verbatim caller input without changing semantic identity or copying 
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
 });
+
+it.each(["caller", "subject", "combined"] as const)(
+  "retains JSON snapshot proof through %s Evidence rebinding",
+  (kind) => {
+    const original = immutableEvidence(
+      createEvidence(TARGET, PROVIDER, {
+        operation: "inspect",
+        parameters: { address: "0x1000" },
+        result: {
+          rows: Array.from({ length: 512 }, (_, index) => ({ index })),
+        },
+        rawResult: { observed: true },
+      }),
+    );
+    const selected =
+      kind === "subject"
+        ? original
+        : withEvidenceCallerInputPath(original, "./selected");
+    const rebound =
+      kind === "caller"
+        ? selected
+        : rebindEvidenceToTargetPath(selected, {
+            ...TARGET,
+            path: "/another/fixture",
+          });
+    expect(isImmutableJsonSnapshot(rebound)).toBe(true);
+    expect(jsonValueSchema.parse(rebound)).toBe(rebound);
+    expect(parseEvidence(rebound)).toBe(rebound);
+    expect(rebound.normalized_result).toBe(original.normalized_result);
+    expect(rebound.raw_result).toBe(original.raw_result);
+    expect(rebound.evidence_id).toBe(original.evidence_id);
+    expect(original.caller_input_path).toBeUndefined();
+    expect(original.subject?.local_path).toBe(TARGET.path);
+  },
+);
 
 it("applies the JSON depth boundary to owned immutable results", () => {
   let result: JsonValue = 1;
