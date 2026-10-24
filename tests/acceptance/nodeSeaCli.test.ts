@@ -82,6 +82,28 @@ cliTest.for(["elf", "mach-o", "pe"] as const)(
   },
 );
 
+cliTest(
+  "offers no JavaScript probe for a main script without a source suffix",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sea-plain-cli-");
+    const source = join(root, "application");
+    await writeFile(
+      source,
+      nodeSeaElf({ codePath: "main", main: "void 0;\n", fuse: "set" }),
+    );
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    expect(
+      inspection.next_probes.map((probe) => probe.operation),
+    ).not.toContain("analyze_javascript_application");
+  },
+);
+
 cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-sea-invalid-cli-");
   const source = join(root, "application");

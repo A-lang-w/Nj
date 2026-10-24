@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
-import { readPeResourceLayout } from "../../native/pe/PeResourceLayout.js";
+import {
+  hasPeResourceName,
+  readPeResourceLayout,
+} from "../../native/pe/PeResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -39,6 +42,8 @@ const MAX_COMMAND_BYTES = 8 * 1024 * 1024;
 const MAX_ELF_HEADERS = 4096;
 const MAX_NOTE_NAME_BYTES = 4096;
 const FUSE_LENGTH = "NODE_SEA_FUSE_".length + 32 + 2;
+// PE header structures must fit this prefix for the bounded name probe.
+const PE_HEADER_PROBE_BYTES = 64 * 1024;
 
 const THIN_MAGICS = new Set([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe]);
 const FAT_MAGICS = new Set([0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca]);
@@ -520,97 +525,26 @@ const failNoteTable = (confirmed: boolean): undefined => {
   return undefined;
 };
 
-/** Admission only: bounded reads establish the SEA name before the full resource parse. */
-const hasPeSeaResourceName = async (carrier: Carrier): Promise<boolean> => {
-  const dos = await readExact(carrier, 0, 64);
-  if (dos === undefined) return false;
-  const peOffset = dos.readUInt32LE(60);
-  const pe = await readExact(carrier, peOffset, 24);
-  if (pe === undefined || pe.readUInt32LE(0) !== 0x4550) return false;
-  const optionalSize = pe.readUInt16LE(20);
-  const optional = await readExact(carrier, peOffset + 24, optionalSize);
-  if (optional === undefined || optional.length < 64) return false;
-  const magic = optional.readUInt16LE(0);
-  if (magic !== 0x10b && magic !== 0x20b) return false;
-  const countAt = magic === 0x10b ? 92 : 108;
-  const directoriesAt = countAt + 4;
-  if (optionalSize < directoriesAt + 24) return false;
-  const count = optional.readUInt32LE(countAt);
-  if (count < 3 || count > Math.floor((optionalSize - directoriesAt) / 8))
-    return false;
-  const rva = optional.readUInt32LE(directoriesAt + 16);
-  const size = optional.readUInt32LE(directoriesAt + 20);
-  if (rva === 0 || size < 16) return false;
-  const tableOffset = peOffset + 24 + optionalSize;
-  const table = await readExact(carrier, tableOffset, pe.readUInt16LE(6) * 40);
-  const headerSize = optional.readUInt32LE(60);
-  if (
-    table === undefined ||
-    headerSize < tableOffset + table.length ||
-    headerSize > carrier.fileSize
-  )
-    return false;
-  const roots: number[] = [];
-  if (rva < headerSize && size <= headerSize - rva) roots.push(rva);
-  for (let at = 0; at < table.length; at += 40) {
-    const sectionRva = table.readUInt32LE(at + 12);
-    const rawSize = table.readUInt32LE(at + 16);
-    const extent = table.readUInt32LE(at + 8) || rawSize;
-    const within = rva - sectionRva;
-    if (
-      within >= 0 &&
-      within < extent &&
-      size <= extent - within &&
-      size <= rawSize - within
-    )
-      roots.push(table.readUInt32LE(at + 20) + within);
-  }
-  const root = roots[0];
-  if (
-    roots.length !== 1 ||
-    root === undefined ||
-    root > carrier.fileSize - size
-  )
-    return false;
-  const relative = (at: number, length: number) =>
-    at < 0 || at > size - length
-      ? Promise.resolve(undefined)
-      : readExact(carrier, root + at, length);
-  let examined = 0;
-  const directory = async (at: number): Promise<Buffer | undefined> => {
-    const header = await relative(at, 16);
-    if (header === undefined) return undefined;
-    const entries = header.readUInt16LE(12) + header.readUInt16LE(14);
-    if (entries > MAX_INSPECT_PE_DIRECTORY_ENTRIES - examined) return undefined;
-    examined += entries;
-    return relative(at + 16, entries * 8);
-  };
-  const types = await directory(0);
-  if (types === undefined) return false;
-  const expected = Buffer.from(RESOURCE_NAME, "utf16le");
-  for (let at = 0; at < types.length; at += 8) {
-    if (types.readUInt32LE(at) !== RT_RCDATA) continue;
-    const target = types.readUInt32LE(at + 4);
-    if ((target & 0x80000000) === 0) continue;
-    const names = await directory(target & 0x7fffffff);
-    if (names === undefined) continue;
-    for (let entry = 0; entry < names.length; entry += 8) {
-      const encoded = names.readUInt32LE(entry);
-      if ((encoded & 0x80000000) === 0) continue;
-      const nameAt = encoded & 0x7fffffff;
-      const length = await relative(nameAt, 2);
-      if (length?.readUInt16LE(0) !== RESOURCE_NAME.length) continue;
-      const name = await relative(nameAt + 2, expected.length);
-      if (name?.equals(expected)) return true;
-    }
-  }
-  return false;
-};
-
 const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
   // Probe for the NODE_SEA_BLOB name first so a malformed resource tree in an
   // ordinary PE stays a native-classification concern, not a SEA failure.
-  if (!(await hasPeSeaResourceName(carrier))) return [];
+  const headers = await readExact(
+    carrier,
+    0,
+    Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
+  );
+  if (
+    headers === undefined ||
+    !(await hasPeResourceName(
+      headers,
+      carrier.fileSize,
+      (offset, length) => readExact(carrier, offset, length),
+      RT_RCDATA,
+      RESOURCE_NAME,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    ))
+  )
+    return [];
   if (carrier.fileSize > MAX_INSPECT_PE_FILE_BYTES) {
     throw limitFailure(
       "Node SEA PE inspection exceeds the 512 MiB PE parser input ceiling",

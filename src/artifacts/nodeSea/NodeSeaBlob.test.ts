@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
+  NODE_SEA_ASSET_COUNT,
+  NODE_SEA_ASSET_NAME_BYTES,
   NODE_SEA_BAD_MAGIC,
   NODE_SEA_EMPTY_CODE_PATH,
   NODE_SEA_FUSE_CONFLICT,
@@ -75,6 +78,45 @@ it("rejects colliding asset names", () => {
       }),
     ),
   ).toThrow(nodeSeaAssetCollision("shared"));
+});
+
+const limitOf = (bytes: Buffer): ArtifactReaderFailure => {
+  try {
+    decodeNodeSeaBlob(bytes);
+  } catch (cause) {
+    if (cause instanceof ArtifactReaderFailure) return cause;
+    throw cause;
+  }
+  throw new Error("expected a limit failure");
+};
+
+it("refuses an asset table over its count bound before creating records", () => {
+  const prefix = buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] });
+  const count = Buffer.alloc(8);
+  count.writeBigUInt64LE(100_001n);
+  // Replace the declared count; the bound is checked before the table length.
+  const bytes = Buffer.concat([prefix.subarray(0, -25), count]);
+  const failure = limitOf(bytes);
+  expect(failure).toMatchObject({
+    reason: "limit",
+    message: NODE_SEA_ASSET_COUNT,
+  });
+});
+
+it("refuses asset names over the decoded name budget", () => {
+  const name = "n".repeat(4 * 1024 * 1024 + 1);
+  const failure = limitOf(
+    buildNodeSeaBlob({
+      assets: [
+        { name: `a${name}`, body: "" },
+        { name: `b${name}`, body: "" },
+      ],
+    }),
+  );
+  expect(failure).toMatchObject({
+    reason: "limit",
+    message: NODE_SEA_ASSET_NAME_BYTES,
+  });
 });
 
 it("rejects non-zero trailing bytes and keeps zero padding", () => {

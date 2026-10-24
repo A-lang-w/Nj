@@ -16,7 +16,9 @@ Summary delivery retains the complete Evidence: use `parent_evidence_id` with
 `inspect_analysis_view` to request particular inventory paths and fields.
 Extraction returns a fresh `output_root`; analyze that extracted directory with
 `analyze_javascript_application`. Snapshot-only applications have no recovered
-main script and receive no JavaScript next probe.
+main script and receive no JavaScript next probe. Neither does a main script
+whose code path lacks a JavaScript source suffix, such as `main`, because the
+analyzer selects extracted files by suffix.
 
 ## Recognition and evidence
 
@@ -57,9 +59,13 @@ Malformed magic, truncation, unknown flags/extensions, invalid UTF-8, duplicate
 asset names and conflicting blob declarations fail closed with named reasons.
 Zero padding after a complete blob is allowed. The blob read ceiling is 256 MiB;
 PE carriers also use the shared 512 MiB input, 65,536 directory-entry and 8 MiB
-resource-metadata ceilings. The decoder admits at most one million assets and
-4,096 exec arguments totaling at most 1 MiB of text. These are resource bounds,
-not Node format limits. Snapshot and code-cache bytes remain opaque.
+resource-metadata ceilings. The decoder admits at most 100,000 assets whose
+names total at most 8 MiB, and 4,096 exec arguments totaling at most 1 MiB of
+text. These are fixed resource bounds, not Node format limits, checked before
+records are created; a hit fails as a limit with no runtime override. The PE
+name probe reads headers from the first 64 KiB of the carrier; a PE whose
+headers extend beyond that is left to native classification. Snapshot and
+code-cache bytes remain opaque.
 
 ## Verification
 
