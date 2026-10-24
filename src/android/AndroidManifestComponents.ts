@@ -422,7 +422,9 @@ export const parseAndroidManifestComponents = (
         ) {
           const relativeName = name.slice(packageName.length);
           precedingActivityTargetNames.add(relativeName);
-          precedingActivityTargetNames.add(relativeName.slice(1));
+          const bareName = relativeName.slice(1);
+          if (!bareName.includes("."))
+            precedingActivityTargetNames.add(bareName);
         }
       }
       let authorities: readonly string[] | null = null;

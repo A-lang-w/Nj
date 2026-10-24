@@ -1,10 +1,75 @@
 import { expect, it, vi } from "vitest";
+import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 import {
   ANDROID_MANIFEST_LIMITS,
   parseAndroidManifestComponents,
   resolveAndroidComponentName,
 } from "../../../src/android/AndroidManifestComponents.js";
+
+it.each([
+  [".sub.Target", "sub.Target", "partial"],
+  ["com.example.sub.Target", "sub.Target", "partial"],
+  [".sub.Target", ".sub.Target", "complete"],
+  [".sub.Target", "com.example.sub.Target", "complete"],
+  ["com.example.sub.Target", ".sub.Target", "complete"],
+  ["com.example.sub.Target", "com.example.sub.Target", "complete"],
+  [".Target", "Target", "complete"],
+  ["sub.Target", "sub.Target", "complete"],
+] as const)(
+  "keeps alias class identity for %s targeting %s",
+  (activity, target, status) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${activity}"/><activity-alias android:name=".Alias" android:targetActivity="${target}" android:exported="false"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.status).toBe(status);
+    expect(inventory.items.at(-1)?.target_activity).toBe(target);
+    const limitations = inventory.limitations.join(" ");
+    if (status === "partial")
+      expect(limitations).toContain(
+        "do not match a preceding activity declaration",
+      );
+    else expect(limitations).not.toContain("targetActivity value(s)");
+  },
+);
+
+it("keeps pre-projection package parses independent", () => {
+  const older = {
+    engine: {
+      name: "jadx",
+      version: null,
+      artifact_sha256: "a".repeat(64),
+      source_revision: null,
+      worker_count: 1,
+      heap_limit_mib: null,
+    },
+    package_name: "com.example",
+    version_name: null,
+    version_code: null,
+    min_sdk: null,
+    target_sdk: "33",
+    permissions: [],
+    manifest: {
+      status: "complete",
+      text: '<manifest package="com.example"/>',
+      reported_total_bytes: null,
+    },
+    class_count: 0,
+    resource_count: 0,
+    signature_verification: "not_performed",
+  };
+  const first = androidResultSchemas.inspect_android_package.parse(older);
+  expect(first.components).toMatchObject({ status: "unavailable", items: [] });
+  first.components.limitations.push("local parse mutation");
+  try {
+    const second = androidResultSchemas.inspect_android_package.parse(older);
+    expect(second.components.limitations).not.toContain("local parse mutation");
+  } finally {
+    first.components.limitations.pop();
+  }
+});
 
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app">
