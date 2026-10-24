@@ -10,20 +10,30 @@ import {
 
 type Default = { readonly member: string; readonly value: JsonValue };
 
-/** The plan's rule for a field and a later call's agree: equal, or clocks one spelling covers. */
+/** What earlier calls showed that a merge must respect: members stored unsorted as sent, and the value showing each clock's width. */
+export interface EarlierEvidence {
+  readonly kept: ReadonlySet<string>;
+  readonly clockOf: (field: string) => JsonValue | undefined;
+}
+
+/** The plan's rule for a field and a later call's agree: equal, or clocks one spelling covers given what earlier calls showed. */
 const agreeing = (
   held: FieldRule,
   later: FieldRule,
   values: {
-    readonly exemplar: JsonValue | undefined;
+    readonly field: string;
     readonly later: JsonValue | undefined;
-    readonly kept: ReadonlySet<string>;
+    readonly earlier: EarlierEvidence;
   },
 ): FieldRule | undefined => {
-  const alike = alikeRules(held, later, values.kept);
+  const alike = alikeRules(held, later, values.earlier.kept);
   if (alike !== undefined) return alike;
   if (held.rule !== "clock" || later.rule !== "clock") return undefined;
-  const format = fittedClockFormat(held.format, values.later, values.exemplar);
+  const format = fittedClockFormat(
+    held.format,
+    values.later,
+    values.earlier.clockOf(values.field),
+  );
   return format === undefined ? undefined : { ...held, format };
 };
 
@@ -49,7 +59,7 @@ interface FieldCalls {
   readonly later: { readonly entity: JsonObject; readonly body: JsonObject };
   readonly sentBefore: ReadonlySet<string>;
   readonly required: readonly string[];
-  readonly kept: ReadonlySet<string>;
+  readonly earlier: EarlierEvidence;
 }
 
 /** A reference an earlier later call added: it stays while a call leaves its member out, and agrees with this call's when it shows it. */
@@ -67,9 +77,9 @@ const addedReference = (
     after === undefined
       ? undefined
       : agreeing(added, after, {
-          exemplar: undefined,
+          field,
           later: later.entity[field],
-          kept: calls.kept,
+          earlier: calls.earlier,
         });
   return rule === undefined ? undefined : { rule };
 };
@@ -100,9 +110,9 @@ const mergedField = (
     return shownAlone(inExemplar, calls);
   if (before !== undefined && after !== undefined) {
     const rule = agreeing(before, after, {
-      exemplar: exemplar[field],
+      field,
       later: later.entity[field],
-      kept: calls.kept,
+      earlier: calls.earlier,
     });
     return rule === undefined ? undefined : { rule };
   }
@@ -124,10 +134,11 @@ const mergedField = (
 
 /**
  * A create plan widened by a later call, explained on its own: both calls show the same fields, but for a reference
- * whose member a call without it did not send (one an earlier call added stays), every field both rule they rule alike, a field neither rules holds one value,
- * and where only one echoes a member the other left out, the member becomes optional with the value the call that left
- * it out stored. Members either call sent are accepted, and only those every call sent are required. Undefined when the
- * calls disagree otherwise, so the later call stays unexplained.
+ * whose member a call without it did not send (one an earlier call added stays), every field both rule they rule alike
+ * as far as earlier calls allow, a field neither rules holds one value, and where only one echoes a member the other
+ * left out, the member becomes optional with the value the call that left it out stored. Members either call sent are
+ * accepted, and only those every call sent are required. Undefined when the calls disagree otherwise, so the later call
+ * stays unexplained.
  */
 export const mergedCreatePlan = (
   plan: { readonly rules: readonly FieldRule[]; readonly body: WriteBody },
@@ -138,7 +149,10 @@ export const mergedCreatePlan = (
     readonly rules: readonly FieldRule[];
     readonly contract: WriteBody;
   },
-  kept: ReadonlySet<string> = new Set(),
+  earlier: EarlierEvidence = {
+    kept: new Set(),
+    clockOf: (field) => exemplar[field],
+  },
 ): { readonly rules: FieldRule[]; readonly body: WriteBody } | undefined => {
   const held = new Map(plan.rules.map((rule) => [rule.field, rule]));
   const shown = new Map(later.rules.map((rule) => [rule.field, rule]));
@@ -161,7 +175,7 @@ export const mergedCreatePlan = (
       later,
       sentBefore,
       required: plan.body.required,
-      kept,
+      earlier,
     });
     if (outcome === undefined) return undefined;
     if (outcome.rule !== undefined) merged.set(field, outcome.rule);

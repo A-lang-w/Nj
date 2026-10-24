@@ -21,9 +21,11 @@ write model did not cover:
 
 - **Every call.** A later create is explained on its own and merged into the plan when both calls show the same fields,
   but for a reference whose member a call without it did not send (one an earlier create added stays), every field
-  both rule they rule alike, and a field neither rules holds one value. Members either call sent are accepted, only those every call sent are required, and an echoed member
-  a call left out takes the value that call stored (`body.defaults`). A later create that disagrees leaves the plan as
-  it was and is judged as before. Merged rules keep the plan's order.
+  both rule they rule alike, and a field neither rules holds one value. Members either call sent are accepted, only
+  those every call sent are required, and an echoed member a call left out takes the value that call stored
+  (`body.defaults`). A clock widens to `trimmed` only when no held entity or earlier call showed it at a fixed width. A
+  later create that disagrees leaves the plan as it was and is judged as before; one that left out a member the plan
+  fills while showing that field otherwise is `unexplained-change`. Merged rules keep the plan's order.
 - **Sorted arrays.** An echo is `sorted` when the application stored the sent strings in code-point order rather than
   as sent; serving stores them sorted. A plain echo and a sorted one agree, and the plan keeps the sorted one, since a
   call whose array was already in order cannot show it; once a call stored strings out of order as sent, they disagree.

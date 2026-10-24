@@ -759,7 +759,11 @@ create added stays), every field both rule they rule alike (an echo one showed
 sorted stays sorted, unless a call stored its strings out of order as sent),
 and a field neither rules holds one value. Members either call sent are accepted, only those every call sent are
 required, and an echoed member a call left out takes the value that call stored
-(`body.defaults`). A later create that disagrees leaves the plan as it was.
+(`body.defaults`). A clock rule widens to `trimmed` only when no held entity or
+earlier call showed that clock at a fixed width. A later create that disagrees
+leaves the plan as it was, and one that left out a member the plan fills (with a
+default, or a reference's absence) while showing that field otherwise is
+`unexplained-change`.
 A `composed` string is literal text and parts read from the fields other rules
 write: a field's value, its slug, or a clock's calendar digits
 (`YYYYMMDDhhmmss`, `YYYYMMDD`, `YYYY-MM-DD` or `YYYY/MM/DD`, in the clock's

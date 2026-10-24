@@ -53,6 +53,21 @@ export const TAG_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/tags", [FIRST_TAG, SECOND_TAG, HEAVY_TAG, BORROWED_TAG]],
 ];
 
+/** A held tag whose update clock keeps a trailing zero, so the application spells that clock at a fixed width. */
+const FIXED_SECOND_TAG = {
+  ...SECOND_TAG,
+  updatedAt: "2026-10-01T10:00:00.223456790Z",
+};
+
+/** The tag creates beside a held tag that shows the update clock at a fixed width, which the later create's trimmed clock contradicts. */
+export const HELD_FIXED_TAG_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/tags", [FIRST_TAG, FIXED_SECOND_TAG]],
+  ["GET", `/api/tags/${numberedUuid(1)}`, FIRST_TAG],
+  ["GET", `/api/tags/${numberedUuid(2)}`, FIXED_SECOND_TAG],
+  ...TAG_ROWS.slice(3, 7),
+  ["GET", "/api/tags", [FIRST_TAG, FIXED_SECOND_TAG, HEAVY_TAG, BORROWED_TAG]],
+];
+
 /** A later tag create whose update clock Go trims while its creation clock keeps a trailing zero. */
 const FIXED_CREATED_TAG = tag(
   4,
@@ -366,6 +381,16 @@ export const shelvedRows = (
     ["GET", "/api/books/4", fourth],
     ["GET", "/api/books", [...SHELVED_SEEDS, third, fourth]],
   ];
+};
+
+/** The shelved creates, then one that leaves the shelf out yet stores another shelf than the default, shown only in its answer. */
+export const misshelvedRows = (): TimedCaptureRow[] => {
+  const rows = shelvedRows(
+    { name: "Third Book" },
+    { name: "Fourth Book", shelf: "rare" },
+  );
+  const fifth = shelved(5, "Fifth Book", "attic", bookClock(rows.length));
+  return [...rows, ["POST", "/api/books", fifth, 201, { name: "Fifth Book" }]];
 };
 
 const SHELVES = [

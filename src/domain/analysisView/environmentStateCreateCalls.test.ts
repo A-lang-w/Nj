@@ -4,14 +4,19 @@ import {
   timedCaptureEvidence,
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
-import { shelvedRows } from "../../../tests/fixtures/environmentStateDerivedValues.js";
+import {
+  HELD_FIXED_TAG_ROWS,
+  TAG_ROWS,
+  misshelvedRows,
+  shelvedRows,
+} from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
 import { mergedCreatePlan } from "./environmentStateWriteCreateCalls.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 
-const createPlan = (rows: readonly TimedCaptureRow[]) => {
+const createPlan = (rows: readonly TimedCaptureRow[], tool = "post_books") => {
   const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === "post_books",
+    (candidate) => candidate.tool === tool,
   );
   if (plan === undefined) throw new Error("No create plan");
   return plan;
@@ -48,6 +53,25 @@ describe("create plans learned from every call", () => {
         ),
       ),
     ).toMatchObject(OPTIONAL_SHELF);
+  });
+
+  it("withholds creates whose later call stores a left-out member otherwise than the default it learned", () => {
+    expect(createPlan(misshelvedRows())).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("trims no clock a later create shows trimmed after a held entity showed it at a fixed width", () => {
+    expect(createPlan(TAG_ROWS, "post_tags")).toMatchObject({ served: true });
+    const plan = createPlan(HELD_FIXED_TAG_ROWS, "post_tags");
+    expect(plan).toMatchObject({ served: false, reason: "unexplained-change" });
+    expect(plan.rules).not.toContainEqual(
+      expect.objectContaining({
+        field: "updatedAt",
+        format: expect.objectContaining({ trimmed: true }),
+      }),
+    );
   });
 
   it("serves no plan a later create contradicts by storing a member otherwise than sent", () => {

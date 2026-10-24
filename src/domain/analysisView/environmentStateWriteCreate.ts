@@ -5,6 +5,7 @@ import {
   isObject,
   isParam,
   normalizedPath,
+  same,
   scalarText,
   segmentsOf,
   selectedCollection,
@@ -228,7 +229,7 @@ const refineCreate = (
           : { envelope: evidence.envelope }),
       },
     },
-    draft.kept,
+    { kept: draft.kept, clockOf: (field) => clockEvidence(draft, field) },
   );
   if (merged === undefined) return false;
   retainFixed(context, merged.body.fixed.slice(draft.plan.body!.fixed.length));
@@ -400,6 +401,37 @@ const likeGeneratedInteger = (
     digits.length === generatedIntegerDigits(exemplar)?.length
   );
 };
+
+/** Whether a later call's created fields are ones serving would write: its generated values in served forms, and no member it left out filled otherwise than it shows. */
+const agreesLater = (
+  context: EffectContext,
+  draft: WriteDraft,
+  created: Pick<StateEntity, "type" | "collection" | "fields">,
+  call: { readonly body: JsonObject; readonly observed: JsonObject },
+): boolean =>
+  followsGenerated(context, draft, created) &&
+  !filledOtherwise(draft.plan.rules, call, created.fields);
+
+/** Whether a call left out a member the plan fills, with an echo's default or a reference's absence, and its observation shows that field otherwise. */
+const filledOtherwise = (
+  rules: readonly FieldRule[],
+  call: { readonly body: JsonObject; readonly observed: JsonObject },
+  written: JsonObject,
+): boolean =>
+  rules.some((rule) => {
+    const member =
+      rule.rule === "echo"
+        ? rule.field
+        : rule.rule === "reference"
+          ? rule.member
+          : undefined;
+    return (
+      member !== undefined &&
+      !Object.hasOwn(call.body, member) &&
+      Object.hasOwn(call.observed, rule.field) &&
+      !same(call.observed[rule.field], written[rule.field])
+    );
+  });
 
 /** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values as the exemplar's kind of token, UUID identities as UUIDs, and sequences in order. */
 const followsGenerated = (
@@ -678,11 +710,12 @@ export const applyCreate = (
     id === undefined ||
     context.state.entity(type, collection, id) !== undefined ||
     (later &&
-      !followsGenerated(context, draft, {
-        type,
-        collection,
-        fields: fields.value,
-      }))
+      !agreesLater(
+        context,
+        draft,
+        { type, collection, fields: fields.value },
+        { body: call.body, observed: observed.object },
+      ))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();
