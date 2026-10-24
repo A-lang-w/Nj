@@ -10,6 +10,9 @@ const MIPS_ET_REL = 1;
 const MIPS_ET_EXEC = 2;
 const MIPS_ET_DYN = 3;
 const MIPS16_HEADER_ASE = 0x04000000;
+const MIPS_ARCH_1 = 0x00000000;
+const MIPS_ARCH_32 = 0x50000000;
+const MIPS_ARCH_32R2 = 0x70000000;
 
 /** A distinct compressed shared-image shape; admission still checks every declaration. */
 const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
@@ -34,7 +37,8 @@ export const ghidraMipsLanguageOverride = (
 /**
  * Recordless legacy ELF32 MIPS admission: the header declares no ABI field and
  * carries no ABI flags record, so o32 is an analysis assumption derived from
- * ELF32/ET_EXEC structure, never a declared fact. Ghidra's header
+ * ELF32/ET_EXEC structure, never a declared fact. MIPS-I (`EF_MIPS_ARCH_1`),
+ * MIPS32 and MIPS32r2 headers share this recordless shape. Ghidra's header
  * auto-selection picks a 64-bit language for exactly these files, so the lane
  * pins the 32-bit language instead.
  */
@@ -53,7 +57,9 @@ const hasLegacyMipsHeaderShape = (target: BinaryTarget): boolean => {
     // recordless relocatable objects stay outside the inferred-o32 assumption.
     target.mips.elfClass === 32 &&
     target.mips.type === MIPS_ET_EXEC &&
-    (arch === 0x50000000 || arch === 0x70000000) &&
+    (arch === MIPS_ARCH_1 ||
+      arch === MIPS_ARCH_32 ||
+      arch === MIPS_ARCH_32R2) &&
     (flags & 0x0000f000) === 0 &&
     (flags & 0x20) === 0 &&
     // EF_MIPS_ABI_ON32 (bit 0x40) declares the old n32 ABI; it is not an
@@ -129,8 +135,8 @@ export const ghidraMipsUnsupportedReason = (
   if ((metadata.flags & 0x00ff0000) !== 0)
     return "Machine-specific MIPS variants, including PSP Allegrex, need a separately supported processor profile.";
   const arch = metadata.flags & 0xf0000000;
-  if (arch !== 0x70000000 && arch !== 0x50000000)
-    return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2 or a recordless legacy EF_MIPS_ARCH_32 header; other ISA revisions need separate verification.";
+  if (arch !== MIPS_ARCH_1 && arch !== MIPS_ARCH_32 && arch !== MIPS_ARCH_32R2)
+    return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2, or a recordless legacy EF_MIPS_ARCH_1 (MIPS-I) or EF_MIPS_ARCH_32 header; other ISA revisions need separate verification.";
   const recordlessShape =
     (metadata.flags & 0x0000f000) === 0 &&
     (metadata.flags & 0x20) === 0 &&
@@ -161,8 +167,8 @@ export const ghidraMipsUnsupportedReason = (
     (metadata.flags & 0x20) !== 0
   )
     return "This Ghidra MIPS lane requires an explicit o32 ABI or a recordless legacy header with an unspecified ABI; n32, EABI and mixed declarations remain unsupported.";
-  if (arch !== 0x70000000)
-    return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2 for headers that declare an ABI; EF_MIPS_ARCH_32 headers are admitted only through the recordless legacy admission.";
+  if (arch !== MIPS_ARCH_32R2)
+    return "This Ghidra MIPS lane requires EF_MIPS_ARCH_32R2 for headers that declare an ABI; EF_MIPS_ARCH_1 (MIPS-I) and EF_MIPS_ARCH_32 headers are admitted only through the recordless legacy admission.";
   if ((metadata.flags & 0x00000200) !== 0)
     return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
   if ((metadata.flags & 0x00000400) !== 0)
@@ -212,6 +218,29 @@ export const ghidraMipsUnsupportedReason = (
 export const isLegacyMipsAdmission = (target: BinaryTarget): boolean =>
   hasLegacyMipsHeaderShape(target) &&
   ghidraMipsUnsupportedReason(target) === null;
+
+const isMips1Header = (target: BinaryTarget): boolean =>
+  target.architecture === "mips" &&
+  target.mips !== undefined &&
+  (target.mips.flags & 0xf0000000) === MIPS_ARCH_1;
+
+/** Whether the target is admitted through the recordless MIPS-I legacy lane. */
+export const isMips1LegacyAdmission = (target: BinaryTarget): boolean =>
+  isMips1Header(target) && isLegacyMipsAdmission(target);
+
+/**
+ * MIPS-I predates MIPS32, but Ghidra ships a generic 32-bit MIPS language that
+ * decodes later instructions too. The header establishes the declared ISA, not
+ * that every decoded instruction belongs to the MIPS-I subset.
+ */
+export const ghidraMips1Limitations = (
+  target: BinaryTarget,
+): readonly string[] =>
+  isMips1LegacyAdmission(target)
+    ? [
+        "The ELF header declares the MIPS-I ISA. REA pins the generic 32-bit MIPS language, which also decodes later MIPS32 instructions; conformance to the MIPS-I subset is not established from the header alone.",
+      ]
+    : [];
 
 /** Soft-float prototype policy applied by ReaGhidraMipsSoftFloat.java after analysis. */
 export const GHIDRA_MIPS_SOFT_FLOAT_STORAGE = "o32-soft-float-prototype-v1";
@@ -371,7 +400,9 @@ export const ghidraMipsProfileParameters = (
       : {}),
     instruction_context_evidence: "per-address-isa-mode-v1",
     mips_support_lane: legacy
-      ? "elf32-exec-arch32-legacy-pinned-v1"
+      ? isMips1Header(target)
+        ? "elf32-exec-mips1-legacy-pinned-v1"
+        : "elf32-exec-arch32-legacy-pinned-v1"
       : isGhidraMips16SharedTarget(target)
         ? "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1"
         : target.mips.type === MIPS_ET_REL

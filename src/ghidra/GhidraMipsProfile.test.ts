@@ -125,6 +125,8 @@ describe("bounded Ghidra MIPS admission", () => {
     [{ flags: 0x74001001 }, "ASE"],
     [{ flags: 0x70911001 }, "Machine-specific"],
     [{ flags: 0x60001001 }, "32R2"],
+    [{ flags: 0x00001001 }, "recordless legacy admission"],
+    [{ flags: 0x10000001 }, "other ISA revisions"],
     [{ flags: 0x70001201 }, "EF_MIPS_FP64"],
     [{ flags: 0x70001401 }, "EF_MIPS_NAN2008"],
     [{ abiFlags: null }, "inspected ABI"],
@@ -162,33 +164,37 @@ describe("bounded Ghidra MIPS admission", () => {
   });
 });
 
-describe("recordless legacy MIPS32 admission", () => {
-  it("keeps recordless relocatable objects off the inferred-o32 lane", async () => {
-    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
-    const object = target({
-      flags: 0x50000001,
-      abiFlags: null,
-      type: 1,
-    });
-    expect(ghidra.inspectTargetSupport(object)).toMatchObject({
-      status: "unsupported",
-    });
-    const resolved = await ghidra.resolveAnalysisProfile(object);
-    expect(resolved).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisUnsupportedTargetError",
-        reason: expect.stringContaining("ET_EXEC"),
-      },
-    });
-  });
+describe("recordless legacy MIPS admission", () => {
+  it.each([0x50000001, 0x00000001])(
+    "keeps recordless relocatable objects off the inferred-o32 lane (%i)",
+    async (flags) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const object = target({
+        flags,
+        abiFlags: null,
+        type: 1,
+      });
+      expect(ghidra.inspectTargetSupport(object)).toMatchObject({
+        status: "unsupported",
+      });
+      const resolved = await ghidra.resolveAnalysisProfile(object);
+      expect(resolved).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisUnsupportedTargetError",
+          reason: expect.stringContaining("ET_EXEC"),
+        },
+      });
+    },
+  );
 
   it.each([
-    [{ flags: 0x50000001 }, "EF_MIPS_ARCH_32"],
-    [{ flags: 0x70000001 }, "EF_MIPS_ARCH_32R2"],
+    [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned-v1"],
+    [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
+    [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
-    "admits a recordless legacy header (%s) with a pinned 32-bit language",
-    async (change) => {
+    "admits a recordless legacy header (%j) with a pinned 32-bit language",
+    async (change, lane) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);
       const little = target({ ...change, abiFlags: null });
       const big = target({ ...change, abiFlags: null, byteOrder: "big" });
@@ -197,7 +203,7 @@ describe("recordless legacy MIPS32 admission", () => {
       const resolved = await ghidra.resolveAnalysisProfile(little);
       if (!resolved.ok) throw resolved.error;
       expect(resolved.value.profile?.parameters).toMatchObject({
-        mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+        mips_support_lane: lane,
         mips_abi_basis: "inferred-o32-assumption-v1",
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
@@ -233,6 +239,7 @@ describe("recordless legacy MIPS32 admission", () => {
     [{ flags: 0x50000021 }, "n32"],
     [{ flags: 0x50000041 }, "EF_MIPS_ABI_ON32"],
     [{ flags: 0x50000101 }, "EF_MIPS_32BITMODE"],
+    [{ flags: 0x00000201 }, "EF_MIPS_FP64"],
     [{ flags: 0x70000101 }, "EF_MIPS_32BITMODE"],
     [
       { flags: 0x50001001 },
@@ -273,6 +280,21 @@ describe("recordless legacy MIPS32 admission", () => {
     expect(parameters).toMatchObject({
       mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
     });
+  });
+
+  it("reports the MIPS-I decoder assumption as a session limitation", async () => {
+    const { client } = await session(
+      target({ flags: 0x00000001, abiFlags: null }),
+      undefined,
+    );
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("declares the MIPS-I ISA"),
+        expect.stringContaining("generic 32-bit MIPS language"),
+      ]),
+    );
   });
 
   it("reads the pinned import language back only from pinned profiles", () => {

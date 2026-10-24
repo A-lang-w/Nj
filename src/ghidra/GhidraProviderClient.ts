@@ -75,6 +75,7 @@ import {
 import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
 import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
+  ghidraMips1Limitations,
   ghidraMipsSoftFloatFailure,
   ghidraMipsRelocatableLimitations,
   ghidraMipsSharedLimitations,
@@ -338,6 +339,7 @@ export const createGhidraProviderClient = (input: {
           "Floating-point ABI semantics are unverified for this recordless legacy admission.",
         ]
       : []),
+    ...ghidraMips1Limitations(target),
     ...ghidraMipsRelocatableLimitations(target),
     ...ghidraMipsSharedLimitations(target),
     ...ghidraRiscvLimitations(target),
