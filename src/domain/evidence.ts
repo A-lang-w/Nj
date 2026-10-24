@@ -26,8 +26,8 @@ import {
   freezeJsonSnapshot,
   freezeOwnedJsonTreeSnapshot,
   canBorrowParsedJsonSnapshot,
-  isImmutableJsonSnapshot,
   immutableJsonSnapshotMember,
+  isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -356,7 +356,7 @@ export const rebindEvidenceToTargetPath = (
   // The original authenticated Evidence owns immutable payloads. Only the
   // small display subject and envelope are new, so preserve those payloads
   // without reparsing a potentially large analysis result.
-  return rememberEvidenceMetadataUpdate(evidence, reboundEvidence);
+  return rememberReboundEvidence(evidence, reboundEvidence);
 };
 
 /** Bind the exact selected request path without changing semantic identity or stored history. */
@@ -369,28 +369,28 @@ export const withEvidenceCallerInputPath = (
   if (owned.caller_input_path === callerInputPath) return owned;
   // The authenticated source owns its immutable payloads. Only this small
   // envelope changes, so replay does not copy a document-sized result.
-  return rememberEvidenceMetadataUpdate(owned, {
+  const rebound = {
     ...owned,
     caller_input_path: callerInputPath,
-  });
+  };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Carry the source's sealing proof before sealing only the changed envelope. */
+const rememberReboundEvidence = (
+  source: Evidence,
+  rebound: Evidence,
+): Evidence => {
+  // Each own member belongs to an authenticated immutable source. Register
+  // these shared roots so sealing the envelope never walks their payloads.
+  for (const key of Object.keys(source))
+    immutableJsonSnapshotMember(source, key);
+  return rememberImmutableEvidence(rebound);
 };
 
 /** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
 export const isImmutableEvidence = (evidence: Evidence): boolean =>
   immutableEvidenceSnapshots.has(evidence);
-
-/** Carry the source's JSON ownership proof through a small metadata update. */
-const rememberEvidenceMetadataUpdate = (
-  source: Evidence,
-  updated: Evidence,
-): Evidence => {
-  // Borrow authenticated direct members so sealing the new envelope skips its
-  // potentially large payloads. Both Evidence and generic error projection
-  // must recognize the completed snapshot through their owning registries.
-  for (const key of Object.keys(source))
-    immutableJsonSnapshotMember(source, key);
-  return rememberImmutableEvidence(updated);
-};
 
 const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   freezeJsonSnapshot(evidence);

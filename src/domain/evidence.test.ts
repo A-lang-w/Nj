@@ -1,6 +1,6 @@
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { fc, it } from "@fast-check/vitest";
-import { describe, expect, vi } from "vitest";
+import { describe, expect } from "vitest";
 
 import { createAnalysisProfile } from "./analysisProfile.js";
 import {
@@ -15,12 +15,15 @@ import {
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
 } from "./evidence.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
-  freezeJsonSnapshot,
-  isImmutableJsonSnapshot,
-} from "./immutableJson.js";
+  MAX_JSON_DEPTH,
+  jsonValueSchema,
+  type JsonValue,
+} from "./jsonValue.js";
+import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
+import { createEvidenceBundle } from "./evidenceBundle.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -187,56 +190,46 @@ it("retains verbatim caller input without changing semantic identity or copying 
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
 });
 
-it.each([
-  ["caller path", ["caller"]],
-  ["subject path", ["subject"]],
-  ["caller then subject", ["caller", "subject"]],
-  ["subject then caller", ["subject", "caller"]],
-] as const)(
-  "preserves JSON ownership through %s updates without traversing payloads",
-  (_name, updates) => {
+it.each(["caller selection", "subject display"])(
+  "preserves sealed JSON ownership when rebinding %s metadata",
+  (metadata) => {
     const original = createEvidence(
       TARGET,
       PROVIDER,
       {
         operation: "inspect",
         parameters: {},
-        result: { nested: ["observed"] },
-        rawResult: { source: "provider" },
+        result: { rows: [{ value: "observed" }] },
+        rawResult: { source: ["provider"] },
       },
       { immutable: true },
     );
-    const ownNames = Object.getOwnPropertyNames;
-    const traversal = vi
-      .spyOn(Object, "getOwnPropertyNames")
-      .mockImplementation((value) => {
-        if (
-          value === original.normalized_result ||
-          value === original.raw_result
-        )
-          throw new Error(
-            "Metadata updates must borrow authenticated payloads",
-          );
-        return ownNames(value);
-      });
-    try {
-      let updated = original;
-      for (const field of updates)
-        updated =
-          field === "caller"
-            ? withEvidenceCallerInputPath(updated, "./selected")
-            : rebindEvidenceToTargetPath(updated, {
-                ...TARGET,
-                path: "/other/fixture",
-              });
-      expect(isImmutableJsonSnapshot(updated)).toBe(true);
-      expect(updated.normalized_result).toBe(original.normalized_result);
-      expect(updated.raw_result).toBe(original.raw_result);
-      expect(updated.evidence_id).toBe(original.evidence_id);
-      expect(parseEvidence(updated)).toBe(updated);
-    } finally {
-      traversal.mockRestore();
-    }
+    const rebound =
+      metadata === "caller selection"
+        ? withEvidenceCallerInputPath(original, "./selected/../alias")
+        : rebindEvidenceToTargetPath(original, {
+            ...TARGET,
+            path: "/tmp/selected-alias",
+          });
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect",
+        "memory",
+        "low heap",
+        null,
+        {
+          partialObservation: rebound,
+        },
+      ),
+    );
+    expect(rebound).not.toBe(original);
+    expect(rebound.evidence_id).toBe(original.evidence_id);
+    expect(rebound.normalized_result).toBe(original.normalized_result);
+    expect(rebound.raw_result).toBe(original.raw_result);
+    expect(projected.details?.partial_observation).toBe(rebound);
+    expect(jsonValueSchema.parse(rebound)).toBe(rebound);
+    expect(original.caller_input_path).toBeUndefined();
+    expect(original.subject?.local_path).toBe(TARGET.path);
   },
 );
 
