@@ -820,7 +820,7 @@ export const linuxPackageManagerCommands = (
     family === "deb"
       ? [
           // apt-get install upgrades listed packages that are already
-          // installed; only the Hopper archive may change versions.
+          // installed, so dependencies are not named as upgrade targets.
           ["apt-get", "install", "-y", "--no-upgrade", ...runtimeDependencies],
           ["apt-get", "install", "-y", archive],
         ]

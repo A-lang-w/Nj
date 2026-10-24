@@ -205,10 +205,59 @@ describe("Linux Hopper package mapping", () => {
   });
 });
 
+describe("Linux Hopper package transaction failures", () => {
+  it.each(Array.from({ length: debCommands }, (_, index) => index + 1))(
+    "stops after failed install transaction %i without inspecting Python",
+    async (failing) => {
+      const directory = await createTestTempDirectory(
+        "rea-linux-install-failure-",
+      );
+      const host = systemLinuxHopperInstallHost(
+        { XDG_CACHE_HOME: directory },
+        async () => undefined,
+      );
+      const failed = {
+        exitCode: 100,
+        stdout: "",
+        stderr: "transaction " + String(failing) + " failed",
+        outputTruncated: false,
+      };
+      let calls = 0;
+      const command = vi
+        .spyOn(boundedCommands, "execFileBoundedOutput")
+        .mockImplementation(async () =>
+          ++calls === failing ? failed : commandSuccess,
+        );
+      const inspect = vi.spyOn(
+        pythonRuntime,
+        "inspectLinuxHopperPythonRuntime",
+      );
+      try {
+        expect(
+          await host.installPackage("deb", "/tmp/verified-hopper.deb"),
+        ).toMatchObject({
+          status: "failed",
+          failure: { exitCode: 100, stderr: failed.stderr },
+        });
+        expect(command).toHaveBeenCalledTimes(failing);
+        expect(inspect).not.toHaveBeenCalled();
+      } finally {
+        try {
+          await host.close?.();
+        } finally {
+          inspect.mockRestore();
+          command.mockRestore();
+        }
+      }
+    },
+  );
+});
+
 describe("Linux Hopper package cancellation and disclosure", () => {
   it.each([
     { phase: "before", commands: 0, inspections: 0 },
     { phase: "first transaction", commands: 1, inspections: 0 },
+    { phase: "archive transaction", commands: debCommands, inspections: 0 },
     { phase: "query", commands: debCommands, inspections: 1 },
     { phase: "runtime transaction", commands: debCommands + 1, inspections: 1 },
     { phase: "verification", commands: debCommands + 1, inspections: 2 },
@@ -232,6 +281,7 @@ describe("Linux Hopper package cancellation and disclosure", () => {
           commandCount++;
           if (
             (phase === "first transaction" && commandCount === 1) ||
+            (phase === "archive transaction" && commandCount === debCommands) ||
             (phase === "runtime transaction" &&
               commandCount === debCommands + 1)
           )
