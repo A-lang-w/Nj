@@ -201,9 +201,9 @@ export const scanCredentialNames = (
         found(`record ${ordinal} request query ${name}`);
     const postData = member(request, "postData");
     const text = member(postData, "text");
-    // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
+    // A HAR may record form fields only as structured params, beside absent or SaveHar's null text; each occurrence counts, as in a form body.
     scanBody(
-      text === undefined
+      text === undefined || text === null
         ? {
             kind: "form",
             fields: namedValues(member(postData, "params")).flatMap(

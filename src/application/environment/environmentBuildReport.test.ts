@@ -216,6 +216,35 @@ describe("scanCredentialNames over structured and unattributed records", () => {
     });
   });
 
+  it("scans structured form parameters a SaveHar recording keeps beside null text", () => {
+    const saveHar = (postData: unknown): WebNetworkCaptureRecord => {
+      const scanned = record(5, undefined, undefined);
+      (
+        scanned.reported as { request: { postData?: unknown } }
+      ).request.postData = postData;
+      return scanned;
+    };
+    expect(
+      scanCredentialNames([
+        saveHar({
+          mimeType: "application/x-www-form-urlencoded",
+          text: null,
+          params: [
+            { name: "user", value: "a" },
+            { name: "password", value: "hunter22" },
+          ],
+        }),
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 5 request /password"],
+      skipped: NONE_SKIPPED,
+    });
+    expect(
+      scanCredentialNames([saveHar({ mimeType: "text/plain", text: null })]),
+    ).toEqual({ count: 0, pointers: [], skipped: NONE_SKIPPED });
+  });
+
   it("scans the request side of a scenario transaction with duplicate responses", () => {
     const capture = scenarioCaptureFixture(
       [

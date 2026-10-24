@@ -34,6 +34,7 @@ import {
 import {
   environmentExportFile,
   exportEnvironmentBundle,
+  exportInputHeadroomRefusal,
   packageTarballBytes,
   type EnvironmentExportFile,
   type WrittenBundleFile,
@@ -85,15 +86,41 @@ export const classifyBuildCapture = (
 };
 
 /** An Evidence file's bytes as `--format json` writes the Evidence to a file: compact JSON and a newline. */
-export const evidenceFileBytes = (evidence: Evidence): Buffer => {
+export const evidenceFileBytes = (
+  evidence: Evidence,
+  length = jsonByteLength(evidence) + 1,
+): Buffer => {
   // Measured first, so the document is written into one exactly sized buffer.
-  const bytes = Buffer.allocUnsafe(jsonByteLength(evidence) + 1);
+  const bytes = Buffer.allocUnsafe(length);
   let offset = 0;
   for (const part of jsonParts(evidence)) offset += bytes.write(part, offset);
   if (offset !== bytes.length - 1)
     throw new Error("Evidence serialized to a different length than measured");
   bytes[offset] = 0x0a;
   return bytes;
+};
+
+/** In-memory Evidence as the file it ships as, parsed and sealed, once the live heap admits all three. */
+export const serializedEvidenceFile = async (
+  evidence: Evidence,
+  label: string,
+  operation: string,
+  role: "manifest" | "evidence" = "evidence",
+): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const bytes = jsonByteLength(evidence) + 1;
+  const refused = exportInputHeadroomRefusal(
+    operation,
+    { input: label, serialized_bytes: bytes },
+    bytes,
+    `Insufficient heap headroom to serialize, parse and seal the ${role === "manifest" ? "environment manifest" : "capture Evidence"}`,
+  );
+  if (refused !== undefined) return err(refused);
+  return environmentExportFile(
+    role,
+    label,
+    evidenceFileBytes(evidence, bytes),
+    operation,
+  );
 };
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
@@ -315,11 +342,11 @@ export const buildEnvironment = async (
   if (!projected.ok) return projected;
   const stopped = await cancelled(input.signal);
   if (stopped !== undefined) return err(stopped);
-  const manifest = await environmentExportFile(
-    "manifest",
+  const manifest = await serializedEvidenceFile(
+    projected.value,
     "manifest.json",
-    evidenceFileBytes(projected.value),
     ENVIRONMENT_BUILD_OPERATION,
+    "manifest",
   );
   if (!manifest.ok) return manifest;
   const source = loadEnvironmentSource(
