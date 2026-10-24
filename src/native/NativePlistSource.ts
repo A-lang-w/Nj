@@ -1,3 +1,4 @@
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -23,10 +24,12 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
@@ -52,7 +55,7 @@ export const resolveNativePlistSelection = async (
 ): Promise<Result<NativePlistSelection, AnalysisError>> => {
   try {
     if (requested !== undefined && isAbsolute(requested))
-      return ok({ path: resolve(requested), origin: "selected" });
+      return ok({ path: absoluteCallerPath(requested), origin: "selected" });
     if (
       requested === undefined &&
       target.kind === "artifact" &&
@@ -65,7 +68,10 @@ export const resolveNativePlistSelection = async (
       ? source
       : (macOSBundleRoot(target.path) ?? dirname(target.path));
     if (requested !== undefined)
-      return ok({ path: resolve(root, requested), origin: "selected" });
+      return ok({
+        path: absoluteCallerPath(requested, { cwd: root }),
+        origin: "selected",
+      });
     return ok({
       path: target.bundleInfoPlist ?? resolve(root, "Contents/Info.plist"),
       origin: "default",
@@ -85,9 +91,7 @@ export const resolveBundleResourcePlistSelection = (
   if (requested === undefined)
     return ok({ path: root.infoPlistPath, origin: "default" });
   return ok({
-    path: isAbsolute(requested)
-      ? resolve(requested)
-      : resolve(root.canonicalPath, requested),
+    path: absoluteCallerPath(requested, { cwd: root.canonicalPath }),
     origin: "selected",
   });
 };
@@ -150,8 +154,8 @@ export const nativePlistFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? nativePlistFailure(
-            artifactFilePrimaryFailure(cause),
+        ? nativePlistPrimaryFailure(
+            artifactFilePrimaryFacts(cause),
             selection,
             capturedOutput,
           )
@@ -193,50 +197,67 @@ export const nativePlistFailure = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError("inspect_plist", {
-      cause: artifactFileCancellationCause(cause),
-      capturedOutput,
-    });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "unavailable")
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      "inspect_plist",
-      cause.message,
-      { cause, capturedOutput },
-    );
-  if (
-    selection !== undefined &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      "inspect_plist",
-      selection.path,
-      cause.message,
-      { cause, capturedOutput },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
-    const resource = cause.boundary ?? "memory";
-    return resource === "file-size"
-      ? new AnalysisResourceConstraintError(
-          "inspect_plist",
-          resource,
-          cause.message,
-          { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
-          {
-            cause,
-            capturedOutput,
-            ...fixedAllowanceOptions(NATIVE_PLIST_INPUT_ALLOWANCE, "input"),
-          },
-        )
-      : new AnalysisResourceConstraintError(
-          "inspect_plist",
-          resource,
-          cause.message,
-          null,
-          { cause, capturedOutput, retryable: false },
-        );
+  return nativePlistPrimaryFailure(
+    artifactFilePrimaryFacts(cause),
+    selection,
+    capturedOutput,
+  );
+};
+
+const nativePlistPrimaryFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  selection: NativePlistSelection | undefined,
+  capturedOutput: AnalysisCapturedOutput | undefined,
+): AnalysisError => {
+  if (origin === "owned-or-classified") {
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError("inspect_plist", {
+        cause: artifactFileCancellationCause(cause),
+        capturedOutput,
+      });
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "unavailable"
+    )
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        "inspect_plist",
+        cause.message,
+        { cause, capturedOutput },
+      );
+    if (
+      selection !== undefined &&
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "integrity"
+    )
+      return new AnalysisArtifactChangedError(
+        "inspect_plist",
+        selection.path,
+        cause.message,
+        { cause, capturedOutput },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
+      const resource = cause.boundary ?? "memory";
+      return resource === "file-size"
+        ? new AnalysisResourceConstraintError(
+            "inspect_plist",
+            resource,
+            cause.message,
+            { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
+            {
+              cause,
+              capturedOutput,
+              ...fixedAllowanceOptions(NATIVE_PLIST_INPUT_ALLOWANCE, "input"),
+            },
+          )
+        : new AnalysisResourceConstraintError(
+            "inspect_plist",
+            resource,
+            cause.message,
+            null,
+            { cause, capturedOutput, retryable: false },
+          );
+    }
   }
   if (selection === undefined)
     return new ProviderAdapterError(IDENTITY.id, "inspect_plist", {
@@ -260,6 +281,14 @@ export const nativePlistFailure = (
       cause,
       capturedOutput,
     });
+  if (code === "ELOOP" || code === "ENAMETOOLONG")
+    return unreadablePlist(
+      selection,
+      code === "ELOOP"
+        ? "symbolic-link traversal looped or exceeded the host limit (ELOOP)"
+        : "the path exceeds the host path or component length limit (ENAMETOOLONG)",
+      { cause, capturedOutput },
+    );
   if (code === "EACCES" || code === "EPERM")
     return new BinaryTargetError(
       path,
@@ -333,12 +362,7 @@ export const readNativePlistBytes = (
         { boundary: "file-size" },
       );
     if (
-      !after.isFile() ||
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs ||
+      !sameRegularFileState(before, after) ||
       BigInt(position) !== before.size
     )
       throw new ArtifactReaderFailure(

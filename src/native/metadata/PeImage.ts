@@ -1,5 +1,8 @@
 import { readPeSectionHeader } from "./NativeSectionDirectory.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import {
+  mzWindowsHeaderLayoutLimitation,
+  parseMzHeaderEvidence,
+} from "../../domain/dosMz.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -27,11 +30,9 @@ const peHeaderOffset = (reader: BinaryReader): number => {
     );
   }
   const { offset: pe } = windowsHeader;
-  if (pe < 64)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PE signature overlaps the DOS header",
-    );
+  const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
+  if (limitation !== undefined)
+    throw new BinaryFormatFailure("unsupported", limitation);
   reader.range(pe, 24, "PE signature and COFF header");
   if (["NE", "LE", "LX"].includes(windowsHeader.signature))
     throw new BinaryFormatFailure(
@@ -90,6 +91,7 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
     return { virtual_address: reader.u32(entry), size: reader.u32(entry + 4) };
   });
   const imageBase = reader.word(optional + (bits === 64 ? 24 : 28), bits);
+  const fileAlignment = reader.u32(optional + 36);
   const headerMapping: FileMapping = {
     address: imageBase,
     offset: 0,
@@ -127,6 +129,7 @@ export const readPeImage = (bytes: Buffer): BinaryContainer => {
         virtualAddress,
         virtualSize,
         rawSize: size,
+        fileAlignment,
       }),
     );
     const address = imageBase + BigInt(virtualAddress);
@@ -185,6 +188,7 @@ const peImageSection = ({
   virtualAddress,
   virtualSize,
   rawSize,
+  fileAlignment,
 }: {
   readonly reader: BinaryReader;
   readonly name: string;
@@ -194,6 +198,7 @@ const peImageSection = ({
   readonly virtualAddress: number;
   readonly virtualSize: number;
   readonly rawSize: number;
+  readonly fileAlignment: number;
 }): ImageSection => {
   const range = declaredFileRange(
     reader.bytes.length,
@@ -212,6 +217,7 @@ const peImageSection = ({
     virtual_address: virtualAddress,
     virtual_size: virtualSize,
     raw_size: rawSize,
+    file_alignment: fileAlignment,
     characteristics,
     ...range,
     read_only: readOnly,

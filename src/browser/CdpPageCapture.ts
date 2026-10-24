@@ -2,6 +2,8 @@ import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
@@ -85,7 +87,9 @@ export const capturePage = async (
     events,
     allowedOrigins,
     limitations: [
+      ...(context.discovery.limitations ?? []),
       "Observation starts when REA attaches; prior network and console activity is unavailable.",
+      "Worker targets are a final inventory snapshot, not worker-session observation. Their attached flag describes any debugging client; this page-session collector does not observe worker network, console, or script events, and short-lived workers may be absent from the snapshot.",
       "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
       "Source maps are reported only as declarative URLs and are not fetched.",
       "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
@@ -99,8 +103,39 @@ export const capturePage = async (
   };
   try {
     return await captureAuthorizedPage(state);
+  } catch (cause: unknown) {
+    // A navigation can invalidate an in-flight script ID or another document
+    // read. Report the observed capture invalidation before its stale-read
+    // symptom, while preserving caller cancellation.
+    if (
+      context.signal?.aborted !== true &&
+      !(cause instanceof AnalysisCancelledError) &&
+      !(cause instanceof AnalysisError && cause.userCategory === "cancelled")
+    )
+      assertObservedCaptureValid(state, cause);
+    throw cause;
   } finally {
     removeListener();
+  }
+};
+
+const assertObservedCaptureValid = (
+  state: CaptureState,
+  cause?: unknown,
+): void => {
+  const reason = state.events.unknownRootIdentity
+    ? "protocol_error"
+    : state.events.originViolation
+      ? "target_not_allowed"
+      : state.events.navigationDuringCapture
+        ? "target_changed"
+        : undefined;
+  if (reason !== undefined) {
+    if (cause instanceof BrowserObservationError && cause.reason === reason)
+      throw cause;
+    throw new BrowserObservationError(state.context.operation, reason, {
+      cause,
+    });
   }
 };
 
@@ -173,11 +208,8 @@ const captureAuthorizedPage = async (
     operation: context.operation,
   });
   const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
-  if (state.events.unknownRootIdentity)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  if (state.events.originViolation)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
+  assertObservedCaptureValid(state);
+  if (completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
@@ -263,7 +295,7 @@ const authorizeObservationWindow = async (
   if (mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   events.beginAuthorizedFrame(mainFrame.frame_id);
-  await enableObservationDomains(connection, sessionId, signal);
+  await enableObservationDomains(state);
   await report(context.progress, 2, "Observing page events");
   await delayWithCancellation(
     context.input.observation_ms,
@@ -368,12 +400,12 @@ const normalizedInspection = (
   network: {
     requests: [...state.events.network.values()],
     websocket_connections: [...state.events.webSocketConnectionsById.values()],
-    coverage_started_at: state.startedAt,
+    coverage_started_at: state.events.coverageStartedAt("Network"),
     prior_activity_available: false,
   },
   console: {
     events: [...state.events.console],
-    coverage_started_at: state.startedAt,
+    coverage_started_at: state.events.coverageStartedAt("Runtime"),
     prior_activity_available: false,
   },
   workers: [...captured.workers],
@@ -391,14 +423,13 @@ const normalizedInspection = (
   limitations: state.limitations,
 });
 
-const enableObservationDomains = async (
-  connection: CdpConnection,
-  sessionId: string | undefined,
-  signal?: AbortSignal,
-): Promise<void> => {
+const enableObservationDomains = async (state: CaptureState): Promise<void> => {
+  const { connection, sessionId, signal } = state.context;
   await connection.send("Runtime.enable", {}, sessionId, signal);
+  state.events.markDomainEnabled("Runtime");
   await connection.send("Debugger.enable", {}, sessionId, signal);
   await connection.send("Network.enable", {}, sessionId, signal);
+  state.events.markDomainEnabled("Network");
 };
 
 const accessibilityForFrames = async (

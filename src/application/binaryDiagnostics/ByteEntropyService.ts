@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
-import { BYTE_ENTROPY_PROVIDER } from "../InvestigationProviders.js";
+import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
@@ -29,12 +29,14 @@ import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
-  ArtifactFileCancelled,
+  artifactFileCompletion,
   assertArtifactReadActive,
   artifactFileCancellationCause,
+  artifactSelectedPathErrno,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
@@ -149,7 +151,8 @@ export class ByteEntropyService {
             cause.code,
             { cause },
           );
-        if (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        const pathErrno = artifactSelectedPathErrno(cause);
+        if (pathErrno !== undefined)
           return admitted
             ? new AnalysisArtifactChangedError(
                 OPERATION,
@@ -157,7 +160,18 @@ export class ByteEntropyService {
                 "Selected file path changed during entropy inspection.",
                 { cause },
               )
-            : invalid("path", "Selected file could not be found.");
+            : new AnalysisInputError(OPERATION, { cause }, [
+                {
+                  path: ["path"],
+                  reason: "invalid_value",
+                  message:
+                    pathErrno === "ENOENT" || pathErrno === "ENOTDIR"
+                      ? "Selected file could not be found."
+                      : pathErrno === "ELOOP"
+                        ? `Selected file path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${input.path}`
+                        : `Selected file path exceeds the host path or component length limit (ENAMETOOLONG): ${input.path}`,
+                },
+              ]);
       }
       return new AnalysisOutputError(
         OPERATION,
@@ -188,22 +202,21 @@ export class ByteEntropyService {
               input.path,
               "File identity, size or timestamps changed during entropy inspection.",
             );
-          const same = (value: typeof initial) =>
-            value.isFile() &&
-            value.dev === initial.dev &&
-            value.ino === initial.ino &&
-            value.size === initial.size &&
-            value.mtimeNs === initial.mtimeNs &&
-            value.ctimeNs === initial.ctimeNs;
-          if (!same(before)) throw changed();
+          if (!initial.isFile() || !sameRegularFileState(initial, before))
+            throw changed();
           const size = Number(initial.size);
           if (!Number.isSafeInteger(size))
             throw invalid(
               "path",
               "File size exceeds exact numeric offset representation.",
             );
+          if (input.offset > size)
+            throw invalid(
+              "offset",
+              "Selected byte window starts beyond the end of the file.",
+            );
           const length = input.length ?? size - input.offset;
-          if (input.offset > size || length > size - input.offset)
+          if (length > size - input.offset)
             throw invalid(
               "length",
               "Selected byte window extends beyond the end of the file.",
@@ -262,8 +275,11 @@ export class ByteEntropyService {
             position += filled;
           }
           if (
-            !same(await file.stat({ bigint: true })) ||
-            !same(await this.files.stat(input.path, { bigint: true }))
+            !sameRegularFileState(initial, await file.stat({ bigint: true })) ||
+            !sameRegularFileState(
+              initial,
+              await this.files.stat(input.path, { bigint: true }),
+            )
           )
             throw changed();
           assertArtifactReadActive(options?.signal);
@@ -294,6 +310,7 @@ export class ByteEntropyService {
         options?.signal,
       );
     } catch (cause) {
+      const completion = artifactFileCompletion(cause);
       if (cause instanceof ArtifactFileCleanupFailure) {
         const outcome = cause.fileCleanupFailure.outcome;
         const cleanup = new AnalysisOutputError(
@@ -302,9 +319,9 @@ export class ByteEntropyService {
           {
             cause,
             cleanup: cause.cleanup,
-            ...(outcome.kind === "completed"
-              ? { partialObservation: completedObservation(outcome.value) }
-              : {}),
+            ...(completion === undefined
+              ? {}
+              : { partialObservation: completedObservation(completion.value) }),
           },
         );
         bindArtifactFileCleanup(cause, cleanup);
@@ -320,8 +337,8 @@ export class ByteEntropyService {
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
-        const cancellation = cause.fileCleanupFailure.completionCancellation;
-        if (cancellation !== undefined && outcome.kind === "completed") {
+        const cancellation = completion?.cancellation;
+        if (cancellation !== undefined) {
           const cancelled = new AnalysisCancelledError(OPERATION, {
             cause: cancellation.reason,
             partialObservation: cleanup.partialObservation,
@@ -346,14 +363,9 @@ export class ByteEntropyService {
         if (cause.reason === "cancelled") {
           const cancelled = new AnalysisCancelledError(OPERATION, {
             cause: artifactFileCancellationCause(cause),
-            ...(cause instanceof ArtifactFileCancelled &&
-            cause.fileCancellation.outcome.kind === "completed"
-              ? {
-                  partialObservation: completedObservation(
-                    cause.fileCancellation.outcome.value,
-                  ),
-                }
-              : {}),
+            ...(completion === undefined
+              ? {}
+              : { partialObservation: completedObservation(completion.value) }),
           });
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
