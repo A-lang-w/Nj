@@ -129,6 +129,39 @@ cliTest(
         { classification: "changed", conclusion_kind: "observed_change" },
       ],
     });
+    const pairFile = join(root, "pairs.json");
+    await writeFile(pairFile, JSON.stringify(pairs));
+    const fromFile = await cli.run({
+      arguments: [
+        "compare-bundles",
+        leftPath,
+        changedPath,
+        "--record_pairs",
+        pairFile,
+        "--json",
+      ],
+    });
+    expect(fromFile.exitCode).toBe(0);
+    expect(bundleComparisonResultSchema.parse(fromFile.json)).toEqual(
+      pairedResult,
+    );
+    const missingFile = join(root, "missing-pairs.json");
+    const absentFile = await cli.run({
+      arguments: [
+        "compare",
+        leftPath,
+        changedPath,
+        "--record_pairs",
+        missingFile,
+        "--json",
+      ],
+    });
+    expect(absentFile.exitCode).toBe(1);
+    expect(absentFile.json).toMatchObject({
+      code: "invalid_request",
+      input_path: missingFile,
+      input_reason: "read-failed",
+    });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
     const mcp = await call("compare_bundles", {
