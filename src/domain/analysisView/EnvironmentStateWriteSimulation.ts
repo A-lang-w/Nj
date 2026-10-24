@@ -324,26 +324,26 @@ export class EnvironmentStateWriteSimulation {
       this.#unseen.unplanned(index);
       return;
     }
-    this.#input.io.withRequestBody(record.ordinal, (body) => {
-      const observeOnly = draft.plan.reason !== null;
-      if (!observeOnly) draft.calls += 1;
-      // Serving pins the exemplar's query, so a call with another may do something else and confirms nothing.
-      const pinned =
-        !built(draft) ||
-        sameQuery(
-          this.#input.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
-          record.query,
-        );
-      const step: WriteStep = { record, index, tool, observeOnly, pinned };
-      const context = this.#context(tool.name, {
-        ordinal: record.ordinal,
-        body,
-      });
-      const { address } = draft.plan;
-      const results =
-        address !== undefined && address.by !== "action"
-          ? applyBulk(context, draft, step)
-          : [APPLY[effect](context, draft, step)];
+    const observeOnly = draft.plan.reason !== null;
+    if (!observeOnly) draft.calls += 1;
+    // Serving pins the exemplar's query, so a call with another may do something else and confirms nothing.
+    const pinned =
+      !built(draft) ||
+      sameQuery(
+        this.#input.io.queryOf(draft.plan.exemplar_ordinal ?? -1),
+        record.query,
+      );
+    const step: WriteStep = { record, index, tool, observeOnly, pinned };
+    const { address } = draft.plan;
+    const bulk = address !== undefined && address.by !== "action";
+    const apply = (body?: ParsedRequestBody): void => {
+      const context = this.#context(
+        tool.name,
+        body === undefined ? undefined : { ordinal: record.ordinal, body },
+      );
+      const results = bulk
+        ? applyBulk(context, draft, step)
+        : [APPLY[effect](context, draft, step)];
       // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
       if (
         results.some((result) => result.kind === "unknown") &&
@@ -357,7 +357,11 @@ export class EnvironmentStateWriteSimulation {
           path: record.path,
           end: record.end,
         });
-    });
+    };
+    // Item deletes use their path; calls outside a built plan's query never interpret their body.
+    if (pinned && (effect !== "delete" || bulk))
+      this.#input.io.withRequestBody(record.ordinal, apply);
+    else apply();
   }
 
   /** Attribute an applied effect to its tool; a recorded outcome is the state's new baseline; an unknown one taints. */
@@ -537,9 +541,19 @@ export class EnvironmentStateWriteSimulation {
       blocked,
     );
     view = this.#viewOf(original);
-    if (view.shape === "recorded") return;
     keys = [...outcome.targets, ...outcome.unheld];
+    if (blocked(keys)) return;
     let exercised = exercisedBy(this.#touched, keys, borrowers);
+    if (view.shape === "recorded") {
+      // Retiring a view withdraws its proof, not a remaining mismatch with the raw written values.
+      if (!outcome.pass)
+        this.#contradictOthers(
+          exercised,
+          record,
+          interference(this.#history, outcome),
+        );
+      return;
+    }
     if (borrowers !== undefined) {
       this.omitted.keep(view, outcome);
       if (!outcome.pass)

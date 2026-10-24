@@ -43,7 +43,9 @@ relation rows), and six need only a better recording. This change addresses the 
   sightings do and applies no order. A view renders a string array sorted only after a counted read-back shows an
   order that neither the written order nor existing-values-first explains, among the entities that read covers in its
   own collection. A later read contradicting a learned sort makes that view recorded and removes its earlier
-  write confirmations; request variation never unpins a reference to a nested object that the plan cannot rebuild.
+  write confirmations and saved overrides; types and entities with no surviving state view leave the snapshot.
+  The read is checked without the withdrawn sort, so remaining value mismatches still contradict the write
+  even when another view's confirmation survives.
   Sort and direction parameters share one vocabulary and are never learned as inert. A create placed by disagreeing
   sorts or a random id falls back to `last`.
 - **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying

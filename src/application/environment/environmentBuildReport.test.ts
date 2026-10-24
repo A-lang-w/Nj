@@ -427,20 +427,31 @@ it.each([
   },
 );
 
-it("keeps JSON interpretation before an untyped form fallback and honors explicit non-form types", () => {
-  const json = record(7, undefined, undefined);
-  const plain = record(8, undefined, undefined);
-  (json.reported as { request: { postData: unknown } }).request.postData = {
-    mimeType: "",
-    text: '{"name":"password=example","token":"actual"}',
-  };
-  (plain.reported as { request: { postData: unknown } }).request.postData = {
-    mimeType: "text/plain",
-    text: "password=example",
-  };
-  expect(scanCredentialNames([json, plain])).toEqual({
-    count: 1,
-    pointers: ["record 7 request /token"],
-    skipped: NONE_SKIPPED,
-  });
-});
+it.each([
+  { mimeType: "text/plain", count: 1 },
+  { mimeType: "text/markdown", count: 1 },
+  { mimeType: "application/octet-stream", count: 2 },
+  { mimeType: "", count: 2 },
+])(
+  "prefers JSON-like media types before form fallback ($mimeType)",
+  ({ mimeType, count }) => {
+    const json = record(7, undefined, undefined);
+    const plain = record(8, undefined, undefined);
+    (json.reported as { request: { postData: unknown } }).request.postData = {
+      mimeType: "",
+      text: '{"name":"password=example","token":"actual"}',
+    };
+    (plain.reported as { request: { postData: unknown } }).request.postData = {
+      mimeType,
+      text: "password=example",
+    };
+    expect(scanCredentialNames([json, plain])).toEqual({
+      count,
+      pointers: [
+        "record 7 request /token",
+        ...(count === 2 ? ["record 8 request /password"] : []),
+      ],
+      skipped: NONE_SKIPPED,
+    });
+  },
+);

@@ -34,7 +34,10 @@ export const extractWrites = (
     WriteSimulationInput,
     "views" | "types" | "entities" | "documents"
   >,
-): Pick<ExtractedState, "writes" | "write_clock" | "views" | "entities"> => {
+): Pick<
+  ExtractedState,
+  "writes" | "write_clock" | "views" | "types" | "entities"
+> => {
   const simulation = new EnvironmentStateWriteSimulation({
     ...input,
     views: new Map(state.views.map((view) => [view.tool, view])),
@@ -44,19 +47,26 @@ export const extractWrites = (
   });
   const writes = simulation.run();
   const views = simulation.views(state.views);
-  const backed = new Set(
-    views.flatMap((view) =>
-      view.shape === "item" || view.shape === "list" ? [view.tool] : [],
-    ),
-  );
+  const backed = new Set<string>();
+  const backedTypes = new Set<string>();
+  for (const view of views)
+    if (view.shape === "item" || view.shape === "list") {
+      backed.add(view.tool);
+      backedTypes.add(view.type);
+    }
   return {
     writes,
     write_clock: clockStart(input.records, input.timed),
     views,
+    types: state.types.filter((type) =>
+      backedTypes.has(type.collection_template),
+    ),
     // Simulation can retire a view after initial extraction admitted its overrides.
-    entities: state.entities.map((entity) => ({
-      ...entity,
-      view_fields: entity.view_fields.filter((view) => backed.has(view.tool)),
-    })),
+    entities: state.entities
+      .filter((entity) => backedTypes.has(entity.type))
+      .map((entity) => ({
+        ...entity,
+        view_fields: entity.view_fields.filter((view) => backed.has(view.tool)),
+      })),
   };
 };

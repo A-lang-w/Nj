@@ -448,3 +448,63 @@ it("reloads an unchanged snapshot after a view with its own clock spellings disp
   expect(books.store.snapshot()).toEqual(snapshot);
   expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
 });
+
+it.each([false, true])(
+  "keeps contradictions after retiring a sorted list while an item proof survives (wrong values: %s)",
+  (wrong) => {
+    const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+    const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+    const written = { ...second, tags: ["zeta", "delta"] };
+    const later = { ...first, tags: ["theta", "epsilon"] };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+      ["GET", "/api/books/2", { ...written, tags: ["delta", "zeta"] }],
+      ["PATCH", "/api/books/1", later, 200, { tags: later.tags }],
+      [
+        "GET",
+        "/api/books",
+        [{ ...later, tags: wrong ? ["wrong", "values"] : later.tags }, written],
+      ],
+    ]);
+    expect(books.state.views.get("get_books")).toMatchObject({
+      shape: "recorded",
+    });
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: !wrong,
+      checked_record_ordinals: [4],
+      contradicted_by: wrong ? 6 : null,
+    });
+  },
+);
+
+it("drops state with no surviving view while preserving another type and snapshot reload", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+  const written = { ...second, tags: ["zeta", "delta"] };
+  const authors = [
+    { id: 1, name: "Alice" },
+    { id: 2, name: "Bob" },
+  ];
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/authors", authors],
+    ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+    ["GET", "/api/books", [first, { ...written, tags: ["delta", "zeta"] }]],
+    ["GET", "/api/books", [first, written]],
+  ]);
+  expect(books.state.views.get("get_books")).toMatchObject({
+    shape: "recorded",
+  });
+  expect(books.state.types.map((type) => type.collection_template)).toEqual([
+    "/api/authors",
+  ]);
+  expect(books.state.entities.map((entity) => entity.type)).toEqual([
+    "/api/authors",
+    "/api/authors",
+  ]);
+  expect(books.store.replace(books.store.snapshot()).ok).toBe(true);
+  expect(books.answer("get_authors").body).toEqual(authors);
+});
