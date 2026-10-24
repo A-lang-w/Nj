@@ -38,7 +38,10 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { z } from "zod";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
-import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  parseEvidenceBundle,
+} from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
 cliTest(
@@ -264,11 +267,72 @@ cliTest(
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("main.js", new TextReader("console.log('portable');\n"));
     await writeFile(archive, await writer.close());
+    const bundlePath = join(root, "inspection-bundle.json");
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", archive, "--json"],
+      arguments: [
+        "inspect-artifact",
+        archive,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        bundlePath,
+        "--json",
+      ],
     });
     expect(inspected.exitCode).toBe(0);
-    const parent = parseEvidence(inspected.json);
+    const savedBundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
+    const parent = savedBundle.records.find(
+      (record) => record.operation === "inspect_artifact",
+    )!;
+    const atomicId = artifactInspectionResultSchema.parse(
+      parent.normalized_result,
+    ).substeps[0]!.evidence_id;
+    expect(savedBundle.records.map((record) => record.evidence_id)).toContain(
+      atomicId,
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    expect(
+      (await call("import_evidence_bundle", { path: bundlePath })).isError,
+    ).not.toBe(true);
+    const atomicView = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: atomicId },
+      view: {
+        kind: "inventory",
+        collection: "occurrences",
+        logical_paths: ["main.js"],
+      },
+    });
+    expect(atomicView.isError).not.toBe(true);
+    expect(
+      parseEvidence(atomicView.structuredContent).normalized_result,
+    ).toMatchObject({
+      parent_evidence_id: atomicId,
+      items: [expect.objectContaining({ logical_path: "main.js" })],
+    });
+    const unsupportedRequest = join(root, "unsupported-view.json");
+    const unsupportedInput = {
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "page", collection: "sections", offset: 0, limit: 20 },
+    };
+    await writeFile(unsupportedRequest, JSON.stringify(unsupportedInput));
+    const unsupported = await cli.run({
+      arguments: ["inspect-analysis-view", unsupportedRequest, "--json"],
+    });
+    expect(unsupported.exitCode).toBe(1);
+    expect(unsupported.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["view"],
+            message: "Artifact Evidence supports summary and inventory views.",
+          },
+        ],
+      },
+    });
     await unlink(archive);
     const request = join(root, "view.json");
     await writeFile(
@@ -552,6 +616,92 @@ cliTest(
     expect(complete.json).toEqual(bundle);
   },
 );
+
+cliTest(
+  "formats the full caller-admitted native inventory page as Markdown and JSON",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-native-inventory-markdown-",
+    );
+    const input = join(root, "view.json");
+    const rowCount = 150_000;
+    {
+      const parent = createEvidence(
+        {
+          path: "/fixtures/native.exe",
+          format: "pe",
+          sha256: "a".repeat(64),
+        },
+        { id: "fixture", name: "Fixture", version: "1" },
+        {
+          operation: "list_names",
+          parameters: {},
+          result: Array.from({ length: rowCount }, (_, index) => ({
+            address: `0x${index.toString(16)}`,
+            value: `item${index}`,
+          })),
+        },
+      );
+      const request = {
+        source: { kind: "inline", evidence: parent },
+        view: {
+          kind: "native-inventory",
+          limit: rowCount,
+          fields: ["value"],
+        },
+      };
+      await writeFile(input, JSON.stringify(request));
+    }
+    const environment = {
+      HOME: root,
+      XDG_CONFIG_HOME: root,
+      XDG_CACHE_HOME: root,
+      REA_LOG_LEVEL: "silent",
+    };
+
+    {
+      const json = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          input,
+          "--format",
+          "json",
+          "--filter-output",
+          "normalized_result.rows",
+        ],
+        environment,
+        timeoutMs: 60_000,
+      });
+      expect(json.exitCode).toBe(0);
+      expect(
+        (json.json as { normalized_result: { rows: unknown[] } })
+          .normalized_result.rows,
+      ).toHaveLength(rowCount);
+    }
+
+    const markdown = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        input,
+        "--format",
+        "md",
+        "--filter-output",
+        "normalized_result.rows",
+      ],
+      environment,
+      timeoutMs: 60_000,
+    });
+    expect(markdown.exitCode).toBe(0);
+    expect(markdown.stdout).toContain("## normalized_result.rows");
+    expect(markdown.stdout).toContain("| source_index");
+    let lineBreaks = 0;
+    for (const character of markdown.stdout)
+      if (character === "\n") lineBreaks += 1;
+    expect(lineBreaks).toBeGreaterThan(rowCount);
+    expect(markdown.stdout).toContain("149999");
+  },
+);
+
 cliTest(
   "projects one section from a JSON file of inline layout Evidence",
   async ({ cli }) => {

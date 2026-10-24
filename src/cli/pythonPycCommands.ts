@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { createPythonPycService } from "../composition/pythonPyc.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -16,9 +17,9 @@ export const registerPythonPycCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectPythonPyc, {
     description:
-      "Inspect a CPython 3.7–3.13 pyc header and marshal code objects without executing bytecode",
+      "Inspect a supported CPython 3.7–3.13 pyc header and marshal code objects without executing bytecode",
     args: z.object({
-      path: z.string().describe("Local CPython .pyc file"),
+      path: localPathStringSchema.describe("Local CPython .pyc file"),
     }),
     options: z.object({
       maxFileBytes: inspectPythonPycInputSchema.shape.max_file_bytes,
