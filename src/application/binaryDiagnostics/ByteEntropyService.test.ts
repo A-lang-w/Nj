@@ -53,12 +53,17 @@ it.each([256, 4096, 65536])(
       open: async (...args) => {
         const file = await open(...args);
         const read = file.read.bind(file);
-        vi.spyOn(file, "read").mockImplementation(
-          async (buffer, offset, length, position) => {
+        Object.defineProperty(file, "read", {
+          value: async (
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            position: number,
+          ) => {
             reads += 1;
             return read(buffer, offset, Math.min(length, 3571), position);
           },
-        );
+        });
         return file;
       },
     });
