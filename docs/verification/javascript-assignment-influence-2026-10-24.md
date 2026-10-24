@@ -37,20 +37,56 @@ nodes and have the immutable file projection's lifetime; no cache was added.
   explicitly enabled and the graph is checked for erroneous assignment edges.
   The production file was restored before further verification.
 - Full `npm run check` passed after integrating main `1a48a820` at
-  `0fbd13b77b15c6906138eaac232456d3a2141ac5`. The final 14-file run
+  `0fbd13b77b15c6906138eaac232456d3a2141ac5`. The initial 14-file run
   had **295 pass / 1 fail**: graph construction/scope/destructuring, semantic
   analysis, worker schema/transfer/budgets, 24 cancellation cases, and the
   production CLI fixture workflow.
 - That remaining `projects literal seeds and static object flow` assertion
   expects 3 matches but receives 4 on both this feature and exact main
   `1a48a820208880c0cc383d196c7ed96d35479412`; the diagnostics match after checkout
-  path normalization. The unchanged failing assertion is not reported as passing.
+  path normalization. The historical failed assertion is not counted as passing in that run.
 - The CLI test executes analyze plus default and candidate-expanded traces for
   declaration, variable, property, compound and computed-key fixtures. It
   verifies the intended write and reachable return through the public commands.
   Full documentation and test-discovery checks passed.
   No target code is executed. MCP runtime delivery and other platforms were
   not newly verified for this change.
+
+## Later integration and verification
+
+The integration with main `1c07bee5b6262a537758e8bfa235e90d99e35d71`
+produces the same tree as actual CI merge `49527572db7de2dfb260344f8c69c74f7b466423`.
+Full `npm run check` and **all 296** selected feature/worker/CLI/cancellation
+checks pass on that tree. Upstream changes repair the earlier literal-seed
+assertion recorded above.
+
+A cancelled shard also exposed a stale introductory-description assertion in
+`analysisViewMcp.test.ts`. It prevented the oversized native discovery workflow
+from running. Removing that unrelated catalog/prose precheck preserves the
+metadata filters, 6 MiB retained-dossier discovery, paging and advertised-schema
+checks; **all 22** tests in the file pass. The unchanged original case fails
+before this cleanup. Full static checks pass with the revised test.
+
+Separately, the CI source lane's 14 failures reproduce on both exact main and
+its actual merge (each 167 pass / 14 fail across 181 checks). Twelve shared-child
+failures have matching diagnostics; two 2-second timing assertions fail on main
+as well. Failure multisets match after normalizing checkout paths and the
+elapsed number only; timing measurements themselves are retained, not claimed
+equal. These independent main failures are recorded rather than reported green.
+Performance costs of this later integration were not remeasured.
+
+The isolation audit also found that the headroom mock test added in #5660 was
+incorrectly placed in the shared services project. It and the existing MCP
+cancellation mock now live in `tests/process-global/`, as the established test
+policy requires. All original budget, cancellation, retained-fact and subsequent
+request assertions remain. The cancellation fixture holds the selected progress
+boundary until an ordered client ping acknowledges delivery of its cancellation;
+cleanup releases the gate even on failure. The fixture checks that this gate was
+actually used. All **18** headroom, SDK-cancellation, progress and project-policy
+checks pass. Bypassing the fixture's producer gate makes **both** cancellation
+cases fail; restoring it preserves the passing results. An earlier two-file
+preload control passed and does not prove import order caused the CI failure.
+No CI speedup or new real-provider verification is claimed for these test moves.
 
 ## Completed task comparison
 

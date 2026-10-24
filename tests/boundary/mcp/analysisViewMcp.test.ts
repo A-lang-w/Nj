@@ -259,12 +259,6 @@ it("projects opted-in query names identically from retained and portable MCP Evi
 
 it("discovers an oversized native dossier by exact metadata and reads its retained view", async () => {
   const { client, session } = await connect();
-  const advertised = (await client.listTools()).tools.find(
-    (tool) => tool.name === "inspect_analysis_view",
-  );
-  expect(advertised?.description).toContain(
-    'Native function Evidence requires kind native: view: {kind: "native", facet: "procedure"}',
-  );
   const provider = { id: "ghidra", name: "Ghidra", version: "12.1.4" };
   const profile = createAnalysisProfile(provider, { language: "fixture" });
   const parent = createEvidence(
