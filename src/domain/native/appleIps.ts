@@ -212,22 +212,17 @@ const classificationMatchSchema = z.strictObject({
   ),
 });
 
-const mismatchFields = {
+const typeMismatchSchema = z.strictObject({
   path: z.string().min(1),
   expected: z.string().min(1),
   observed: z.string().min(1),
-};
-const typeMismatchSchema = z.union([
-  z.strictObject(mismatchFields),
-  z.strictObject({
-    ...mismatchFields,
-    recorded_value: z
-      .string()
-      .describe(
-        "Exact source spelling when a string fails its documented format",
-      ),
-  }),
-]);
+  recorded_value: z
+    .string()
+    .exactOptional()
+    .describe(
+      "Exact source spelling when a string fails its documented format",
+    ),
+});
 
 const coverageSchema = z.strictObject({
   status: z.enum(["complete", "partial"]),
