@@ -23,7 +23,7 @@ const javaScriptSelectedPathsSchema = z
 export const javaScriptSourceSelectionSchema = z.strictObject({
   requested_paths: javaScriptSourcePathsSchema,
   selected_paths: javaScriptSelectedPathsSchema.exactOptional(),
-  unselected_files: z.number().int().min(0),
+  unselected_files: z.int().min(0),
 });
 
 /** Explicit selected-source boundary for an otherwise complete inventory. */
