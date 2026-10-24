@@ -153,26 +153,6 @@ const replayedReadFields = {
       "Query keys that pick calls of the replayed reads out: a parameter only they name, a value only they give a parameter, or (absent) a parameter every checked line names and they leave out. A call matching any key replays; a projection parameter's value is tested on its own: a call replays unless every value it gives is `*` or one a checked line gave, and no replayed read gave it.",
     ),
 };
-const replayedReadFields = {
-  projected_record_ordinals: z
-    .array(z.number().int().nonnegative())
-    .optional()
-    .describe(
-      "Recorded reads left to replay: they asked for some fields only (`fields`, `select`), or show the entities in another representation than the checked lines (an augmenting or reducing query). Replayed calls do not show served writes.",
-    ),
-  projected_query_keys: z
-    .array(
-      z.strictObject({
-        name: z.string(),
-        value: z.string().optional(),
-        absent: z.literal(true).optional(),
-      }),
-    )
-    .optional()
-    .describe(
-      "Query keys that pick calls of the replayed reads out: a parameter only they name, a value only they give a parameter, or (absent) a parameter every checked line names and they leave out. A call matching any key replays; a projection parameter's value is tested on its own: a call replays unless every value it gives is `*` or one a checked line gave, and no replayed read gave it.",
-    ),
-};
 const viewSchema = z.discriminatedUnion("shape", [
   z.strictObject({
     ...entityViewFields,

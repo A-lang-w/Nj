@@ -224,7 +224,6 @@ export const itemCall = (
     : undefined;
 };
 
-/** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written, unless it is literal. */
 /** Whether the state started with the item a call names, which a served delete may since have removed. */
 const startedWithItem = (
   store: EnvironmentStateStore,
@@ -241,6 +240,7 @@ const startedWithItem = (
     );
 };
 
+/** The entity an item call names, preferring verbatim collection spellings as replay does; the id is tried percent-decoded, then as written, unless it is literal. */
 export const namedEntity = (
   store: EnvironmentStateStore,
   type: string,
