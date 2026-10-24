@@ -51,8 +51,10 @@ export async function startBrowserRequestSite() {
     next: 3,
   };
   const writes = [];
+  const hosts = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://fixture.test");
+    hosts.push(`${request.headers.host} ${url.pathname}`);
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body =
@@ -67,6 +69,14 @@ export async function startBrowserRequestSite() {
     }
     if (url.pathname === "/favicon.ico") {
       response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === "/api/elsewhere") {
+      const port = new URL(`http://${request.headers.host}`).port;
+      response.writeHead(302, {
+        Location: `http://localhost:${port}/api/items`,
+      });
       response.end();
       return;
     }
@@ -107,6 +117,8 @@ export async function startBrowserRequestSite() {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     writes,
+    /** Host header and path of every request the server received. */
+    hosts,
     items: store.items,
     async close() {
       server.closeAllConnections();

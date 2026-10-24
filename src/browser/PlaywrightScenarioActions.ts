@@ -37,13 +37,15 @@ interface PerformActionInput {
   readonly secrets: BrowserScenarioSecrets;
   /** Origin of the scenario's start URL, the only origin a request step may address. */
   readonly startOrigin: string;
+  /** Cancellation of the step; a request step that sees it before sending sends nothing. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Execute one admitted declarative action; a request step sends one declared request through the page's own fetch, and no action runs caller-supplied code. */
 export const performPlaywrightScenarioAction = async (
   input: PerformActionInput,
 ): Promise<void> => {
-  const { page, action, secrets, startOrigin } = input;
+  const { page, action, secrets, startOrigin, signal } = input;
   const timeout = "timeout_ms" in action ? action.timeout_ms : undefined;
   const options = timeout === undefined ? {} : { timeout };
   switch (action.action) {
@@ -91,7 +93,13 @@ export const performPlaywrightScenarioAction = async (
       await page.waitForTimeout(action.duration_ms);
       return;
     case "request":
-      await performScenarioRequest({ page, action, secrets, startOrigin });
+      await performScenarioRequest({
+        page,
+        action,
+        secrets,
+        startOrigin,
+        signal,
+      });
       return;
     default: {
       const unhandled: never = action;

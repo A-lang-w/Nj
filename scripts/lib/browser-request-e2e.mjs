@@ -197,8 +197,8 @@ const assertPageValuesRedacted = (evidence, capture) => {
   );
 };
 
-/** A status outside expected_status fails the step and cancels the rest. */
-const assertUnexpectedStatusFails = async (entrypoint, scenario) => {
+/** A status outside expected_status fails the step and cancels the rest; a redirect to another origin is not followed. */
+const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
   const failing = browserScenarioSchema.parse({
     ...scenario,
     actions: [
@@ -215,6 +215,21 @@ const assertUnexpectedStatusFails = async (entrypoint, scenario) => {
   assert.equal(
     capture.steps.find(({ step_id }) => step_id === "after").status,
     "cancelled",
+  );
+  const redirected = browserScenarioSchema.parse({
+    ...scenario,
+    actions: [read("elsewhere", "/api/elsewhere")],
+  });
+  const followed = await captureOf(entrypoint, redirected, 16 * 1024 * 1024);
+  const step = followed.capture.steps.find(
+    ({ step_id }) => step_id === "elsewhere",
+  );
+  assert.equal(step.status, "failed");
+  assert.match(step.error ?? "", /follow no redirects/u);
+  // Chrome reports the redirected request and aborts it; the other origin must never receive it.
+  assert.ok(
+    site.hosts.every((line) => !line.startsWith("localhost")),
+    "a request step followed a redirect to another origin",
   );
 };
 
@@ -260,7 +275,7 @@ export async function verifyBrowserRequestSteps(
       JSON.stringify(built.coverage),
     );
 
-    await assertUnexpectedStatusFails(entrypoint, scenario);
+    await assertUnexpectedStatusFails(entrypoint, scenario, site);
     return {
       request_steps: scenario.actions.filter(
         ({ action }) => action === "request",

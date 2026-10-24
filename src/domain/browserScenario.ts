@@ -10,6 +10,7 @@ import {
   browserScenarioSecretSchema,
   browserScenarioStorageSchema,
   browserScenarioUrlSchema,
+  HEADER_FIELD_VALUE,
   type BrowserScenarioAction,
   type BrowserScenarioUrl,
   type BrowserScenarioValue,
@@ -105,6 +106,26 @@ const validateRequestSteps = (
         ["actions", index, "json"],
         `A ${action.method} request step cannot send a body`,
       );
+    const names = new Set<string>();
+    action.headers.forEach((header, position) => {
+      const name = header.name.toLowerCase();
+      if (names.has(name))
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "name"],
+          `Request step headers name ${header.name} more than once`,
+        );
+      names.add(name);
+      if (
+        header.value.source === "literal" &&
+        !HEADER_FIELD_VALUE.test(header.value.value)
+      )
+        addIssue(
+          context,
+          ["actions", index, "headers", position, "value", "value"],
+          "A header value cannot carry line breaks or control characters",
+        );
+    });
   });
 };
 

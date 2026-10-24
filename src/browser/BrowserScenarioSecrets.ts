@@ -15,6 +15,9 @@ import type { BrowserStorageValueFingerprint } from "../domain/browserScenarioCa
 
 const REDACTION_PREFIX = "[REDACTED:";
 
+/** Page values shorter than this are not redacted: redacting them would rewrite ids, ports and hosts throughout the capture. */
+export const MIN_REDACTED_PAGE_VALUE_LENGTH = 8;
+
 const encodedSecretValues = (secret: string): ReadonlySet<string> =>
   new Set([
     encodeURIComponent(secret),
@@ -263,11 +266,16 @@ export class BrowserScenarioSecrets {
   /**
    * Redact a value a request step read from the page, such as a CSRF cookie
    * or a stored bearer token, from everything recorded after it, as a
-   * declared secret is. The label names it in redaction markers.
+   * declared secret is. The label names it in redaction markers; a value
+   * already redacted keeps its first marker, and a value shorter than
+   * {@link MIN_REDACTED_PAGE_VALUE_LENGTH} is not redacted.
    */
   admitPageValue(label: string, value: string): void {
-    const id = `page:${label}`;
-    if (value === "" || this.values.get(id) === value) return;
+    if (value.length < MIN_REDACTED_PAGE_VALUE_LENGTH) return;
+    for (const held of this.values.values()) if (held === value) return;
+    let id = `page:${label}`;
+    for (let suffix = 2; this.values.has(id); suffix += 1)
+      id = `page:${label}~${String(suffix)}`;
     this.values.set(id, value);
     this.compile();
   }

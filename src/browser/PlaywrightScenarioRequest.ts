@@ -1,17 +1,20 @@
 import type { Page } from "playwright-core";
 
-import type {
-  BrowserScenarioAction,
-  BrowserScenarioRequestHeader,
+import {
+  HEADER_FIELD_VALUE,
+  type BrowserScenarioAction,
+  type BrowserScenarioRequestHeader,
 } from "../domain/browserScenarioValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
-/** What the page's fetch returned. */
-interface PageResponse {
-  readonly status: number;
-}
+/** What the page's fetch returned; a redirect is not followed, so its status is unknown. */
+type PageResponse =
+  | { readonly status: number }
+  | { readonly redirected: true }
+  | { readonly left: string }
+  | { readonly error: string };
 
 /** A request step that could not be sent or did not answer as expected. */
 export class ScenarioRequestError extends Error {
@@ -104,6 +107,69 @@ const headerValue = async (
   return read;
 };
 
+/** Append declared query entries after any literal query the path carries, leaving that query as written. */
+const withQuery = (
+  url: URL,
+  entries: readonly (readonly [string, string])[],
+): string => {
+  if (entries.length === 0) return url.href;
+  const added = entries
+    .map(
+      ([name, value]) =>
+        `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
+    )
+    .join("&");
+  const base = url.href.slice(0, url.href.length - url.hash.length);
+  return `${base}${url.search === "" ? "?" : "&"}${added}${url.hash}`;
+};
+
+/** What a request step sends: the URL, the origin it must be sent from, and the call. */
+interface PageRequest {
+  readonly url: string;
+  readonly origin: string;
+  readonly method: string;
+  readonly headers: [string, string][];
+  readonly body: string | undefined;
+  readonly timeoutMs: number | undefined;
+}
+
+/** Send the request with the page's own fetch, from the page's main world, and read the whole answer. */
+const sendFromPage = (
+  page: Page,
+  request: PageRequest,
+): Promise<PageResponse> =>
+  page.evaluate(async (request): Promise<PageResponse> => {
+    // The page may have navigated since the origin check; never send from another origin.
+    const here = (globalThis as { readonly location?: { origin: string } })
+      .location?.origin;
+    if (here !== request.origin) return { left: String(here) };
+    const controller = new AbortController();
+    const timer =
+      request.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(), request.timeoutMs);
+    try {
+      const answer = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        credentials: "same-origin",
+        redirect: "manual",
+        signal: controller.signal,
+        ...(request.body === undefined ? {} : { body: request.body }),
+      });
+      await answer.arrayBuffer();
+      return answer.type === "opaqueredirect"
+        ? { redirected: true }
+        : { status: answer.status };
+    } catch (cause: unknown) {
+      return {
+        error: cause instanceof Error ? cause.message : String(cause),
+      };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }, request);
+
 /**
  * Send one request from the page with its own fetch, cookies and session, as
  * the application's frontend would, and read the whole response so the
@@ -114,8 +180,13 @@ export const performScenarioRequest = async (input: {
   readonly action: RequestAction;
   readonly secrets: BrowserScenarioSecrets;
   readonly startOrigin: string;
+  readonly signal?: AbortSignal | undefined;
 }): Promise<void> => {
-  const { page, action, secrets, startOrigin } = input;
+  const { page, action, secrets, startOrigin, signal } = input;
+  const deadline =
+    action.timeout_ms === undefined
+      ? undefined
+      : Date.now() + action.timeout_ms;
   const pageOrigin = originOf(page.url());
   if (pageOrigin !== startOrigin)
     throw new ScenarioRequestError(
@@ -126,56 +197,50 @@ export const performScenarioRequest = async (input: {
     throw new ScenarioRequestError(
       `Request step ${action.step_id} must stay on the start origin ${startOrigin}.`,
     );
-  for (const { name, value } of action.query)
-    url.searchParams.append(name, secrets.value(value));
+  const target = withQuery(
+    url,
+    action.query.map(({ name, value }) => [name, secrets.value(value)]),
+  );
   const step = { page, url, stepId: action.step_id, secrets };
   const headers: [string, string][] = [];
-  for (const header of action.headers)
-    headers.push([
-      header.name,
-      `${header.prefix ?? ""}${await headerValue(step, header)}`,
-    ]);
+  for (const header of action.headers) {
+    const value = `${header.prefix ?? ""}${await headerValue(step, header)}`;
+    if (!HEADER_FIELD_VALUE.test(value))
+      throw new ScenarioRequestError(
+        `Request step ${action.step_id}: the ${header.name} value holds characters a header cannot carry, such as a line break.`,
+      );
+    headers.push([header.name, value]);
+  }
   const hasContentType = headers.some(
     ([name]) => name.toLowerCase() === "content-type",
   );
   if (action.json !== undefined && !hasContentType)
     headers.push(["content-type", "application/json"]);
-  const response = await page.evaluate(
-    async (request): Promise<PageResponse | { readonly error: string }> => {
-      const controller = new AbortController();
-      const timer =
-        request.timeoutMs === undefined
-          ? undefined
-          : setTimeout(() => controller.abort(), request.timeoutMs);
-      try {
-        const answer = await fetch(request.url, {
-          method: request.method,
-          headers: request.headers,
-          credentials: "same-origin",
-          signal: controller.signal,
-          ...(request.body === undefined ? {} : { body: request.body }),
-        });
-        await answer.arrayBuffer();
-        return { status: answer.status };
-      } catch (cause: unknown) {
-        return {
-          error: cause instanceof Error ? cause.message : String(cause),
-        };
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-    },
-    {
-      url: url.href,
-      method: action.method,
-      headers,
-      body: action.json === undefined ? undefined : JSON.stringify(action.json),
-      timeoutMs: action.timeout_ms,
-    },
-  );
+  // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
+  const remaining = deadline === undefined ? undefined : deadline - Date.now();
+  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+    throw new ScenarioRequestError(
+      `Request step ${action.step_id} ran out of time before its request was sent.`,
+    );
+  const response = await sendFromPage(page, {
+    url: target,
+    origin: startOrigin,
+    method: action.method,
+    headers,
+    body: action.json === undefined ? undefined : JSON.stringify(action.json),
+    timeoutMs: remaining,
+  });
   if ("error" in response)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} failed in the page: ${response.error}`,
+    );
+  if ("left" in response)
+    throw new ScenarioRequestError(
+      `Request step ${action.step_id} runs from a page on the start origin ${startOrigin}; the page moved before the request was sent.`,
+    );
+  if ("redirected" in response)
+    throw new ScenarioRequestError(
+      `Request step ${action.step_id} was answered with a redirect; request steps follow no redirects, so send it to the path the redirect names.`,
     );
   if (
     action.expected_status !== undefined &&

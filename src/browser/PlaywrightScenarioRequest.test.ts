@@ -41,6 +41,34 @@ const issues = (actions: readonly unknown[], secrets: unknown[] = []) => {
 };
 
 describe("request step schema", () => {
+  it("refuses repeated header names, User-Agent and line breaks in literal values or prefixes", () => {
+    const literal = (value: string) => ({ source: "literal", value });
+    expect(
+      issues([
+        requestStep({
+          headers: [
+            { name: "X-A", value: literal("one") },
+            { name: "x-a", value: literal("two") },
+          ],
+        }),
+      ]),
+    ).toContainEqual(expect.stringContaining("more than once"));
+    expect(
+      issues([
+        requestStep({
+          headers: [{ name: "User-Agent", value: literal("agent") }],
+        }),
+      ]),
+    ).toContainEqual(expect.stringContaining("cannot set"));
+    for (const header of [
+      { name: "X-A", value: literal("a\r\nX-B: b") },
+      { name: "X-A", value: literal("a"), prefix: "Bearer\n" },
+    ])
+      expect(issues([requestStep({ headers: [header] })])).toContainEqual(
+        expect.stringContaining("line breaks"),
+      );
+  });
+
   it("accepts a same-origin request with query, headers and a JSON body", () => {
     const parsed = scenario(
       [
@@ -111,15 +139,30 @@ interface FakeFetch {
 
 const fakePage = (options: {
   readonly url?: string;
+  /** The origin the page reports when the request is sent, if it moved after the check. */
+  readonly sendingOrigin?: string;
   readonly cookies?: readonly { name: string; value: string }[];
+  readonly cookieDelayMs?: number;
   readonly storage?: Record<string, string>;
 }) => {
+  const url = options.url ?? `${ORIGIN}/dashboard`;
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => options.storage?.[key] ?? null,
   });
+  vi.stubGlobal("location", {
+    origin: options.sendingOrigin ?? new URL(url).origin,
+  });
   return {
-    url: () => options.url ?? `${ORIGIN}/dashboard`,
-    context: () => ({ cookies: async () => options.cookies ?? [] }),
+    url: () => url,
+    context: () => ({
+      cookies: async () => {
+        if (options.cookieDelayMs !== undefined)
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.cookieDelayMs),
+          );
+        return options.cookies ?? [];
+      },
+    }),
     evaluate: async <Arg, Result>(
       fn: (arg: Arg) => Result | Promise<Result>,
       arg: Arg,
@@ -257,5 +300,154 @@ describe("request step execution", () => {
     await expect(
       perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
     ).rejects.toThrow("Failed to fetch");
+  });
+});
+
+describe("request step confinement", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("follows no redirect and sends nothing once the page has left the start origin", async () => {
+    const calls: FakeFetch[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return {
+        type: "opaqueredirect",
+        status: 0,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+    const parsed = scenario([requestStep({})]);
+    await expect(
+      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("follow no redirects");
+    expect(calls[0]!.init.redirect).toBe("manual");
+    await expect(
+      perform(
+        fakePage({ sendingOrigin: "https://other.test" }),
+        parsed.actions[0]!,
+        resolved(parsed),
+      ),
+    ).rejects.toThrow("the page moved");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {
+    const calls = stubFetch(200);
+    const parsed = scenario([
+      requestStep({
+        timeout_ms: 5,
+        headers: [{ name: "X-T", value: { source: "cookie", name: "t" } }],
+      }),
+    ]);
+    const cookies = [{ name: "t", value: "token-value-1" }];
+    await expect(
+      perform(
+        fakePage({ cookies, cookieDelayMs: 30 }),
+        parsed.actions[0]!,
+        resolved(parsed),
+      ),
+    ).rejects.toThrow("ran out of time");
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(
+      performPlaywrightScenarioAction({
+        page: fakePage({ cookies }),
+        action: scenario([requestStep({})]).actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        signal: cancelled.signal,
+      }),
+    ).rejects.toThrow("ran out of time");
+    expect(calls).toEqual([]);
+  });
+
+  it("appends query entries after the path's literal query without re-encoding it", async () => {
+    const calls = stubFetch(200);
+    const parsed = scenario([
+      requestStep({
+        path: "/api/items?flag&a=b%20c&s=x;y",
+        query: [{ name: "q", value: { source: "literal", value: "a b" } }],
+      }),
+    ]);
+    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
+    expect(calls[0]!.url).toBe(
+      `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b`,
+    );
+  });
+
+  it("refuses page values a header cannot carry, and stored values it cannot read", async () => {
+    const calls = stubFetch(200);
+    const header = (value: Record<string, unknown>) =>
+      scenario([requestStep({ headers: [{ name: "X-T", value }] })]);
+    const cookie = header({ source: "cookie", name: "t" });
+    await expect(
+      perform(
+        fakePage({ cookies: [{ name: "t", value: "a\r\nX-B: b" }] }),
+        cookie.actions[0]!,
+        resolved(cookie),
+      ),
+    ).rejects.toThrow("cannot carry");
+    for (const [storage, pointer, message] of [
+      [{}, undefined, "local storage has no auth"],
+      [{ auth: "not json" }, "/token", "is not JSON"],
+      [{ auth: '{"other":1}' }, "/token", "no string or number at /token"],
+    ] as const) {
+      const stored = header({
+        source: "local_storage",
+        key: "auth",
+        ...(pointer === undefined ? {} : { json_pointer: pointer }),
+      });
+      await expect(
+        perform(fakePage({ storage }), stored.actions[0]!, resolved(stored)),
+      ).rejects.toThrow(message);
+    }
+    expect(calls).toEqual([]);
+    const numeric = header({
+      source: "local_storage",
+      key: "auth",
+      json_pointer: "/org",
+    });
+    await perform(
+      fakePage({ storage: { auth: '{"org":42}' } }),
+      numeric.actions[0]!,
+      resolved(numeric),
+    );
+    expect(calls[0]!.init.headers).toEqual([["X-T", "42"]]);
+  });
+});
+
+describe("page value redaction", () => {
+  const secrets = () => resolved(scenario([requestStep({})]));
+
+  it("keeps every admitted value redacted, even under a repeated or colliding label", () => {
+    const held = secrets();
+    held.admitPageValue("s.x-a", "first-secret-AAAA");
+    held.admitPageValue("s.x-a", "second-secret-BBBB");
+    held.admitPageValue("a.b.c", "third-secret-CCCC");
+    held.admitPageValue("a.b.c", "fourth-secret-DDDD");
+    const text = held.redact(
+      "first-secret-AAAA second-secret-BBBB third-secret-CCCC fourth-secret-DDDD",
+    );
+    for (const value of ["AAAA", "BBBB", "CCCC", "DDDD"])
+      expect(text).not.toContain(value);
+  });
+
+  it("keeps a value's first marker when later steps read it again", () => {
+    const held = secrets();
+    held.admitPageValue("create-1.X-CSRFToken", "csrf-token-value");
+    held.admitPageValue("create-2.X-CSRFToken", "csrf-token-value");
+    expect(held.redact("csrf-token-value")).toBe(
+      "[REDACTED:page:create-1.X-CSRFToken]",
+    );
+  });
+
+  it("does not redact values too short to tell from ids and ports", () => {
+    const held = secrets();
+    held.admitPageValue("s.X-Org-Id", "1");
+    held.admitPageValue("s.X-Port", "3000");
+    const text = "http://127.0.0.1:3000/api/items/12?page=1";
+    expect(held.redact(text)).toBe(text);
   });
 });

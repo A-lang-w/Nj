@@ -78,7 +78,7 @@ export const BROWSER_SCENARIO_REQUEST_METHODS = [
   "DELETE",
 ] as const;
 
-/** Header names a page's fetch cannot set, so a request step refuses them rather than having them dropped. */
+/** Header names a page's fetch cannot set (and User-Agent, which Chrome drops), so a request step refuses them rather than having them dropped. */
 const FORBIDDEN_REQUEST_HEADERS = new Set([
   "accept-charset",
   "accept-encoding",
@@ -100,8 +100,12 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
+  "user-agent",
   "via",
 ]);
+
+/** Characters an HTTP field value may carry: visible ASCII, space, tab and obs-text. */
+export const HEADER_FIELD_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/u;
 
 const settableRequestHeader = (name: string): boolean => {
   const lower = name.toLowerCase();
@@ -147,6 +151,9 @@ const requestHeaderSchema = z.strictObject({
   ]),
   prefix: z
     .string()
+    .regex(HEADER_FIELD_VALUE, {
+      message: "A header value cannot carry line breaks or control characters",
+    })
     .optional()
     .describe("Text sent before the value, such as `Bearer `."),
 });

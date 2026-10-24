@@ -444,6 +444,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           action,
           secrets: this.secrets,
           startOrigin: this.startOrigin,
+          signal,
         }),
       "timeout_ms" in action ? action.timeout_ms : undefined,
       signal,
