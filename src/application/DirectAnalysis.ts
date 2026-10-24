@@ -577,6 +577,9 @@ const executeAnalysisTool = async (input: {
       result: result.value.result,
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
+      ...(result.value.evidenceLinks === undefined
+        ? {}
+        : { upstreamEvidenceLinks: result.value.evidenceLinks }),
     });
     return ok({
       evidence,
