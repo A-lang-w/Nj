@@ -111,6 +111,39 @@ describe("served bulk write queries and capacity", () => {
 });
 
 describe("served bulk write targets", () => {
+  it.each(["number", "string"] as const)(
+    "refuses ids whose JSON kind differs from the recorded %s array, without changing state",
+    (kind) => {
+      const books = servedFrom([
+        ...BOOK_INIT_ROWS,
+        [
+          "PATCH",
+          "/api/books",
+          "",
+          204,
+          { ids: [kind === "number" ? 1 : "1"], name: "Renamed Book" },
+        ],
+        ["GET", "/api/books/1", RENAMED_AT_3],
+        ["GET", "/api/books", [RENAMED_AT_3, SECOND_BOOK]],
+      ]);
+      const before = books.snapshot();
+      expect(
+        books.call("patch_books", {
+          body: { ids: [kind === "number" ? "1" : 1], name: "Changed" },
+        }).ok,
+      ).toBe(false);
+      expect(books.snapshot()).toBe(before);
+      expect(
+        books.call("patch_books", {
+          body: { ids: [kind === "number" ? 1 : "1"], name: "Changed" },
+        }).ok,
+      ).toBe(true);
+      expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+        name: "Changed",
+      });
+    },
+  );
+
   it("takes a body's ids as written, refusing one that only decodes to a held id", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,

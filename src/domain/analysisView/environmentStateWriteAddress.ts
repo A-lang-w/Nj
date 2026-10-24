@@ -229,7 +229,8 @@ export const namedEntities = (
   if (
     found === undefined ||
     found.by !== address.by ||
-    found.member !== address.member
+    found.member !== address.member ||
+    (found.by === "ids" && address.by === "ids" && found.kind !== address.kind)
   )
     return undefined;
   const entries = (
