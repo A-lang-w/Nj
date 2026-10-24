@@ -37,6 +37,8 @@ import {
   CPU,
   fatImage,
   machoImage,
+  rpathCommand,
+  codeSignatureCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 
 it.each([4000, 9000])(
@@ -774,38 +776,39 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     });
   });
 
-  it.each([8, 0])(
-    "checks Mach-O command size %i beyond the initial file probe",
-    async (lastCommandSize) => {
-      const directory = await createTestTempDirectory("rea-target-");
-      const path = join(directory, "large-commands");
-      const header = thinMach(0xcffaedfe, 0x0100000c);
-      header.writeUInt32LE(2, 16);
-      header.writeUInt32LE(8200, 20);
-      const commands = Buffer.alloc(8200);
-      commands.writeUInt32LE(0x8, 0); // LC_IDENT with a large padded payload.
-      commands.writeUInt32LE(8192, 4);
-      commands.writeUInt32LE(0x8, 8192);
-      commands.writeUInt32LE(lastCommandSize, 8196);
-      await writeFile(path, Buffer.concat([header, commands]));
-      const result = await parseBinaryTarget(path, {
-        cwd: directory,
-        hostArchitecture: "arm64",
-      });
-      if (lastCommandSize === 8)
-        expect(result).toMatchObject({
-          ok: true,
-          value: { format: "mach-o", architecture: "arm64" },
-        });
-      else
-        expect(result).toMatchObject({
-          ok: false,
-          error: {
-            reason: "load command 1 at offset 8192 has invalid cmdsize 0",
-          },
-        });
-    },
-  );
+  it("checks Mach-O load commands against the whole file beyond the probe", async () => {
+    const directory = await createTestTempDirectory("rea-target-");
+    const path = join(directory, "large-commands");
+    const firstCommand = rpathCommand("@loader_path/" + "a".repeat(8192));
+    const bytes = Buffer.from(
+      machoImage({ commands: [firstCommand, codeSignatureCommand()] }),
+    );
+    await writeFile(path, bytes);
+    const result = await parseBinaryTarget(path, {
+      cwd: directory,
+      hostArchitecture: "arm64",
+    });
+    expect(result.ok && result.value).toMatchObject({
+      format: "mach-o",
+      architecture: "arm64",
+    });
+
+    // The second command's header lies beyond the initial 4096-byte probe.
+    // Corrupting it must fail admission even though the prefix is unchanged.
+    bytes.writeUInt32LE(0, 32 + firstCommand.length + 4);
+    await writeFile(path, bytes);
+    const malformed = await parseBinaryTarget(path, {
+      cwd: directory,
+      hostArchitecture: "arm64",
+    });
+    expect(malformed).toMatchObject({
+      ok: false,
+      error: {
+        path,
+        reason: `load command 1 at offset ${firstCommand.length} has invalid cmdsize 0`,
+      },
+    });
+  });
 });
 
 describe("app executable filename fidelity", () => {
