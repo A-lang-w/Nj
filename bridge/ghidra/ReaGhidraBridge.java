@@ -2517,12 +2517,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Map<Address, String> warnings = new HashMap<>();
         if (!sawComment) return warnings;
-        Set<String> listingComments = listingCommentTexts(function);
+        Map<String, Integer> callerWarnings = callerAuthoredJumpTableWarnings(function);
         java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(text);
         while (matcher.find()) {
             if (commentText.nextClearBit(matcher.start()) < matcher.end()) continue;
             String warning = matcher.group(1).replaceAll("\\s+", " ").trim();
-            if (listingComments.stream().anyMatch(comment -> comment.contains(warning))) continue;
+            int callerMatches = callerWarnings.getOrDefault(warning, 0);
+            if (callerMatches > 0) {
+                callerWarnings.put(warning, callerMatches - 1);
+                continue;
+            }
             Address address = warningAddress(matcher.group(2));
             if (address != null) warnings.putIfAbsent(address, warning);
         }
@@ -2539,10 +2543,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return address != null && address.isMemoryAddress() ? address : null;
     }
 
-    /** Comment text stored in the listing for this function, whitespace-normalized. */
-    private Set<String> listingCommentTexts(Function function) throws Exception {
+    /**
+     * Caller-authored warnings actually eligible for rendering by Ghidra.
+     * Count occurrences rather than excluding every matching string: an
+     * identical decompiler warning is a separate observation.
+     */
+    private Map<String, Integer> callerAuthoredJumpTableWarnings(Function function) throws Exception {
+        DecompileOptions options = decompiler.getOptions();
         Listing listing = currentProgram.getListing();
-        Set<String> texts = new HashSet<>();
+        Map<String, Integer> authored = new HashMap<>();
         AddressIterator addresses = listing.getCommentAddressIterator(
             functionObservationScope(function), true
         );
@@ -2550,11 +2559,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             Address address = addresses.next();
             for (CommentType type : CommentType.values()) {
-                String text = listing.getComment(type, address);
-                if (text != null && !text.isEmpty()) texts.add(text.replaceAll("\\s+", " "));
+                boolean displayed = switch (type) {
+                    case PRE -> options.isPRECommentIncluded();
+                    case POST -> options.isPOSTCommentIncluded();
+                    case EOL -> options.isEOLCommentIncluded();
+                    case PLATE -> address.equals(function.getEntryPoint())
+                        ? options.isHeadCommentIncluded()
+                        : options.isPLATECommentIncluded();
+                    default -> false;
+                };
+                if (!displayed) continue;
+                String comment = listing.getComment(type, address);
+                if (comment == null) continue;
+                java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(
+                    comment.replace("\r", "").replace('\t', ' ')
+                );
+                while (matcher.find()) {
+                    String warning = matcher.group(1).replaceAll("\\s+", " ").trim();
+                    authored.merge(warning, 1, Integer::sum);
+                }
             }
         }
-        return texts;
+        return authored;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {
