@@ -662,7 +662,7 @@ it("preserves exact activity-alias targets and marks malformed references unknow
   );
 });
 
-it("indexes valid alias spellings without re-expanding a large package", () => {
+it("preserves unresolved aliases without expanding an unsupported huge package", () => {
   const packageName = "p".repeat(900 * 1024);
   const aliases = Array.from(
     { length: 511 },
@@ -674,8 +674,10 @@ it("indexes valid alias spellings without re-expanding a large package", () => {
     "complete",
     "33",
   );
-  expect(inventory.items[0]?.name).toHaveLength(packageName.length + 7);
-  expect(inventory.items[0]?.name?.startsWith(packageName)).toBe(true);
+  expect(inventory.items[0]?.name).toBe(".Target");
+  expect(
+    inventory.items.every(({ name }) => !name.startsWith(packageName)),
+  ).toBe(true);
   expect(inventory.items[1]).toMatchObject({
     declared_name: ".Alias0",
     target_activity: ".Target",
@@ -686,9 +688,7 @@ it("indexes valid alias spellings without re-expanding a large package", () => {
   });
   expect(inventory.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
   expect(inventory.status).toBe("partial");
-  expect(inventory.limitations.join(" ")).not.toContain(
-    "targetActivity value(s)",
-  );
+  expect(inventory.limitations.join(" ")).toContain("targetActivity value(s)");
 });
 
 it("does not call resource and manifest placeholder names resolved identities", () => {
@@ -825,23 +825,23 @@ it("preserves malformed provider authority segments and marks them unknown", () 
 });
 
 it("leaves later names declared when the resolved-name budget is spent", () => {
-  const hugePackage = "p".repeat(64 * 1024);
+  const hugeName = "A".repeat(64 * 1024);
   const names = Array.from(
     { length: 20 },
-    (_, index) => `<activity android:name=".A${String(index)}" />`,
+    (_, index) => `<activity android:name=".${hugeName}${String(index)}" />`,
   ).join("");
   const inventory = parseAndroidManifestComponents(
-    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${hugePackage}"><application>${names}</application></manifest>`,
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application>${names}</application></manifest>`,
     "complete",
     "33",
   );
   expect(inventory.items.length).toBeGreaterThan(1);
-  expect(inventory.items[0]?.name).toContain(hugePackage);
-  const unresolved = inventory.items.filter(
-    ({ name }) => !name.includes(hugePackage),
-  );
+  expect(inventory.items[0]?.name).toBe(`com.example.${hugeName}0`);
+  const unresolved = inventory.items.filter(({ name }) => name.startsWith("."));
   expect(unresolved.length).toBeGreaterThan(0);
-  expect(unresolved.every(({ name }) => name.startsWith(".A"))).toBe(true);
+  expect(unresolved.every(({ name }) => name.startsWith(`.${hugeName}`))).toBe(
+    true,
+  );
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
     "resolved-name byte budget",
@@ -852,13 +852,14 @@ it("leaves later names declared when the resolved-name budget is spent", () => {
 });
 
 it("does not let the first component bypass the resolved-name byte budget", () => {
-  const hugePackage = "p".repeat(ANDROID_MANIFEST_LIMITS.resolvedNameBytes + 1);
+  const hugeName =
+    "." + "A".repeat(ANDROID_MANIFEST_LIMITS.resolvedNameBytes + 1);
   const inventory = parseAndroidManifestComponents(
-    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${hugePackage}"><application><activity android:name=".First"/></application></manifest>`,
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${hugeName}"/></application></manifest>`,
     "complete",
     "33",
   );
-  expect(inventory.items[0]?.name).toBe(".First");
+  expect(inventory.items[0]?.name).toBe(hugeName);
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
     "resolved-name byte budget",
@@ -866,13 +867,13 @@ it("does not let the first component bypass the resolved-name byte budget", () =
 });
 
 it("measures resolved names in UTF-8 bytes before concatenating them", () => {
-  const multibytePackage = "界".repeat(400_000);
+  const multibyteName = "." + "界".repeat(400_000);
   const inventory = parseAndroidManifestComponents(
-    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${multibytePackage}"><application><activity android:name=".Main"/></application></manifest>`,
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${multibyteName}"/></application></manifest>`,
     "complete",
     "33",
   );
-  expect(inventory.items[0]?.name).toBe(".Main");
+  expect(inventory.items[0]?.name).toBe(multibyteName);
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
     "resolved-name byte budget",
@@ -967,3 +968,46 @@ it("keeps a known SDK default from governing a nonliteral exported value", () =>
     "1 component declaration(s) set android:exported",
   );
 });
+
+it.each([
+  "com._hidden",
+  "com.$hidden",
+  "com.Δelta",
+  "com.9bad",
+  "Single",
+  "com..example",
+  ".com.example",
+  "com.example.",
+  "a." + "b".repeat(222),
+])(
+  "preserves relative class identities under an unsupported Android package %s",
+  (packageName) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${packageName}"><application><activity android:name=".Main"/><activity-alias android:name=".Alias" android:targetActivity=".Main" android:exported="false"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.status).toBe("partial");
+    expect(inventory.items.map(({ name }) => name)).toEqual([
+      ".Main",
+      ".Alias",
+    ]);
+    expect(inventory.items[1]?.target_activity).toBe(".Main");
+  },
+);
+
+it.each(["android", "com.Example_9", "a." + "b".repeat(221)])(
+  "qualifies names under the supported Android package %s",
+  (packageName) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${packageName}"><application><activity android:name=".Main"/><activity-alias android:name=".Alias" android:targetActivity=".Main" android:exported="false"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.status).toBe("complete");
+    expect(inventory.items.map(({ name }) => name)).toEqual([
+      `${packageName}.Main`,
+      `${packageName}.Alias`,
+    ]);
+  },
+);

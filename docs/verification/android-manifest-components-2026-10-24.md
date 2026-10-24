@@ -239,3 +239,37 @@ the format/decoder sources, not claims of real-device coverage.
 The subsequent unchanged full selection passes **all 117 cases** in 67.186 s
 elapsed, 52.269 s waited CPU and 2028.3 MiB sampled family RSS. This rerun
 does not erase the earlier timeout recorded above.
+
+## Android package identity correction
+
+The final pre-merge review found that the package qualifier still used Java
+identifier categories. Five new negative controls fail before correction:
+`com._hidden`, `com.$hidden`, `com.Δelta`, an ordinary single-segment package,
+and a name longer than Android's 223-character parser limit. Existing negatives
+also cover digit-led and empty segments. Package qualification now has its own
+Android application-ID grammar: ASCII letter-led segments, ASCII letters/digits/
+underscores, at least one separator, and the platform `android` exception.
+Unsupported recorded package/name strings remain source evidence; relative
+component identities and alias references remain unresolved with partial coverage.
+DEX class-name rules stay separate and unchanged. This does not claim that a
+syntactically supported package or component is installable or loadable.
+
+Authorities are the [Android application-ID documentation](https://developer.android.com/build/configure-app-module#set-application-id),
+and Android 16's pinned
+[package parser](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-16.0.0_r1/core/java/android/content/pm/parsing/ApkLiteParseUtils.java#916)
+and [name validator](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-16.0.0_r1/core/java/android/content/pm/parsing/FrameworkParsingPackageUtils.java#58).
+The documentation requires nonempty segments; the pinned parser is permissive
+about empty segments, which this projection leaves unsupported rather than
+claiming package identity from them. No Package Manager/device execution was
+performed for these cases.
+
+Four existing amplification/copy-budget controls used invalid huge or Unicode packages.
+Three now use a valid package and huge ASCII/multibyte component names, preserving
+aggregate exhaustion, first-row admission and UTF-8 expansion coverage at the
+correct producing boundary. The fourth preserves 511 unresolved aliases under a huge unsupported package without expanding it. The obsolete Java package predicate is removed;
+package interpretation is shared by component and alias qualification.
+
+Earlier real-ApiDemos measurements remain pinned to their stated source commits;
+they are not measurements of this package correction. Response schemas and
+valid ApiDemos facts are unchanged by source reasoning; no fresh speedup or
+whole-agent cost claim is made for this correctness change.

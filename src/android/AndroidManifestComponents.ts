@@ -125,24 +125,11 @@ const trimmed = (element: Element, name: string): string | null => {
   return value === undefined || value.length === 0 ? null : value;
 };
 
-const javaIdentifierStart = /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc})$/u;
-const javaIdentifierPart =
-  /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc}|\p{Mn}|\p{Mc}|\p{Nd}|\p{Cf})$/u;
-
-/** Package declarations keep their Java identifier validation. */
-const hasSupportedJavaPackageNameSyntax = (name: string): boolean => {
-  let segmentStart = true;
-  for (const character of name) {
-    if (character === ".") {
-      if (segmentStart) return false;
-      segmentStart = true;
-    } else if (segmentStart) {
-      if (!javaIdentifierStart.test(character)) return false;
-      segmentStart = false;
-    } else if (!javaIdentifierPart.test(character)) return false;
-  }
-  return !segmentStart;
-};
+/** Android application-ID grammar, with the platform package exception. */
+const hasSupportedAndroidPackageNameSyntax = (name: string): boolean =>
+  name === "android" ||
+  (name.length <= 223 &&
+    /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/u.test(name));
 
 // DEX SimpleName permits digits at the start, '-', supplemental code points,
 // and (since format 040) spaces. A decoded manifest does not qualify DEX
@@ -306,10 +293,10 @@ export const parseAndroidManifestComponents = (
     rawPackageName !== null && rawPackageName !== rawPackageName.trim();
   const packageHasUnresolvedToken =
     packageName !== null && containsUnresolvedToken(packageName);
-  const packageHasUnsupportedClassNameSyntax =
+  const packageHasUnsupportedPackageSyntax =
     packageName !== null &&
     !packageHasUnresolvedToken &&
-    !hasSupportedJavaPackageNameSyntax(packageName);
+    !hasSupportedAndroidPackageNameSyntax(packageName);
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
@@ -417,7 +404,7 @@ export const parseAndroidManifestComponents = (
           (packageName !== null &&
             !packageHasInvalidWhitespace &&
             !packageHasUnresolvedToken &&
-            !packageHasUnsupportedClassNameSyntax));
+            !packageHasUnsupportedPackageSyntax));
       const declaredBytes = Buffer.byteLength(declared);
       const resolvedBytes =
         needsPackage && packageKnown
@@ -445,7 +432,7 @@ export const parseAndroidManifestComponents = (
           packageName !== null &&
           !packageHasInvalidWhitespace &&
           !packageHasUnresolvedToken &&
-          !packageHasUnsupportedClassNameSyntax &&
+          !packageHasUnsupportedPackageSyntax &&
           name.length > packageName.length &&
           name.startsWith(packageName) &&
           name[packageName.length] === "."
@@ -549,7 +536,7 @@ export const parseAndroidManifestComponents = (
             packageName !== null &&
             !packageHasInvalidWhitespace &&
             !packageHasUnresolvedToken &&
-            !packageHasUnsupportedClassNameSyntax;
+            !packageHasUnsupportedPackageSyntax;
           const targetResolved =
             !targetInvalid &&
             !targetUnresolved &&
@@ -641,7 +628,7 @@ export const parseAndroidManifestComponents = (
     );
     truncated = true;
   }
-  if (packageHasUnsupportedClassNameSyntax) {
+  if (packageHasUnsupportedPackageSyntax) {
     limitations.push(
       "The manifest package does not fit the supported Java package-name syntax; package-relative component names were not resolved against it.",
     );
