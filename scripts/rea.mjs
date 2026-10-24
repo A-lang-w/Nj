@@ -5,7 +5,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
-import { windowsMcpAddDelegation } from "./lib/windows-mcp-add.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -86,23 +85,23 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     renderEmptyFilteredCliOutput,
     renderVersionReport,
     parseCliOutputArguments,
+    windowsMcpAddDelegation,
   } = await import("../dist/cli-runtime/cliOutput.js");
   guardClosedStdout();
   // Incur's `mcp add` cannot spawn `npx` on Windows (#5811); REA's own setup can
   // register the same agents there, so delegate and say so. Completion words
   // are transport data, not a command, so they are never delegated.
+  const normalizedArgs = isShellCompletion ? args : normalizeCliArguments(args);
   const delegation = isShellCompletion
     ? undefined
-    : windowsMcpAddDelegation(args, process.platform);
+    : windowsMcpAddDelegation(normalizedArgs, process.platform);
   if (delegation !== undefined && "refusal" in delegation) {
     process.stderr.write(`${delegation.refusal}\n`);
     process.exitCode = 1;
     process.exit(1);
   }
   if (delegation !== undefined) process.stderr.write(`${delegation.note}\n`);
-  const cliArgs = isShellCompletion
-    ? args
-    : normalizeCliArguments(delegation === undefined ? args : delegation.args);
+  const cliArgs = delegation === undefined ? normalizedArgs : delegation.args;
   // Completion words are transport data, including partial output flags.
   const outputOptions = parseCliOutputArguments(
     isShellCompletion ? [] : cliArgs,

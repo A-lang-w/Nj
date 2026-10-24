@@ -7,31 +7,76 @@
 // installed package path and works on Windows, so the dispatcher delegates to
 // it there. Options setup cannot honor are refused, never silently dropped.
 
+import {
+  VALUED_OUTPUT_FLAGS,
+  splitIncurBuiltinArguments,
+} from "../cliBuiltinArguments.js";
+
+export type WindowsMcpAddDelegation =
+  | { readonly refusal: string }
+  | { readonly args: readonly string[]; readonly note: string };
+
 /** Incur agent names use hyphens; REA client IDs use underscores. */
-export const setupClientId = (agent) =>
+export const setupClientId = (agent: string): string =>
   agent.trim().toLowerCase().replaceAll("-", "_");
 
 const MCP_ADD_OPTIONS_WITH_VALUE = new Set(["--agent", "--command", "-c"]);
 
+/** Incur builtins that describe `mcp add` instead of running it; none spawns npx. */
+const INCUR_INTROSPECTION_FLAGS = new Set([
+  "--help",
+  "-h",
+  "--schema",
+  "--llms",
+  "--llms-full",
+]);
+
 /**
- * Decide how `rea mcp add` runs on this platform.
- * Returns undefined when nothing changes (not Windows, or not `mcp add`).
+ * Decide how `rea mcp add` runs on this platform, from arguments already
+ * normalized by `normalizeCliArguments`. Command selection uses Incur's
+ * builtin split, so output flags may appear anywhere and are kept.
+ * Returns undefined when nothing changes (not Windows, not `mcp add`, or an
+ * introspection request such as `--help`).
  * Returns { refusal } when the request cannot be honored through setup.
  * Returns { args, note } with the setup arguments to run instead.
  */
-export const windowsMcpAddDelegation = (args, platform) => {
-  if (platform !== "win32" || args[0] !== "mcp" || args[1] !== "add")
+export const windowsMcpAddDelegation = (
+  normalized: readonly string[],
+  platform: string,
+): WindowsMcpAddDelegation | undefined => {
+  if (platform !== "win32") return undefined;
+  const split = splitIncurBuiltinArguments(normalized);
+  if (split.command[0] !== "mcp" || split.command[1] !== "add")
     return undefined;
-  const rest = args.slice(2);
-  const agents = [];
-  const passthrough = [];
+  const values = new Set(split.outputValues.map(({ index }) => index));
+  if (
+    normalized.some(
+      (token, index) =>
+        !values.has(index) && INCUR_INTROSPECTION_FLAGS.has(token),
+    )
+  )
+    return undefined;
+  const mcp = normalized.findIndex(
+    (token, index) => token === "mcp" && !values.has(index),
+  );
+  const add = normalized.findIndex(
+    (token, index) => index > mcp && token === "add" && !values.has(index),
+  );
+  const agents: string[] = [];
+  const passthrough: string[] = [];
   let projectScope = false;
   let commandOverride = false;
   let dryRun = false;
-  for (let index = 0; index < rest.length; index += 1) {
-    const argument = rest[index];
+  for (let index = 0; index < normalized.length; index += 1) {
+    if (index === mcp || index === add) continue;
+    const argument = normalized[index]!;
+    if (VALUED_OUTPUT_FLAGS.has(argument) && values.has(index + 1)) {
+      passthrough.push(argument, normalized[index + 1]!);
+      index += 1;
+      continue;
+    }
     if (argument === "--agent") {
-      const value = rest[index + 1];
+      const value = normalized[index + 1];
       if (value !== undefined && !value.startsWith("-")) {
         agents.push(value);
         index += 1;
