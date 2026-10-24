@@ -13,10 +13,9 @@ import {
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  evidenceFileBytes,
+  serializedEvidenceFile,
 } from "./environmentBuild.js";
 import {
-  environmentExportFile,
   readEnvironmentExportFile,
   type EnvironmentExportFile,
 } from "./environmentExport.js";
@@ -37,10 +36,9 @@ const captureFile = async (
     );
   const retained = resolveEvidenceInput(source, lookup);
   if (!retained.ok) return retained;
-  return environmentExportFile(
-    "evidence",
+  return serializedEvidenceFile(
+    retained.value,
     source.evidence_id,
-    evidenceFileBytes(retained.value),
     EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
   );
 };

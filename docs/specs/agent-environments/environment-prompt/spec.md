@@ -24,22 +24,30 @@ coverage, re-record by reason, export and hand off.
   an optional JSON body and optional expected statuses. Validation refuses a
   path that resolves to another origin, a body on `GET` or `HEAD`, a 3xx
   expected status, header names a page's `fetch` cannot set or Chrome drops
-  (`User-Agent`), a header name given twice, and line breaks or control
-  characters in literal values and prefixes.
+  (`User-Agent`), a header name given twice, line breaks or control characters
+  in literal values and prefixes, and a path the URL parser rejects, as a field
+  issue at the step's path.
 - Header values are literals, declared secrets, a cookie the browser holds for
-  the request URL, or a local storage value on the start origin, optionally
-  read at a JSON pointer, with an optional prefix. Values read from the page are
-  redacted like declared secrets from records made after they are read, as
-  stored and as sent; a value read again keeps its first marker, a colliding
-  label never unredacts an earlier value, and values shorter than 8 characters
-  are not redacted.
+  the request URL, or a local storage value on the start origin, optionally read
+  at a JSON pointer, with an optional prefix; local storage values are read only
+  while the page is on the start origin. Values read from the page are redacted
+  like declared secrets from records made after they are read, as stored and as
+  sent; a value read again keeps its first marker, a colliding label never
+  unredacts an earlier value, and values shorter than 8 characters are not
+  redacted.
 - The request runs through the page's `fetch` with same-origin credentials, from
   a page on the start origin (checked again in the page as it is sent), follows
-  no redirects, and completes when the response is read. A redirect, a status
-  outside `expected_status`, a network error or the step timeout fails the step;
-  later steps are cancelled as for other actions. A step that is cancelled or
-  out of time before sending sends nothing. Its network events are attributed
-  to the step.
+  no redirects, and completes when the response has been read to its end,
+  without keeping its body. A redirect, a status outside `expected_status`, a
+  network error or the step timeout fails the step; later steps are cancelled as
+  for other actions. The page sends only before the step's deadline, which it
+  receives as an absolute time, and within one second of being handed the
+  request; a busy page that starts later sends nothing, and the step hands the
+  request over again while it is neither cancelled nor out of time. A step
+  cancelled or out of time before the page starts its request sends nothing,
+  except a request the page starts within that second of being handed it. A
+  browser whose clock runs ahead of the host's fails the step. Its network
+  events are attributed to the step.
 - Captures with request steps say so in a limitation. A scenario without one
   validates, runs and records exactly as before.
 - `export_environment_bundle` takes retained capture Evidence or a capture
@@ -50,11 +58,14 @@ coverage, re-record by reason, export and hand off.
   the same report, validated by its output schema. It refuses an existing
   directory, empty or not, a parentless or relative one, unknown Evidence, an
   unnamed loopback capture and repeated rules, and writes nothing when it
-  refuses. `environment-build` is its CLI command.
+  refuses. Retained Evidence is refused for heap headroom before it is
+  serialized, as an Evidence file is before it is read. `environment-build` is
+  its CLI command.
 - The skill reference `references/environments.md` is installed with the skill
   and routed from SKILL.md. It covers disposable instances only, credentials
-  from environment variables, the recording rules the state needs, coverage,
-  the stop rule and the hand-off.
+  from environment variables, the recording rules the state needs, coverage, the
+  stop rule, the hand-off, and how to reach objects by id when the server
+  assigns ids: ids the caller chooses, a second scenario, or the UI.
 - Coverage of a capture whose records are not all timed, which includes every
   browser scenario capture, says the state learns no write clock.
 - Stop rule: re-record a withheld write at most twice for a recording gap

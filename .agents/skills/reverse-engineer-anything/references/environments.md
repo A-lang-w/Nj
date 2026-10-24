@@ -112,11 +112,27 @@ client with it. Match `wait_for` locators to exactly one element.
 3. Write with `request` steps, two numbered scratch objects per write type,
    with varied free text. After each write, and before the next one, read the
    object back by id and then its list: create 1, read 1, list, create 2,
-   read 2, list; never several writes before their reads.
+   read 2, list; never several writes before their reads. When you cannot know
+   a new object's id yet (see below), read only its list after the create; the
+   create's response or the list shows the new object.
 4. Leave more than a second between a create and its first edit
    (`wait_for_timeout` with `duration_ms: 1100`).
 5. Update both objects and read each back; delete both and read each back
    (expect 404) and the list.
+
+A `request` path is fixed when you write the scenario, and no step can use a
+value an earlier response returned, so every read, update or delete by id
+needs an id you know before the run:
+
+- When the API lets the caller choose the id, such as a `uid` in the create
+  body or a `PUT` to a path you name, choose it and use it in the later paths.
+- Otherwise record twice. The first scenario only creates the scratch objects
+  you will edit; take their ids from its create responses in the result. The
+  scenario you keep reads each of those objects by id before editing it, then
+  updates, deletes and reads them back as in step 5, and creates two new
+  scratch objects as in step 3. Check coverage and export the second capture.
+- Or make the update or delete through the UI, opening the object by its
+  scratch name; the page's own requests are recorded like request steps.
 
 About `request` steps:
 

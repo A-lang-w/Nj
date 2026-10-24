@@ -1,8 +1,9 @@
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+import * as v8 from "node:v8";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
@@ -12,6 +13,7 @@ import {
 import { environmentExportFile } from "../../../src/application/environment/environmentExport.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
+import { jsonByteLength } from "../../../src/domain/jsonSerialization.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import {
@@ -21,6 +23,8 @@ import {
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+vi.mock("node:v8", { spy: true });
 
 const TOOL = "export_environment_bundle";
 
@@ -264,6 +268,47 @@ it("refuses unknown, unnamed loopback and non-capture Evidence, and repeated rul
   });
   expect(parseMcpToolError(repeated).error).toMatchObject({
     code: "invalid_request",
+  });
+  await expect(access(output_directory)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("refuses retained Evidence that cannot fit heap headroom before serializing it", async () => {
+  const { client, session } = await connect();
+  const capture = analysisViewCaptureEvidence(
+    environmentManifestCaptureFixture(),
+  );
+  expect(session.recordEvidence(capture).ok).toBe(true);
+  const root = await createTestTempDirectory("rea-bundle-mcp-heap-");
+  const output_directory = join(root, "env");
+  const heap = v8.getHeapStatistics();
+  vi.mocked(v8.getHeapStatistics).mockImplementation(() => ({
+    ...heap,
+    total_available_size: 0,
+  }));
+  let refused: Awaited<ReturnType<typeof client.callTool>>;
+  try {
+    refused = await client.callTool({
+      name: TOOL,
+      arguments: {
+        source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
+        output_directory,
+      },
+    });
+  } finally {
+    vi.mocked(v8.getHeapStatistics).mockReset();
+  }
+  expect(refused.isError).toBe(true);
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "memory",
+      reported_limits: {
+        input: capture.evidence_id,
+        serialized_bytes: jsonByteLength(capture) + 1,
+      },
+    },
   });
   await expect(access(output_directory)).rejects.toMatchObject({
     code: "ENOENT",

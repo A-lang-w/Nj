@@ -14,7 +14,12 @@ type PageResponse =
   | { readonly status: number }
   | { readonly redirected: true }
   | { readonly left: string }
-  | { readonly error: string };
+  | { readonly error: string }
+  | { readonly expired: true }
+  | { readonly late: true };
+
+/** How long after the step hands the page its request the page may still start it; a later start sends nothing and is handed over again. */
+const SEND_START_WINDOW_MS = 1_000;
 
 /** A request step that could not be sent or did not answer as expected. */
 export class ScenarioRequestError extends Error {
@@ -73,15 +78,24 @@ const headerValue = async (
         `Request step ${stepId}: cookie ${value.name} is not set for ${url.origin}.`,
       );
   } else {
-    const stored = await page.evaluate(
-      (key) =>
-        (
-          globalThis as {
-            readonly localStorage?: { getItem(key: string): string | null };
-          }
-        ).localStorage?.getItem(key) ?? null,
-      value.key,
+    // Read only on the start origin: the page may have moved while earlier values were read.
+    const fromPage = await page.evaluate(
+      ({ key, origin }) => {
+        const scope = globalThis as {
+          readonly location?: { origin: string };
+          readonly localStorage?: { getItem(key: string): string | null };
+        };
+        return scope.location?.origin === origin
+          ? { stored: scope.localStorage?.getItem(key) ?? null }
+          : { left: true as const };
+      },
+      { key: value.key, origin: url.origin },
     );
+    if ("left" in fromPage)
+      throw new ScenarioRequestError(
+        `Request step ${stepId} runs from a page on the start origin ${url.origin}; the page moved while header values were read.`,
+      );
+    const { stored } = fromPage;
     if (stored === null)
       throw new ScenarioRequestError(
         `Request step ${stepId}: local storage has no ${value.key} on ${url.origin}.`,
@@ -137,24 +151,30 @@ interface PageRequest {
   readonly method: string;
   readonly headers: [string, string][];
   readonly body: string | undefined;
-  readonly timeoutMs: number | undefined;
+  /** Epoch milliseconds the step's time runs out at, on the clock the page shares with this host. */
+  readonly deadline: number | undefined;
 }
 
 /** Send the request with the page's own fetch, from the page's main world, and read the whole answer. */
 const sendFromPage = (
   page: Page,
-  request: PageRequest,
+  request: PageRequest & { readonly startBy: number },
 ): Promise<PageResponse> =>
   page.evaluate(async (request): Promise<PageResponse> => {
     // The page may have navigated since the origin check; never send from another origin.
     const here = (globalThis as { readonly location?: { origin: string } })
       .location?.origin;
     if (here !== request.origin) return { left: String(here) };
+    // A busy page may run this late; past the step's deadline or its hand-over window it sends nothing.
+    const startedAt = Date.now();
+    if (request.deadline !== undefined && startedAt >= request.deadline)
+      return { expired: true };
+    if (startedAt > request.startBy) return { late: true };
     const controller = new AbortController();
     const timer =
-      request.timeoutMs === undefined
+      request.deadline === undefined
         ? undefined
-        : setTimeout(() => controller.abort(), request.timeoutMs);
+        : setTimeout(() => controller.abort(), request.deadline - startedAt);
     try {
       const answer = await fetch(request.url, {
         method: request.method,
@@ -164,7 +184,12 @@ const sendFromPage = (
         signal: controller.signal,
         ...(request.body === undefined ? {} : { body: request.body }),
       });
-      await answer.arrayBuffer();
+      // Wait for the whole response, dropping each chunk instead of keeping the body.
+      const reader = answer.body?.getReader();
+      if (reader !== undefined) {
+        let chunk = await reader.read();
+        while (!chunk.done) chunk = await reader.read();
+      }
       return answer.type === "opaqueredirect"
         ? { redirected: true }
         : { status: answer.status };
@@ -176,6 +201,39 @@ const sendFromPage = (
       if (timer !== undefined) clearTimeout(timer);
     }
   }, request);
+
+const outOfTime = (stepId: string): ScenarioRequestError =>
+  new ScenarioRequestError(
+    `Request step ${stepId} ran out of time before its request was sent.`,
+  );
+
+/** Hand the page its request until it starts it within the window; a cancelled or timed-out step hands nothing over. */
+const sendWithinWindow = async (
+  page: Page,
+  request: PageRequest,
+  step: { readonly stepId: string; readonly signal: AbortSignal | undefined },
+): Promise<Exclude<PageResponse, { expired: true } | { late: true }>> => {
+  const { deadline } = request;
+  for (;;) {
+    if (
+      step.signal?.aborted === true ||
+      (deadline !== undefined && Date.now() >= deadline)
+    )
+      throw outOfTime(step.stepId);
+    const handedAt = Date.now();
+    const response = await sendFromPage(page, {
+      ...request,
+      startBy: handedAt + SEND_START_WINDOW_MS,
+    });
+    if ("expired" in response) throw outOfTime(step.stepId);
+    if (!("late" in response)) return response;
+    // The page cannot have started late before the window passed here, unless its clock runs ahead.
+    if (Date.now() - handedAt <= SEND_START_WINDOW_MS)
+      throw new ScenarioRequestError(
+        `Request step ${step.stepId}: the browser's clock runs ahead of this host's, so the step cannot tell when the page started its request; nothing was sent.`,
+      );
+  }
+};
 
 /**
  * Send one request from the page with its own fetch, cookies and session, as
@@ -223,20 +281,18 @@ export const performScenarioRequest = async (input: {
   );
   if (action.json !== undefined && !hasContentType)
     headers.push(["content-type", "application/json"]);
-  // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
-    throw new ScenarioRequestError(
-      `Request step ${action.step_id} ran out of time before its request was sent.`,
-    );
-  const response = await sendFromPage(page, {
-    url: target,
-    origin: startOrigin,
-    method: action.method,
-    headers,
-    body: action.json === undefined ? undefined : JSON.stringify(action.json),
-    timeoutMs: remaining,
-  });
+  const response = await sendWithinWindow(
+    page,
+    {
+      url: target,
+      origin: startOrigin,
+      method: action.method,
+      headers,
+      body: action.json === undefined ? undefined : JSON.stringify(action.json),
+      deadline,
+    },
+    { stepId: action.step_id, signal },
+  );
   if ("error" in response)
     throw new ScenarioRequestError(
       `Request step ${action.step_id} failed in the page: ${response.error}`,

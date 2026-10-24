@@ -91,7 +91,14 @@ const validateRequestSteps = (
   const origin = new URL(scenario.start_url.url).origin;
   scenario.actions.forEach((action, index) => {
     if (action.action !== "request") return;
-    if (new URL(action.path, origin).origin !== origin)
+    const resolved = URL.parse(action.path, origin);
+    if (resolved === null)
+      addIssue(
+        context,
+        ["actions", index, "path"],
+        "The request step path is not a URL path the browser can resolve",
+      );
+    else if (resolved.origin !== origin)
       addIssue(
         context,
         ["actions", index, "path"],
