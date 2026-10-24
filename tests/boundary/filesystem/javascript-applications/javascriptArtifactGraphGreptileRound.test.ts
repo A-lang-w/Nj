@@ -12,6 +12,23 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review58-0.mjs",
+    source:
+      'const connect = () => new Socket("wss://example.test/skipped");\nif (false) connect();\nconst Socket = globalThis.WebSocket;\nconnect();',
+    endpoint: "wss://example.test/skipped",
+  },
+  {
+    file: "review58-1.mjs",
+    source:
+      'let box;\ntry {\n  const copy = {...(box = {\n    get first() { throw 0; },\n    get later() { new Socket("wss://example.test/copy"); }\n  })};\n} catch {}\nconst Socket = globalThis.WebSocket;\nbox.later;',
+    endpoint: "wss://example.test/copy",
+  },
+  {
+    file: "review58-2.mjs",
+    source:
+      'export {};\ntry {\n  await (async () => {\n    let first;\n    [first, ({})[await 0]] = (function* () {\n      yield 0;\n      new Socket("wss://example.test/second");\n      yield 0;\n    })();\n  })();\n} catch {}\nconst Socket = globalThis.WebSocket;',
+  },
+  {
     file: "review-implicit-0.mjs",
     source:
       '(async()=>{[({})[await 0]]=(function*(){new Socket("wss://example.test/reference");yield 0})()})();const Socket=globalThis.WebSocket;',

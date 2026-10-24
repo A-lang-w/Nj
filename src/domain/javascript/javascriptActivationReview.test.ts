@@ -5,6 +5,116 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "rest prior selected read must finish",
+    'let box;try{const {first,...copy}=(box={get first(){throw 0},get later(){new Socket("wss://example.test/rest-selected")}})}catch{}const Socket=globalThis.WebSocket;box.later;',
+    ["wss://example.test/rest-selected"],
+  ],
+  [
+    "if alternate stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");if(true){}else connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "false conjunction stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");false&&connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "true disjunction stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");true||connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "conditional skipped arm stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");true?0:connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "false while stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");while(false)connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "false for stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");for(;false;)connect();const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "optional null argument stored caller",
+    'const connect=()=>new Socket("wss://example.test/control58");null?.(connect());const Socket=globalThis.WebSocket;connect();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "rest failed prefix retains later direct read",
+    'let box;try{const {...copy}=(box={get first(){throw 0},get later(){new Socket("wss://example.test/control58")}});}catch{}const Socket=globalThis.WebSocket;box.later;',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "numeric Get order failed prefix retains later direct read",
+    'let box;try{const copy={...(box={get 2(){new Socket("wss://example.test/control58")},get 1(){throw 0}})};}catch{}const Socket=globalThis.WebSocket;box[2];',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "data completed copy prefix stays eager",
+    'try{const copy={...{first:0,get later(){new Socket("wss://example.test/control58")}}}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "getter completed copy prefix stays eager",
+    'try{const copy={...{get first(){return 0},get later(){new Socket("wss://example.test/control58")}}}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "empty getter completed copy prefix stays eager",
+    'try{const copy={...{get first(){},get later(){new Socket("wss://example.test/control58")}}}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "setter completed copy prefix stays eager",
+    'try{const copy={...{set first(value){},get later(){new Socket("wss://example.test/control58")}}}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "numeric target copied before later string throwing getter",
+    'try{const copy={...{get first(){throw 0},get 1(){new Socket("wss://example.test/control58")}}}}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "stored generator step 2 outer wait True",
+    'export {};const produce=function*(){yield 0;new Socket("wss://example.test/control58");yield 0;};try{await (async()=>{let a;[a,({})[await 0]]=produce()})()}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "stored generator step 2 outer wait False",
+    'export {};const produce=function*(){yield 0;new Socket("wss://example.test/control58");yield 0;};try{(async()=>{let a;[a,({})[await 0]]=produce()})()}catch{}const Socket=globalThis.WebSocket;',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "stored generator step 3 outer wait True",
+    'export {};const produce=function*(){yield 0;yield 0;new Socket("wss://example.test/control58");yield 0;};try{await (async()=>{let a,b;[a,b,({})[await 0]]=produce()})()}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "initialized second-step outer wait retains endpoint",
+    'export {};const Socket=globalThis.WebSocket;await(async()=>{let a;[a,({})[await 0]]=(function*(){yield 0;new Socket("wss://example.test/control58");yield 0})()})();',
+    ["wss://example.test/control58"],
+  ],
+  [
+    "syntax-skipped caller before initialized actual call",
+    'const connect = () => new Socket("wss://example.test/skipped");\nif (false) connect();\nconst Socket = globalThis.WebSocket;\nconnect();',
+    ["wss://example.test/skipped"],
+  ],
+  [
+    "failed copying read before independent later getter",
+    'let box;\ntry {\n  const copy = {...(box = {\n    get first() { throw 0; },\n    get later() { new Socket("wss://example.test/copy"); }\n  })};\n} catch {}\nconst Socket = globalThis.WebSocket;\nbox.later;',
+    ["wss://example.test/copy"],
+  ],
+  [
+    "consumer-owned target wait after earlier yield",
+    'export {};\ntry {\n  await (async () => {\n    let first;\n    [first, ({})[await 0]] = (function* () {\n      yield 0;\n      new Socket("wss://example.test/second");\n      yield 0;\n    })();\n  })();\n} catch {}\nconst Socket = globalThis.WebSocket;',
+    [],
+  ],
+  [
     "array current target base waits",
     '(async()=>{[(await 0,{})[0]]=(function*(){new Socket("wss://example.test/reference-base");yield 0})()})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/reference-base"],

@@ -16,6 +16,7 @@ import {
   syntaxEvaluationOperands,
   syntaxMayCompleteNormally,
   syntaxAlwaysThrows,
+  syntaxEvaluationMayBeReached,
 } from "./javascriptSymbolicControlFlow.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
@@ -485,6 +486,7 @@ export const semanticEvaluationMayBeReached = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
+  if (!syntaxEvaluationMayBeReached(node, state.parentsByNode)) return false;
   const bindingFails = (operand: t.Node): boolean => {
     if (t.isExpressionStatement(operand))
       return bindingFails(operand.expression);

@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 
 import {
   semanticLiteralContainer,
+  semanticDirectFunctionResult,
   semanticLiteralProperty,
   semanticFinalObjectSlot,
   semanticStaticPropertyKey,
@@ -11,7 +12,10 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { syntaxEvaluationAlwaysThrows } from "./javascriptSymbolicControlFlow.js";
+import {
+  syntaxEvaluationCannotThrow,
+  syntaxEvaluationAlwaysThrows,
+} from "./javascriptSymbolicControlFlow.js";
 import { semanticPatternCompletionBeforeTarget } from "./javascriptGeneratorConsumerPhases.js";
 import {
   semanticArrayIndex,
@@ -240,7 +244,14 @@ export const semanticLiteralRestSlots = (
       continue;
     if (!excluded.has(key)) keys.add(key);
   }
-  return [...keys].map((key) =>
+  // OwnPropertyKeys orders array indices first, independent of definition
+  // order; copy-prefix completion must follow that same Get sequence.
+  const orderedKeys = [...keys].sort((left, right) => {
+    const a = semanticArrayIndex(left);
+    const b = semanticArrayIndex(right);
+    return a === null ? (b === null ? 0 : 1) : b === null ? -1 : a - b;
+  });
+  return orderedKeys.map((key) =>
     semanticLiteralProjectionSlot(
       node,
       key,
@@ -249,6 +260,30 @@ export const semanticLiteralRestSlots = (
       ownedResultEscape === undefined ? undefined : { ownedResultEscape },
     ),
   );
+};
+
+/** A copied getter is entered only after every preceding own Get completes. */
+export const semanticLiteralCopyGetterIsReached = (
+  node: t.Node,
+  excluded: ReadonlySet<string>,
+  getter: t.ObjectMethod,
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const slots = semanticLiteralRestSlots(node, excluded, capture, state);
+  if (slots === undefined) return false;
+  for (const slot of slots) {
+    if (slot.kind === "accessor") {
+      if (slot.node === getter) return true;
+      const result = semanticDirectFunctionResult(slot.node);
+      if (
+        result.kind === "unknown" ||
+        (result.kind === "value" && !syntaxEvaluationCannotThrow(result.node))
+      )
+        return false;
+    } else if (slot.kind === "unknown" || slot.kind === "invalid") return false;
+  }
+  return false;
 };
 
 /** Resolve fresh-literal slots once, preserving capture order and iteration facts. */

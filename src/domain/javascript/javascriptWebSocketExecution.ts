@@ -3,7 +3,7 @@ import { semanticExpressionCannotThrow } from "./javascriptSemanticExpressionRes
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticLiteralOwnKeysStable,
-  semanticLiteralRestSlots,
+  semanticLiteralCopyGetterIsReached,
 } from "./javascriptSemanticLiteralProjection.js";
 import {
   semanticPatternCompletionBeforeGeneratorRead,
@@ -65,6 +65,7 @@ import {
   syntaxStaticInitializers,
   syntaxBeforeDefiniteThrow,
   syntaxReachableOperands,
+  syntaxEvaluationMayBeReached,
   syntaxOperandAlwaysThrows,
   syntaxMayCompleteWithoutBoundary,
 } from "./javascriptSymbolicControlFlow.js";
@@ -281,8 +282,12 @@ const webSocketFreshMethodSelection = (
           if (name === null) return undefined;
           excluded.add(name);
         } else if (
-          semanticLiteralRestSlots(literal, excluded, item, state)?.some(
-            (slot) => slot.kind === "accessor" && slot.node === property,
+          semanticLiteralCopyGetterIsReached(
+            literal,
+            excluded,
+            property,
+            item,
+            state,
           )
         )
           return item;
@@ -370,8 +375,12 @@ const webSocketFreshMethodSelection = (
       t.isSpreadElement(consumer) &&
       consumer.argument === result &&
       t.isObjectExpression(state.parentsByNode.get(consumer)) &&
-      semanticLiteralRestSlots(literal, new Set(), consumer, state)?.some(
-        (slot) => slot.kind === "accessor" && slot.node === property,
+      semanticLiteralCopyGetterIsReached(
+        literal,
+        new Set(),
+        property,
+        consumer,
+        state,
       )
     )
       return consumer;
@@ -823,7 +832,11 @@ const webSocketStoredCalls = (
     for (const call of state.callSites) {
       // Callee/argument/substitution evaluation must finish before entry. A
       // definite prefix failure is not an activation of the selected body.
-      if (syntaxEvaluationAlwaysThrows(call)) continue;
+      if (
+        syntaxEvaluationAlwaysThrows(call) ||
+        !syntaxEvaluationMayBeReached(call, state.parentsByNode)
+      )
+        continue;
       // Tags receive a synthetic template object before their substitutions;
       // ordinary argument offsets do not prove callback parameter ownership.
       if (t.isTaggedTemplateExpression(call)) continue;
@@ -904,7 +917,11 @@ const webSocketStoredCalls = (
       }
     };
     for (const call of state.callSites) {
-      if (syntaxEvaluationAlwaysThrows(call)) continue;
+      if (
+        syntaxEvaluationAlwaysThrows(call) ||
+        !syntaxEvaluationMayBeReached(call, state.parentsByNode)
+      )
+        continue;
       addCandidates(call, noCallbackParameters);
       const rawTarget = webSocketStoredCallTarget(
         t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
@@ -2835,13 +2852,13 @@ const webSocketExecutionContextsForCalls = (
           )
         )
           suspendedOwner = parent;
-        else if (consumerPhase === "after-wait" && t.isArrayPattern(invocation))
-          // Before the first iterator step, the consumer's target reference
-          // suspends its own activation, not the unstarted generator body.
-          suspendedOwner = webSocketSuspensionOwner(invocation, state);
         const continuation = webSocketContinuation(point, parent.body, state);
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);
+        if (consumerPhase === "after-wait" && t.isArrayPattern(invocation))
+          // A synchronous yield does not supersede the consumer's completed
+          // target/default wait, even for a later step or iterator cleanup.
+          suspendedOwner = webSocketSuspensionOwner(invocation, state);
       }
       // Direct frames are an earlier invocation bound for alias initialization.
       // They do not consult the waiting index that is currently being built.
@@ -2856,6 +2873,12 @@ const webSocketExecutionContextsForCalls = (
       point = storedConsumerRead ?? invocation;
       if (storedConsumerRead !== undefined) {
         current = storedConsumerRead;
+        continue;
+      }
+      if (generatorBody && t.isArrayPattern(invocation)) {
+        // A stored generator's lexical definition need not be inside its
+        // consumer. Continue through the actual pattern activation instead.
+        current = invocation;
         continue;
       }
       // A returned callable executes outside its producer's completed activation.

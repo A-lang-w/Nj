@@ -360,6 +360,30 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
   return syntaxReachablePrefix(node, operands);
 };
 
+/** Enclosing syntax-proven branch selection, without dataflow or call indexing. */
+export const syntaxEvaluationMayBeReached = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  let child = node;
+  for (;;) {
+    const parent = parents.get(child);
+    if (parent === undefined || t.isFunction(parent)) return true;
+    if (
+      (t.isIfStatement(parent) ||
+        t.isConditionalExpression(parent) ||
+        t.isLogicalExpression(parent) ||
+        t.isWhileStatement(parent) ||
+        t.isForStatement(parent) ||
+        t.isOptionalCallExpression(parent) ||
+        t.isOptionalMemberExpression(parent)) &&
+      !syntaxReachableOperands(parent).includes(child)
+    )
+      return false;
+    child = parent;
+  }
+};
+
 type SyntaxAbruptCompletion =
   | { readonly kind: "return" | "throw" | "unknown" | "suspension" }
   | { readonly kind: "break" | "continue"; readonly label: string | null };
