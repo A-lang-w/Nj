@@ -122,6 +122,34 @@ it("reports a working-directory file as invalid input", async () => {
   }
 });
 
+it.skipIf(process.platform === "win32")(
+  "preserves the caller-selected working-directory symlink when pointing to a regular file",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-cwd-symlink-");
+    const targetFile = join(root, "target-file");
+    const aliasFile = join(root, "alias-file");
+    await writeFile(targetFile, "not a directory");
+    await symlink(targetFile, aliasFile);
+    const failure = await runtimePathFailure({
+      executable: process.execPath,
+      working_directory: aliasFile,
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "capture_process_scenario",
+        issues: [
+          {
+            path: ["working_directory"],
+            reason: "invalid_value",
+            message: `working directory is not a directory: ${aliasFile}`,
+          },
+        ],
+      },
+    });
+  },
+);
+
 it("reports an executable directory as invalid input", async () => {
   const root = await mkdtemp(
     join(tmpdir(), "rea-process-executable-directory-"),
