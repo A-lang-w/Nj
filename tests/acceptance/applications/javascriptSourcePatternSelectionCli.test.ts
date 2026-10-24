@@ -1,6 +1,6 @@
 import { createPackageWithOptions } from "@electron/asar";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -82,6 +82,34 @@ cliTest.for([
         unselected_files: files.size - preload.length,
       });
     }
+
+    const selectorsFile = join(
+      await createTestTempDirectory("rea-js-pattern-json-"),
+      "selectors.json",
+    );
+    await writeFile(selectorsFile, JSON.stringify(["out/preload/**"]));
+    const fromFile = await cli.run({
+      arguments: [
+        command,
+        input,
+        "--source-paths-json",
+        selectorsFile,
+        "--format",
+        "json",
+      ],
+    });
+    expect(fromFile.exitCode, fromFile.stderr).toBe(0);
+    const fileEvidence = parseEvidence(fromFile.json);
+    expect(fileEvidence.parameters.source_paths).toEqual(["out/preload/**"]);
+    expect(
+      javascriptApplicationAnalysisResultSchema.parse(
+        fileEvidence.normalized_result,
+      ).source_selection,
+    ).toEqual({
+      requested_paths: ["out/preload/**"],
+      selected_paths: preload,
+      unselected_files: files.size - preload.length,
+    });
 
     const direct = await analysis(["out/preload/*"]);
     expect(direct.result.source_selection).toEqual({

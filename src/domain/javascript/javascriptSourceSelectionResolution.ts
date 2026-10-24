@@ -9,14 +9,31 @@ interface JavaScriptSourceSelectorOutcome {
   readonly unavailablePaths: readonly string[];
   /** True when a folder prefix or glob resolved at least one selector. */
   readonly expanded: boolean;
+  /** Unmatched nonempty selectors need complete inventory to establish absence. */
+  readonly requiresCompleteInventory: boolean;
 }
 
 const hasGlobMeta = (selector: string): boolean =>
   selector.includes("*") || selector.includes("?");
 
+/** Literal segments need no code-point expansion; wildcard segments compile once. */
+type SegmentPattern = string | readonly string[];
+
+const compilePattern = (pattern: string): readonly SegmentPattern[] => {
+  const segments: SegmentPattern[] = [];
+  for (const segment of pattern.split("/")) {
+    if (segment === "**" && segments.at(-1) === "**") continue;
+    segments.push(
+      segment === "**" || !hasGlobMeta(segment) ? segment : Array.from(segment),
+    );
+  }
+  return segments;
+};
+
 /** Match one path segment where `*` spans any run and `?` one code point. */
-const matchSegment = (pattern: string, value: string): boolean => {
-  const patternPoints = Array.from(pattern);
+const matchSegment = (pattern: SegmentPattern, value: string): boolean => {
+  if (typeof pattern === "string") return pattern === value;
+  const patternPoints = pattern;
   const valuePoints = Array.from(value);
   let patternIndex = 0;
   let valueIndex = 0;
@@ -55,50 +72,39 @@ const matchSegment = (pattern: string, value: string): boolean => {
 
 /** Match whole paths where a `**` segment spans zero or more segments. */
 const matchSegments = (
-  patternSegments: readonly string[],
+  patternSegments: readonly SegmentPattern[],
   pathSegments: readonly string[],
 ): boolean => {
-  const failed = new Set<string>();
-  const matchFrom = (patternIndex: number, pathIndex: number): boolean => {
-    const state = `${String(patternIndex)}:${String(pathIndex)}`;
-    if (failed.has(state)) return false;
+  let patternIndex = 0;
+  let pathIndex = 0;
+  let starIndex = -1;
+  let starPathIndex = -1;
+  while (pathIndex < pathSegments.length) {
     const patternSegment = patternSegments[patternIndex];
-    if (patternSegment === undefined) {
-      if (pathIndex === pathSegments.length) return true;
-      failed.add(state);
-      return false;
-    }
-    if (patternSegment === "**") {
-      for (let skip = pathIndex; skip <= pathSegments.length; skip += 1)
-        if (matchFrom(patternIndex + 1, skip)) return true;
-      failed.add(state);
-      return false;
-    }
     const pathSegment = pathSegments[pathIndex];
-    if (
+    if (patternSegment === "**") {
+      starIndex = patternIndex;
+      starPathIndex = pathIndex;
+      patternIndex += 1;
+    } else if (
+      patternSegment !== undefined &&
       pathSegment !== undefined &&
-      matchSegment(patternSegment, pathSegment) &&
-      matchFrom(patternIndex + 1, pathIndex + 1)
-    )
-      return true;
-    failed.add(state);
-    return false;
-  };
-  return matchFrom(0, 0);
-};
-
-const folderMatches = (
-  prefix: string,
-  paths: readonly string[],
-): readonly string[] => {
-  const boundary = `${prefix}/`;
-  return paths
-    .filter((path) => path.startsWith(boundary))
-    .sort(compareUnicodeCodePoints);
+      matchSegment(patternSegment, pathSegment)
+    ) {
+      patternIndex += 1;
+      pathIndex += 1;
+    } else if (starIndex >= 0) {
+      starPathIndex += 1;
+      pathIndex = starPathIndex;
+      patternIndex = starIndex + 1;
+    } else return false;
+  }
+  while (patternSegments[patternIndex] === "**") patternIndex += 1;
+  return patternIndex === patternSegments.length;
 };
 
 /**
- * Resolve caller selectors against the complete artifact inventory. An entry
+ * Resolve caller selectors against the observed artifact inventory. An entry
  * that exactly names an inventoried path selects that path; otherwise it is a
  * folder prefix (trailing slashes ignored) or a glob where `*` matches within
  * one path segment, `**` spans whole segments and `?` matches one character.
@@ -111,23 +117,39 @@ export const resolveJavaScriptSourceSelection = (
 ): JavaScriptSourceSelectorOutcome => {
   const allPaths = new Set(inventoryPaths);
   for (const path of unavailablePaths) allPaths.add(path);
-  const paths = [...allPaths];
+  // Exact-only requests need neither sorting nor path-segment allocations.
+  let orderedPaths: readonly string[] | undefined;
+  let segmentedPaths:
+    | readonly { path: string; segments: readonly string[] }[]
+    | undefined;
+  const ordered = (): readonly string[] =>
+    (orderedPaths ??= [...allPaths].sort(compareUnicodeCodePoints));
   const selectedPaths: string[] = [];
   const selected = new Set<string>();
   const unmatchedIndexes: number[] = [];
   let expanded = false;
+  let requiresCompleteInventory = false;
   for (const [index, entry] of entries.entries()) {
     const base = entry.replace(/\/+$/u, "");
     let matches: readonly string[];
     if (allPaths.has(entry)) matches = [entry];
     else if (base === "") matches = [];
-    else if (hasGlobMeta(base))
-      matches = paths
-        .filter((path) => matchSegments(base.split("/"), path.split("/")))
-        .sort(compareUnicodeCodePoints);
-    else matches = folderMatches(base, paths);
+    else if (hasGlobMeta(base)) {
+      const pattern = compilePattern(base);
+      segmentedPaths ??= ordered().map((path) => ({
+        path,
+        segments: path.split("/"),
+      }));
+      matches = segmentedPaths
+        .filter(({ segments }) => matchSegments(pattern, segments))
+        .map(({ path }) => path);
+    } else {
+      const boundary = `${base}/`;
+      matches = ordered().filter((path) => path.startsWith(boundary));
+    }
     if (matches.length === 0) {
       unmatchedIndexes.push(index);
+      if (base !== "") requiresCompleteInventory = true;
       continue;
     }
     if (!allPaths.has(entry)) expanded = true;
@@ -144,5 +166,6 @@ export const resolveJavaScriptSourceSelection = (
       unavailablePaths.has(path),
     ),
     expanded,
+    requiresCompleteInventory,
   };
 };

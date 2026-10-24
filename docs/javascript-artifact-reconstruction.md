@@ -90,9 +90,9 @@ rea analyze /absolute/path/to/app.asar \
 }
 ```
 
-REA inventories and verifies the complete artifact, including unselected bytes,
+REA attempts to inventory and verify the artifact, including unselected bytes,
 but allocates source text and performs static analysis only for resolved files.
-Each selector resolves against that complete inventory, never the filesystem,
+Each selector resolves against the observed inventory, never the filesystem,
 so folder and glob selection works for an opaque ASAR and keeps the artifact
 identity. An entry that exactly names a relevant inventoried path selects it,
 including nested ASAR prefixes. Otherwise a folder selects every inventoried
@@ -100,8 +100,12 @@ file under it, with or without a trailing slash, and a glob matches where `*`
 stays within one path segment, `**` spans zero or more whole segments and `?`
 matches one character. Matching is case-sensitive. Include supporting
 manifests, HTML or source maps explicitly when needed; imports do not expand
-the selection. Selectors that match no relevant inventoried file and path
-aliases such as `./main.js` return an `invalid_request` correction. Selected
+the selection. With complete inventory, selectors that match no relevant
+inventoried file and path aliases such as `./main.js` return an `invalid_request`
+correction. When directory traversal is incomplete, unmatched selectors return
+an unavailable error with the retained inventory rather than establish absence.
+Observed folder/glob matches remain usable with the incomplete coverage and
+inventory limitations retained. Selected
 files are analyzed in request order before unselected scopes are projected;
 repeated or overlapping selectors preserve the caller's request and
 first-occurrence priority while analyzing each file once. Omit the selection

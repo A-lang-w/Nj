@@ -89,19 +89,13 @@ export const readJavaScriptArtifactFiles = async (
     resolution === undefined
       ? undefined
       : new Map(resolution.selectedPaths.map((path, index) => [path, index]));
-  const undiscoveredPath = sourcePaths?.find(
-    (path) =>
-      relevantKind(path) !== undefined &&
-      !expected.has(path) &&
-      !inventory.unavailableFiles.has(path) &&
-      snapshot.occurrences[
-        lowerBound(snapshot.occurrences, path, (entry) => entry.logical_path)
-      ]?.logical_path !== path,
-  );
-  if (undiscoveredPath !== undefined && snapshot.coverage.status === "unknown")
+  if (
+    resolution?.requiresCompleteInventory &&
+    snapshot.coverage.status === "unknown"
+  )
     throw new ArtifactReaderFailure(
       "unavailable",
-      `Selected source discovery is unavailable under incomplete artifact traversal: ${undiscoveredPath}`,
+      "Unmatched source selection requires a complete artifact inventory; discovery is unavailable under incomplete traversal.",
       {
         partialObservation: { kind: "artifact-inventory", inventory: snapshot },
       },

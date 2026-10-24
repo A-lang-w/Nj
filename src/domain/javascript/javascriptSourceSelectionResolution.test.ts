@@ -20,6 +20,7 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -40,6 +41,7 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -51,6 +53,7 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -60,6 +63,7 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -69,6 +73,7 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -78,12 +83,14 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
     expect(resolve(["out/b.js", "out/**"], ["out/a.js", "out/b.js"])).toEqual({
       selectedPaths: ["out/b.js", "out/a.js"],
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -93,12 +100,14 @@ describe("resolveJavaScriptSourceSelection", () => {
       unmatchedIndexes: [],
       unavailablePaths: ["gone.js"],
       expanded: false,
+      requiresCompleteInventory: false,
     });
     expect(resolve(["**"], ["a.js"], ["gone.js"])).toEqual({
       selectedPaths: ["a.js", "gone.js"],
       unmatchedIndexes: [],
       unavailablePaths: ["gone.js"],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 });
@@ -115,12 +124,14 @@ describe("resolveJavaScriptSourceSelection unmatched selectors", () => {
       unmatchedIndexes: [1, 2, 3],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: true,
     });
     expect(resolve(["nothing/**"], ["a.js"])).toEqual({
       selectedPaths: [],
       unmatchedIndexes: [0],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: true,
     });
   });
 
@@ -130,35 +141,83 @@ describe("resolveJavaScriptSourceSelection unmatched selectors", () => {
       unmatchedIndexes: [0],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: true,
     });
     expect(resolve(["/"], ["a.js"])).toEqual({
       selectedPaths: [],
       unmatchedIndexes: [0],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: false,
     });
     expect(resolve(["out/"], ["out"])).toEqual({
       selectedPaths: [],
       unmatchedIndexes: [0],
       unavailablePaths: [],
       expanded: false,
+      requiresCompleteInventory: true,
     });
   });
 });
 
 describe("resolveJavaScriptSourceSelection glob matching", () => {
+  it.each([
+    [
+      "**/a/**/b.js",
+      ["a/b.js", "x/a/b.js", "a/x/a/b.js", "a/x/b.js", "x/b.js", "a/b.js/x"],
+      ["a/b.js", "a/x/a/b.js", "a/x/b.js", "x/a/b.js"],
+    ],
+    [
+      "**/a?/x/*.js",
+      [
+        "a1/x/a.js",
+        "prefix/a😀/x/b.js",
+        "a12/x/a.js",
+        "a1/x/deep/a.js",
+        "a2/y/a.js",
+      ],
+      ["a1/x/a.js", "prefix/a😀/x/b.js"],
+    ],
+    [
+      "a/**/a/**/z",
+      ["a/a/z", "a/x/a/y/z", "a/z", "a/x/z"],
+      ["a/a/z", "a/x/a/y/z"],
+    ],
+    [
+      "**/x/**/y/*",
+      ["x/y/a", "x/a/x/y/b", "a/x/y/c", "x/y/a/z", "x/a/y/b"],
+      ["a/x/y/c", "x/a/x/y/b", "x/a/y/b", "x/y/a"],
+    ],
+  ] as const)(
+    "backtracks whole-segment stars for %s",
+    (pattern, paths, expected) => {
+      expect(resolve([pattern], paths).selectedPaths).toEqual(expected);
+    },
+  );
+
+  it.each(["a.js", "missing.js"])(
+    "resolves deep double-star selectors ending in %s without recursive stack growth",
+    (suffix) => {
+      const result = resolve([`${"**/".repeat(200000)}${suffix}`], ["a.js"]);
+      expect(result.selectedPaths).toEqual(suffix === "a.js" ? ["a.js"] : []);
+      expect(result.unmatchedIndexes).toEqual(suffix === "a.js" ? [] : [0]);
+    },
+  );
+
   it("keeps a single star within one path segment", () => {
     expect(resolve(["out/*"], ["out/a.js", "out/deep/b.js"])).toEqual({
       selectedPaths: ["out/a.js"],
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
     expect(resolve(["out*"], ["out.js", "out/deep/b.js"])).toEqual({
       selectedPaths: ["out.js"],
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -168,6 +227,7 @@ describe("resolveJavaScriptSourceSelection glob matching", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
     expect(
       resolve(["a/**/z.js"], ["a/z.js", "a/x/y/z.js", "a/x/q.js"]),
@@ -176,12 +236,14 @@ describe("resolveJavaScriptSourceSelection glob matching", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
     expect(resolve(["**/*.map"], ["a.map", "x/y/b.map", "c.js"])).toEqual({
       selectedPaths: ["a.map", "x/y/b.map"],
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -191,6 +253,7 @@ describe("resolveJavaScriptSourceSelection glob matching", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 
@@ -205,6 +268,7 @@ describe("resolveJavaScriptSourceSelection glob matching", () => {
       unmatchedIndexes: [],
       unavailablePaths: [],
       expanded: true,
+      requiresCompleteInventory: false,
     });
   });
 });

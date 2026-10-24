@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Source selectors resolved against the complete artifact inventory: exact
+ * Source selectors resolved against the observed artifact inventory: exact
  * paths, folder prefixes, or globs.
  */
 export const javaScriptSourcePathsSchema = z
@@ -26,7 +26,7 @@ export const javaScriptSourceSelectionSchema = z.strictObject({
   unselected_files: z.int().min(0),
 });
 
-/** Explicit selected-source boundary for an otherwise complete inventory. */
+/** Explicit selected-source boundary, independent of inventory coverage. */
 export type JavaScriptSourceSelection = z.infer<
   typeof javaScriptSourceSelectionSchema
 >;

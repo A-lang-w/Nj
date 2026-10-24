@@ -14,7 +14,7 @@ schema advertises `source_paths`, select inventoried sources: exact paths such
 as `["package.json", "main.js", "preload.js"]`, a folder such as `out/main`, or
 an inventory glob such as `["out/main/**", "out/preload/**"]`. Include
 supporting manifests or source maps explicitly; dependencies are not implicitly
-analyzed. REA retains the complete artifact inventory and identity but reads
+analyzed. REA retains the observed artifact inventory and identity but reads
 source text and analyzes only resolved files. The result and summary record
 `source_selection`, including the resolved `selected_paths` when a folder or
 glob was used; files outside scope and their relationships remain unknown, so
