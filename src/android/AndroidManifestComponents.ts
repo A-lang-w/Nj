@@ -120,11 +120,6 @@ const androidAttribute = (
   return null;
 };
 
-const trimmed = (element: Element, name: string): string | null => {
-  const value = androidAttribute(element, name)?.trim();
-  return value === undefined || value.length === 0 ? null : value;
-};
-
 /** Android application-ID grammar, with the platform package exception. */
 const hasSupportedAndroidPackageNameSyntax = (name: string): boolean =>
   name === "android" ||
@@ -595,7 +590,7 @@ export const parseAndroidManifestComponents = (
         categories: collected.categories,
         foreground_service_type:
           component.nodeName === "service"
-            ? trimmed(component, "foregroundServiceType")
+            ? androidAttribute(component, "foregroundServiceType")
             : null,
         authorities,
         target_activity: targetActivity,

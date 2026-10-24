@@ -1046,3 +1046,22 @@ it("keeps distinct DEX spellings distinct in alias matching", () => {
   expect(inventory.status).toBe("partial");
   expect(inventory.items[1]?.target_activity).toBe(".Hidden ");
 });
+
+it.each([
+  null,
+  "",
+  " ",
+  " location ",
+  "location|dataSync",
+  "@string/service_type",
+])("preserves the declared foreground service type %j", (declared) => {
+  const attribute =
+    declared === null ? "" : ` android:foregroundServiceType="${declared}"`;
+  const inventory = parseAndroidManifestComponents(
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><service android:name=".Service"${attribute}/></application></manifest>`,
+    "complete",
+    "30",
+  );
+  expect(inventory.items[0]?.foreground_service_type).toBe(declared);
+  expect(inventory.status).toBe("complete");
+});

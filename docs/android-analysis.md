@@ -42,8 +42,11 @@ manifest. `declared_name` preserves the source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
 retains the declared name and marks the inventory partial. Empty component
-names and names with surrounding whitespace retain their raw spelling and
-are not treated as identities. Component permissions inherit the application
+names and names with forbidden DEX characters retain their raw spelling and
+are not treated as identities. Valid DEX spaces, including boundary spaces,
+are preserved when resolving component names and matching alias targets.
+Whitespace in the manifest package is rejected by its separate package grammar.
+Component permissions inherit the application
 permission when no component permission is declared, except an activity alias
 with no permission: Android documents that case as requiring no permission
 through the alias. `permission_source` distinguishes a local declaration,
@@ -72,6 +75,11 @@ Provider authorities and all inventory dimensions are bounded. `status:
 capacity limitation appears only when an actual collection limit was reached.
 The projection does not merge manifests, expand resource references, or
 observe runtime enabled/export state.
+
+The service `foreground_service_type` field preserves the declared attribute,
+including an empty value or surrounding spaces; `null` means the attribute is
+absent or the component is not a service. This field does not validate service
+type tokens or establish runtime eligibility.
 
 ## Supply tools
 
