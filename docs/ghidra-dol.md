@@ -38,15 +38,15 @@ Omitting `format` never imports a file as a DOL. Detection does not run for DOL.
 ## What the import does
 
 REA reads the 256-byte DOL header at admission. It checks every section's file
-range and load address, and it computes the BSS range and which data slots BSS
-overlaps. Malformed headers are refused before Ghidra starts.
+range and load address. It records BSS/data overlaps and computes the exact
+uninitialized BSS gaps once. Malformed headers are refused before Ghidra starts.
 
 Ghidra then runs in two steps:
 
 1. The standard `BinaryLoader` maps the whole file at base `0x0`, with
    `-processor` and `-cspec` taken from the language selection below.
 2. The pre-script `bridge/ghidra/ReaGhidraPrepareDol.java` reads a section file
-   that REA wrote from the parsed header. It creates one initialized block per
+   that REA wrote from the parsed header, with versioned collection counts. It creates one initialized block per
    used text and data section at its load address, with file bytes from the
    section's file offset. The whole-file block is removed before the section
    blocks are created. Text is read-execute and data is read-write. It sets the
@@ -59,8 +59,9 @@ any bytes between sections are not mapped either.
 ## BSS
 
 A DOL has one BSS range, and it is not always disjoint from the data sections.
-The pre-script creates uninitialized read-write blocks only in the parts of the
-BSS range that no data section covers. Where BSS overlaps a data slot, that slot
+The domain parser computes the parts of BSS that no data section covers. Both
+the pre-script and load-image attestation consume those parsed ranges. The
+pre-script creates uninitialized read-write blocks only in those gaps. Where BSS overlaps a data slot, that slot
 keeps its file bytes. Overlapping slot indexes are reported by the parser.
 
 ## Bound language

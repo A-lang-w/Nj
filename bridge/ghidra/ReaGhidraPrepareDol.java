@@ -13,11 +13,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Rebuild a GameCube/Wii DOL memory map from the section table REA's TypeScript
+ * Rebuild a GameCube/Wii DOL memory map from the validated load ranges REA's TypeScript
  * admission wrote. BinaryLoader maps the whole file once at address 0; this
  * script replaces that block with text, data, and BSS blocks at their load addresses.
  */
 public final class ReaGhidraPrepareDol extends GhidraScript {
+    // Canonical v2 header, 18 section rows, 12 gap rows and entry, using uint32 hex.
+    private static final int MAX_PLAN_BYTES = 13 + 18 * 49 + 12 * 30 + 17;
     private static final class Section {
         final String kind;
         final int index;
@@ -33,6 +35,8 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
             this.size = size;
         }
     }
+
+    private record BssGap(long address, long size) {}
 
     @Override
     public void run() throws Exception {
@@ -52,16 +56,35 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
         if (!Files.isRegularFile(tablePath, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("GameCube DOL section table is not a regular file");
         }
+        if (Files.size(tablePath) > MAX_PLAN_BYTES) {
+            throw new IllegalArgumentException("GameCube DOL plan exceeds the canonical format's byte bound");
+        }
 
         List<Section> sections = new ArrayList<>();
-        long bssAddress = -1;
-        long bssSize = -1;
+        List<BssGap> bssGaps = new ArrayList<>();
+        int expectedSections = -1;
+        int expectedGaps = -1;
         long entry = -1;
         for (String line : Files.readAllLines(tablePath)) {
             String[] fields = line.trim().split("\\s+");
             switch (fields[0]) {
+                case "plan" -> {
+                    requireFields(fields, 4, line);
+                    if (expectedSections >= 0 || !fields[1].equals("2")) {
+                        throw new IllegalArgumentException("Duplicate or unsupported GameCube DOL plan header");
+                    }
+                    expectedSections = Integer.parseInt(fields[2]);
+                    expectedGaps = Integer.parseInt(fields[3]);
+                    // A DOL has 18 slots, including at most 11 data slots and 12 BSS gaps.
+                    if (expectedSections < 1 || expectedSections > 18 || expectedGaps < 0 || expectedGaps > 12) {
+                        throw new IllegalArgumentException("GameCube DOL plan counts exceed the format's slot bounds");
+                    }
+                }
                 case "section" -> {
                     requireFields(fields, 6, line);
+                    if (expectedSections < 0 || sections.size() >= expectedSections) {
+                        throw new IllegalArgumentException("GameCube DOL section exceeds its declared count");
+                    }
                     sections.add(new Section(
                         fields[1],
                         Integer.parseInt(fields[2]),
@@ -70,10 +93,17 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
                         Long.decode(fields[5])
                     ));
                 }
-                case "bss" -> {
+                case "bss-gap" -> {
                     requireFields(fields, 3, line);
-                    bssAddress = Long.decode(fields[1]);
-                    bssSize = Long.decode(fields[2]);
+                    if (expectedGaps < 0 || bssGaps.size() >= expectedGaps) {
+                        throw new IllegalArgumentException("GameCube DOL BSS gap exceeds its declared count");
+                    }
+                    long address = Long.decode(fields[1]);
+                    long size = Long.decode(fields[2]);
+                    if (address < 0 || size <= 0) {
+                        throw new IllegalArgumentException("GameCube DOL BSS gap is not a positive range");
+                    }
+                    bssGaps.add(new BssGap(address, size));
                 }
                 case "entry" -> {
                     requireFields(fields, 2, line);
@@ -82,7 +112,7 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
                 default -> throw new IllegalArgumentException("Unknown GameCube DOL table line: " + line);
             }
         }
-        if (sections.isEmpty() || bssAddress < 0 || entry < 0) {
+        if (expectedSections != sections.size() || expectedGaps != bssGaps.size() || entry < 0) {
             throw new IllegalArgumentException("GameCube DOL section table is incomplete");
         }
 
@@ -127,28 +157,18 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
             block.setExecute(text);
         }
 
-        // BSS may overlap data sections (.sdata/.sdata2), so map it only into the uncovered gaps.
-        if (bssSize > 0) {
-            List<long[]> gaps = new ArrayList<>();
-            gaps.add(new long[] {bssAddress, bssAddress + bssSize});
-            for (Section section : sections) {
-                if (section.kind.equals("data")) {
-                    gaps = subtract(gaps, section.address, section.address + section.size);
-                }
-            }
-            int gapIndex = 0;
-            for (long[] gap : gaps) {
-                if (gap[1] <= gap[0]) continue;
-                MemoryBlock block = memory.createUninitializedBlock(
-                    ".bss" + gapIndex++,
-                    space.getAddress(gap[0]),
-                    gap[1] - gap[0],
-                    false
-                );
-                block.setRead(true);
-                block.setWrite(true);
-                block.setExecute(false);
-            }
+        // Apply the domain owner's exact uninitialized ranges; do not reinterpret BSS here.
+        int gapIndex = 0;
+        for (BssGap gap : bssGaps) {
+            MemoryBlock block = memory.createUninitializedBlock(
+                ".bss" + gapIndex++,
+                space.getAddress(gap.address()),
+                gap.size(),
+                false
+            );
+            block.setRead(true);
+            block.setWrite(true);
+            block.setExecute(false);
         }
 
         Address entryAddress = space.getAddress(entry);
@@ -170,17 +190,4 @@ public final class ReaGhidraPrepareDol extends GhidraScript {
         }
     }
 
-    /** Remove the half-open range [start, end) from every gap, keeping the remainders. */
-    private static List<long[]> subtract(List<long[]> gaps, long start, long end) {
-        List<long[]> remaining = new ArrayList<>();
-        for (long[] gap : gaps) {
-            if (end <= gap[0] || start >= gap[1]) {
-                remaining.add(gap);
-                continue;
-            }
-            if (gap[0] < start) remaining.add(new long[] {gap[0], start});
-            if (end < gap[1]) remaining.add(new long[] {end, gap[1]});
-        }
-        return remaining;
-    }
 }

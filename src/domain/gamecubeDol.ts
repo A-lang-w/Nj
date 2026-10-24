@@ -34,6 +34,8 @@ export interface DolSection {
 export interface DolHeader {
   readonly sections: readonly DolSection[];
   readonly bss: { readonly address: number; readonly size: number };
+  /** Canonical uninitialized ranges after subtracting loaded data sections. */
+  readonly bssGaps: readonly DolHeader["bss"][];
   /**
    * Slot indexes of data sections whose load range BSS overlaps. Real DOLs do this
    * (.sdata/.sdata2 live inside BSS), so callers must map BSS only into the gaps
@@ -172,6 +174,7 @@ export const parseDolHeader = (
   const bssAddress = view.getUint32(BSS_ADDRESS_FIELD, false);
   const bssSize = view.getUint32(BSS_SIZE_FIELD, false);
   const bssOverlaps: number[] = [];
+  const bssData: DolSection[] = [];
   if (bssSize > 0) {
     if (bssAddress < DOL_MEMORY_START)
       return err(
@@ -187,8 +190,21 @@ export const parseDolHeader = (
       if (slot.kind === "text")
         return err(`bss and ${label(slot)} overlap in load address range`);
       bssOverlaps.push(slot.index);
+      bssData.push(slot);
     }
   }
+
+  const bssGaps: DolHeader["bss"][] = [];
+  const bssEnd = bssAddress + bssSize;
+  let cursor = bssAddress;
+  for (const slot of bssData.sort(
+    (left, right) => left.address - right.address,
+  )) {
+    if (cursor < slot.address)
+      bssGaps.push({ address: cursor, size: slot.address - cursor });
+    cursor = Math.min(bssEnd, slot.address + slot.size);
+  }
+  if (cursor < bssEnd) bssGaps.push({ address: cursor, size: bssEnd - cursor });
 
   return ok({
     sections: used.map(({ kind, index, fileOffset, address, size }) => ({
@@ -199,6 +215,7 @@ export const parseDolHeader = (
       size,
     })),
     bss: { address: bssAddress, size: bssSize },
+    bssGaps,
     bssOverlaps,
     entryPoint,
   });

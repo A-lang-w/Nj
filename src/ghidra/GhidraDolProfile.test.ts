@@ -90,7 +90,7 @@ describe("GameCube DOL Ghidra profile", () => {
       compiler_spec_id: "default",
       language_selection: "provider-pinned-v1",
       entry_point: "0x80003100",
-      dol_import: "binary-loader-sections-v1",
+      dol_import: "binary-loader-sections-v2",
     });
     expect(ghidraPinnedLanguage(target)).toEqual(GHIDRA_GAMECUBE_DOL_LANGUAGE);
     expect(ghidraProfileLanguageOverride(parameters)).toEqual(
@@ -211,18 +211,20 @@ describe("GameCube DOL language and section table", () => {
     if (!parsed.ok) throw new Error(parsed.error);
     expect(ghidraDolSectionFile(parsed.value)).toBe(
       [
+        "plan 2 2 1",
         "section text 0 0x100 0x80003100 0x20",
         "section data 0 0x120 0x80004000 0x10",
-        "bss 0x80005000 0x100",
+        "bss-gap 0x80005000 0x100",
         "entry 0x80003100",
         "",
       ].join("\n"),
     );
   });
 
-  it("writes a zero-size BSS line when the header has none", () => {
+  it("writes an explicit zero-gap count when BSS is absent", () => {
     const parsed = parseDolHeader(buildGamecubeDol());
     if (!parsed.ok) throw new Error(parsed.error);
-    expect(ghidraDolSectionFile(parsed.value)).toContain("bss 0x0 0x0\n");
+    expect(ghidraDolSectionFile(parsed.value)).toContain("plan 2 1 0\n");
+    expect(ghidraDolSectionFile(parsed.value)).not.toContain("bss-gap");
   });
 });

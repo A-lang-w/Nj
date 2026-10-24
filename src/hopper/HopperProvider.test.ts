@@ -27,6 +27,7 @@ describe("Hopper provider capabilities", () => {
           sections: [],
           bss: { address: 0, size: 0 },
           bssOverlaps: [],
+          bssGaps: [],
           entryPoint: 0x8000_3100,
         },
       }),

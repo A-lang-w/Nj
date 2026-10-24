@@ -33,16 +33,19 @@ export const ghidraDolLanguage = (
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 /**
- * Canonical section table the Java pre-script reads. One `section` line per used
- * text or data slot, one `bss` line (size 0 when absent), and one `entry` line.
+ * Versioned map consumed by the Java pre-script. Counts establish completeness;
+ * section and BSS-gap rows reproduce the domain owner's parsed load ranges.
  */
 export const ghidraDolSectionFile = (header: DolHeader): string =>
   [
+    `plan 2 ${String(header.sections.length)} ${String(header.bssGaps.length)}`,
     ...header.sections.map(
       (section) =>
         `section ${section.kind} ${section.index} ${hex(section.fileOffset)} ${hex(section.address)} ${hex(section.size)}`,
     ),
-    `bss ${hex(header.bss.address)} ${hex(header.bss.size)}`,
+    ...header.bssGaps.map(
+      (gap) => `bss-gap ${hex(gap.address)} ${hex(gap.size)}`,
+    ),
     `entry ${hex(header.entryPoint)}`,
   ].join("\n") + "\n";
 
@@ -50,7 +53,7 @@ export const ghidraDolSectionFile = (header: DolHeader): string =>
 export const ghidraDolProfileParameters = (
   header: DolHeader,
 ): Readonly<Record<string, JsonValue>> => ({
-  dol_import: "binary-loader-sections-v1",
+  dol_import: "binary-loader-sections-v2",
   dol_sections: header.sections.map((section) => ({
     kind: section.kind,
     index: section.index,

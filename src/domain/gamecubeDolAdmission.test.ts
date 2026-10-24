@@ -25,6 +25,7 @@ describe("gamecube-dol admission", () => {
           ],
           bss: { address: 0, size: 0 },
           bssOverlaps: [],
+          bssGaps: [],
           entryPoint: 0x8000_3100,
         },
       },

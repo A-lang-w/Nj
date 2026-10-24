@@ -46,6 +46,37 @@ const refusal = (bytes: Uint8Array): string => {
 };
 
 describe("DOL header parsing", () => {
+  it("keeps slot identity while deriving gaps in address order", () => {
+    const parsed = parseDolHeader(
+      dol(
+        {
+          text: [{ offset: 0x100, address: 0x8000_3100, size: 0x20 }],
+          data: [
+            { offset: 0x120, address: 0x8000_4020, size: 8 },
+            { offset: 0x128, address: 0x8000_4008, size: 8 },
+          ],
+          bss: { address: 0x8000_4000, size: 0x30 },
+          entry: 0x8000_3100,
+        },
+        0x130,
+      ),
+    );
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(parsed.value.bssOverlaps).toEqual([0, 1]);
+    expect(
+      parsed.value.sections
+        .filter(({ kind }) => kind === "data")
+        .map(({ index, address }) => [index, address]),
+    ).toEqual([
+      [0, 0x8000_4020],
+      [1, 0x8000_4008],
+    ]);
+    expect(parsed.value.bssGaps).toEqual([
+      { address: 0x8000_4000, size: 8 },
+      { address: 0x8000_4010, size: 0x10 },
+      { address: 0x8000_4028, size: 8 },
+    ]);
+  });
   it("accepts a minimal header with one text section", () => {
     const bytes = dol(
       {
@@ -68,6 +99,7 @@ describe("DOL header parsing", () => {
           },
         ],
         bss: { address: 0x8000_4000, size: 0 },
+        bssGaps: [],
         bssOverlaps: [],
         entryPoint: 0x8000_3100,
       },
@@ -132,6 +164,7 @@ describe("DOL header parsing", () => {
           },
         ],
         bss: { address: 0x8000_4010, size: 0x100 },
+        bssGaps: [{ address: 0x8000_4080, size: 0x90 }],
         bssOverlaps: [0],
         entryPoint: 0x8000_3104,
       },

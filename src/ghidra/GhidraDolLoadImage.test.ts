@@ -200,7 +200,7 @@ describe("GameCube DOL load-image attestation", () => {
     });
   });
 
-  it("flags an initialized BSS mapping that covers the data section", async () => {
+  it("flags a BSS mapping that covers initialized data", async () => {
     const bytes = overlappingDol();
     const target = await dolTarget(bytes);
     const observations = observationsFor(bytes, target.dol);
@@ -428,5 +428,64 @@ describe("GameCube DOL snapshot digest", () => {
       ok: false,
       error: "Ghidra DOL snapshot digest does not match the admitted target",
     });
+  });
+});
+
+it("preserves qualified language blocks outside the default BSS space", async () => {
+  const bytes = overlappingDol();
+  const target = await dolTarget(bytes);
+  const observations = observationsFor(bytes, target.dol);
+  const foreign = {
+    block: "language-registers",
+    start: "other%3Aspace:0x8000fff8",
+    end: "other%3Aspace:0x8000ffff",
+    address_space: "other:space",
+    initialized: false,
+    loaded: false,
+    overlay: false,
+    length: 8,
+    source_file_index: null,
+    file_offset: null,
+    sha256: null,
+    ...DATA_PERM,
+  };
+  observations.mappings.push(foreign);
+  const image = attestedDol(
+    attestGhidraDolLoadImage(
+      snapshotOf(bytes, target),
+      target,
+      observations,
+      undefined,
+    ),
+  );
+  expect(image.status).toBe("verified");
+  expect(image.observations.mappings).toContainEqual(foreign);
+  expect(checkNamed(image.checks, "bss_mappings")).toMatchObject({
+    matched: true,
+  });
+});
+
+it("reports a foreign-space file mapping as a mismatch", async () => {
+  const bytes = overlappingDol();
+  const target = await dolTarget(bytes);
+  const observations = observationsFor(bytes, target.dol);
+  const data = observations.mappings.find(({ block }) => block === ".data0");
+  if (data === undefined) throw new Error("Missing data mapping");
+  data.start = "overlay%3Aone:0x80010000";
+  data.end = "overlay%3Aone:0x8001000f";
+  data.address_space = "overlay:one";
+  data.overlay = true;
+  const image = attestedDol(
+    attestGhidraDolLoadImage(
+      snapshotOf(bytes, target),
+      target,
+      observations,
+      undefined,
+    ),
+  );
+  expect(image.status).toBe("mismatch");
+  expect(image.observations.mappings).toContainEqual(data);
+  expect(checkNamed(image.checks, "file_backed_mappings")).toMatchObject({
+    matched: false,
   });
 });

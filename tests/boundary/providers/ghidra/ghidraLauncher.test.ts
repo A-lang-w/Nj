@@ -725,7 +725,7 @@ describe("Ghidra GameCube DOL section file", () => {
       const runtime = await createGhidraTestRuntime(parent);
       runtimes.push(runtime);
       const sectionFile =
-        "kind index fileOffset address size\ntext 0 0x100 0x80003100 0x20\n";
+        "plan 2 1 0\nsection text 0 0x100 0x80003100 0x20\nentry 0x80003100\n";
       const spawnProcess = vi.fn(async () => {
         throw new Error("fixture stops before process creation");
       });

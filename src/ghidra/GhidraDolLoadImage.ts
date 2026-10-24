@@ -2,6 +2,7 @@ import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { DolHeader } from "../domain/gamecubeDol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -12,7 +13,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ghidraDolLanguage } from "./GhidraDolProfile.js";
 
 type DolTarget = Extract<BinaryTarget, { format: "gamecube-dol" }>;
-type Range = { readonly start: number; readonly end: number };
 
 /**
  * Digests of the immutable DOL snapshot, streamed by the Ghidra client: whole
@@ -56,27 +56,20 @@ type FileFacts = {
 };
 type BssFacts = Omit<FileFacts, "file_offset" | "sha256" | "source_file_index">;
 const hex = (value: number): string => `0x${value.toString(16)}`;
-const byStart = <T extends { readonly start: string }>(left: T, right: T) =>
-  Number(BigInt(left.start) - BigInt(right.start));
-
-/** Remove every data range from the BSS range, keeping the uncovered gaps. */
-const uncoveredBss = (
-  bss: Range,
-  dataRanges: readonly Range[],
-): readonly Range[] =>
-  dataRanges.reduce<readonly Range[]>(
-    (gaps, data) =>
-      gaps.flatMap((gap) => {
-        if (data.end <= gap.start || data.start >= gap.end) return [gap];
-        return [
-          ...(gap.start < data.start
-            ? [{ start: gap.start, end: data.start }]
-            : []),
-          ...(data.end < gap.end ? [{ start: data.end, end: gap.end }] : []),
-        ];
-      }),
-    bss.end > bss.start ? [bss] : [],
-  );
+const byStart = <
+  T extends { readonly start: string; readonly address_space: string },
+>(
+  left: T,
+  right: T,
+): number =>
+  left.address_space === right.address_space
+    ? Number(
+        nativeAddressCoordinateInputSchema.parse(left.start).offset -
+          nativeAddressCoordinateInputSchema.parse(right.start).offset,
+      )
+    : left.address_space < right.address_space
+      ? -1
+      : 1;
 
 /**
  * Verify the imported DOL against its header: every used section is one
@@ -167,23 +160,18 @@ export const attestGhidraDolLoadImage = (
     .map((mapping) => fileFacts(mapping))
     .sort(byStart);
 
-  const dataRanges = header.sections
-    .filter((section) => section.kind === "data")
-    .map((section) => ({
-      start: section.address,
-      end: section.address + section.size,
-    }));
   const bssRange = {
     start: header.bss.address,
     end: header.bss.address + header.bss.size,
   };
-  const inBss = (address: string): boolean =>
-    BigInt(address) >= BigInt(bssRange.start) &&
-    BigInt(address) < BigInt(bssRange.end);
-  const expectedBss = uncoveredBss(bssRange, dataRanges).map((gap) => ({
-    start: hex(gap.start),
-    end: hex(gap.end - 1),
-    length: gap.end - gap.start,
+  const inBss = (address: string): boolean => {
+    const offset = nativeAddressCoordinateInputSchema.parse(address).offset;
+    return offset >= BigInt(bssRange.start) && offset < BigInt(bssRange.end);
+  };
+  const expectedBss = header.bssGaps.map((gap) => ({
+    start: hex(gap.address),
+    end: hex(gap.address + gap.size - 1),
+    length: gap.size,
     initialized: false,
     loaded: true,
     overlay: false,
@@ -194,6 +182,7 @@ export const attestGhidraDolLoadImage = (
     (mapping) =>
       mapping.source_file_index === null &&
       !mapping.initialized &&
+      mapping.address_space === observations.default_address_space &&
       inBss(mapping.start),
   );
   const observedBss = observedBssBlocks
