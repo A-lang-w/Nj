@@ -80,6 +80,7 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  isTypeOnlyImportDeclaration,
   isTypeOnlyImportSpecifier,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
@@ -2039,6 +2040,7 @@ const bindImports = (
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
+  if (isTypeOnlyImportDeclaration(node)) return;
   for (const specifier of node.specifiers) {
     if (t.isImportSpecifier(specifier) && isTypeOnlyImportSpecifier(specifier))
       continue;
