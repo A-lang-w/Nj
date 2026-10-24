@@ -15,8 +15,8 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   );
   if (advertised?.outputSchema === undefined)
     throw new Error("Missing advertised IPS output schema");
-    const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const inputSchema: Record<string, unknown> = advertised.inputSchema;
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(advertised?.annotations).toMatchObject({
     readOnlyHint: false,
