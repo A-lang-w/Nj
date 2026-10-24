@@ -4,7 +4,6 @@ import {
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
 } from "../domain/analysisResourceLimits.js";
 export {
-  DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
 } from "../domain/analysisResourceLimits.js";
