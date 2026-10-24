@@ -305,9 +305,9 @@ export class EnvironmentStateExtraction {
 
   /** Parse one body and hand it to `use` before its temporary work is dropped; unusable bodies arrive undefined. */
   #withBody<T>(ordinal: number, use: (body: JsonValue | undefined) => T): T {
-    const parsed = this.#budget.body(ordinal);
-    if (parsed === null) throw new StateBudgetExhausted();
     try {
+      const parsed = this.#budget.body(ordinal);
+      if (parsed === null) throw new StateBudgetExhausted();
       return use(parsed.kind === "json" ? parsed.value : undefined);
     } finally {
       this.#budget.release();

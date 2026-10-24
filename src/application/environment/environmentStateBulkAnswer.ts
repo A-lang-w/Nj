@@ -6,12 +6,9 @@ import {
   bodyProblem,
   updatedEntity,
   updatedFields,
-  writtenResponse,
+  writtenBulkResponse,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
-import type {
-  FieldRule,
-  WriteResponse,
-} from "../../domain/analysisView/environmentStateWriteRules.js";
+import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type {
   JsonObject,
   StateEntity,
@@ -49,29 +46,6 @@ interface BulkTarget {
   readonly entity: StateEntity;
   readonly body: JsonObject | undefined;
 }
-
-/** A bulk answer from the recorded one: one element per written entity, rendered as the first recorded element shows its entity. */
-const bulkResponse = (
-  response: WriteResponse,
-  recorded: JsonValue | undefined,
-  written: readonly { readonly fields: JsonObject; readonly id: string }[],
-): Result<JsonValue | undefined, string> => {
-  if (response.shape === "empty") return ok(undefined);
-  const [template] = Array.isArray(recorded) ? recorded : [];
-  if (template === undefined)
-    return err("The recorded response shows no element to render.");
-  const elements: JsonValue[] = [];
-  for (const entity of written) {
-    const element = writtenResponse(
-      { ...response, pointer: "" },
-      template,
-      entity,
-    );
-    if (!element.ok) return element;
-    elements.push(element.value ?? null);
-  }
-  return ok(elements);
-};
 
 /** The held entities a bulk call names, with the members each gets, or a refusal for an entity the state does not hold. */
 const namedTargets = (
@@ -193,7 +167,7 @@ export const answerBulk = (
   const answer = writeAnswer(
     serving,
     request,
-    (recorded) => bulkResponse(plan.response!, recorded, written.value),
+    (recorded) => writtenBulkResponse(plan.response!, recorded, written.value),
     {
       source: "state",
       view: update ? "update" : "delete",

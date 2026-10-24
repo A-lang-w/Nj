@@ -446,6 +446,30 @@ export const writtenResponse = (
   );
 };
 
+/** The shared bulk renderer: fixed acknowledgements, or one first-template element per written entity. */
+export const writtenBulkResponse = (
+  response: WriteResponse,
+  recorded: JsonValue | undefined,
+  written: readonly { readonly fields: JsonObject; readonly id: string }[],
+): Applied<JsonValue | undefined> => {
+  if (response.shape === "empty") return ok(undefined);
+  if (response.shape === "recorded") return ok(recorded);
+  const [template] = Array.isArray(recorded) ? recorded : [];
+  if (template === undefined)
+    return err("The recorded response shows no element to render.");
+  const elements: JsonValue[] = [];
+  for (const entity of written) {
+    const element = writtenResponse(
+      { ...response, pointer: "" },
+      template,
+      entity,
+    );
+    if (!element.ok) return element;
+    elements.push(element.value ?? null);
+  }
+  return ok(elements);
+};
+
 /** An entity with updated fields: view-specific values of the fields that changed give way to the new values, and it cites no records. */
 export const updatedEntity = (
   entity: StateEntity,

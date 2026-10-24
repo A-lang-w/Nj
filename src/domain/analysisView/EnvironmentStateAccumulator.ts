@@ -137,6 +137,7 @@ const UNKNOWNS: StateView["unknowns"] = [
 /** The manifest's grouping plus the record facts and bodies the init state is extracted from. */
 export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator {
   readonly #entries = new Map<number, RecordEntry>();
+  readonly #bodyReleases: (() => void)[] = [];
 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
@@ -282,6 +283,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
 
   /** Parse one retained response body as state JSON, charging its decoding and tree as temporary work. */
   #body(ordinal: number): ParsedBody | null {
+    this.#bodyReleases.push(this.temporaryCheckpoint());
     const entry = this.#entries.get(ordinal);
     // A body that is not JSON-like is refused before its decoding is charged.
     if (entry === undefined || !isJsonLike(mediaTypeEssence(entry.contentType)))
@@ -314,6 +316,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     const { mimeType, text } = request.data.request.postData;
     if (Buffer.byteLength(text, "utf8") > STATE_BODY_LIMIT_BYTES)
       return { kind: "unusable" };
+    const release = this.temporaryCheckpoint();
     if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
       return null;
     try {
@@ -322,7 +325,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         ? { kind: "unusable" }
         : { kind: "json", value };
     } finally {
-      this.releaseTemporary();
+      release();
     }
   }
 
@@ -375,7 +378,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         emptyResponse: (ordinal) => this.#emptyResponse(ordinal),
         retain: (bytes) => this.retain(bytes),
         checkpoint: () => this.retainedCheckpoint(),
-        release: () => this.releaseTemporary(),
+        release: () => this.#bodyReleases.pop()?.(),
       },
     }).run();
     if (state === null) return this.overBudget();

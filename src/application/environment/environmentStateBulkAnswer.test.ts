@@ -5,8 +5,10 @@ import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
+  BOTH_BOOKS_RENAMED_ROWS,
   FIRST_BOOK,
   SECOND_BOOK,
+  bothBooksDeleted,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -29,64 +31,185 @@ const BULK_RENAME_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books", [RENAMED_AT_3, SECOND_BOOK]],
 ];
 
-/** A book with an `archived` flag, which an item action sets. */
-const shelved = (entity: Book, archived: boolean) => ({ ...entity, archived });
+const DELETED_READS: TimedCaptureRow[] = [
+  ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books", []],
+];
 
-describe("served bulk writes", () => {
-  it("learns a delete whose recording returned multiple entity objects", () => {
+describe("bulk response records and rendering", () => {
+  it.each([1, 2])(
+    "serves a multi-entity delete recording for %s caller targets",
+    (count) => {
+      const books = servedFrom([
+        ...BOOK_INIT_ROWS,
+        [
+          "DELETE",
+          "/api/books",
+          [{ id: 1 }, { id: 2 }],
+          200,
+          [{ id: 1 }, { id: 2 }],
+        ],
+        ...DELETED_READS,
+      ]);
+      expect(books.state.writes.get("delete_books")).toMatchObject({
+        served: true,
+        response: { shape: "entity", pointer: "/0" },
+      });
+      const body = count === 1 ? [{ id: 2 }] : [{ id: 1 }, { id: 2 }];
+      expect(books.answer("delete_books", { body })).toMatchObject({
+        body,
+        state: { view: "delete" },
+      });
+      expect(
+        books.store.ofType("/api/books").map((entity) => entity.id),
+      ).toEqual(count === 1 ? ["1"] : []);
+    },
+  );
+
+  it("serves multiple returned identities with their recorded scalar kind", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", [1, 2], 200, { ids: [1, 2] }],
+      ...DELETED_READS,
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: true,
+      response: { shape: "identity", pointer: "/0" },
+    });
+    expect(books.answer("delete_books", { body: { ids: [2] } }).body).toEqual([
+      2,
+    ]);
+  });
+
+  it("updates each returned entity without copying the first entity's fields to the others", () => {
+    const renamed = [
+      renamedBook(FIRST_BOOK, "Recorded", 3),
+      renamedBook(SECOND_BOOK, "Recorded", 3),
+    ];
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books", renamed, 200, { ids: [1, 2], name: "Recorded" }],
+      ["GET", "/api/books/1", renamed[0]!],
+      ["GET", "/api/books/2", renamed[1]!],
+      ["GET", "/api/books", renamed],
+    ]);
+    expect(books.state.writes.get("patch_books")).toMatchObject({
+      served: true,
+    });
+    expect(
+      books.answer("patch_books", { body: { ids: [1, 2], name: "Changed" } })
+        .body,
+    ).toMatchObject([
+      { id: 1, name: "Changed", created_at: FIRST_BOOK.created_at },
+      { id: 2, name: "Changed", created_at: SECOND_BOOK.created_at },
+    ]);
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      id: 2,
+      name: "Changed",
+    });
+  });
+});
+
+describe("bulk response proof and refusals", () => {
+  it("withholds delete responses whose values differ from the held entities", () => {
+    const held = [FIRST_BOOK, SECOND_BOOK].map((entry) => ({
+      ...entry,
+      deleted: false,
+    }));
+    const books = servedFrom([
+      ["GET", "/api/books", held],
+      ["GET", "/api/books/1", held[0]!],
+      ["GET", "/api/books/2", held[1]!],
+      [
+        "DELETE",
+        "/api/books",
+        held.map((entry) => ({ ...entry, deleted: true })),
+        200,
+        { ids: [1, 2] },
+      ],
+      ...DELETED_READS,
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: false,
+      reason: "body-unusable",
+    });
+  });
+
+  it("withholds an unparsed acknowledgement instead of treating unknown contents as absent", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,
       [
         "DELETE",
         "/api/books",
-        [{ id: 1 }, { id: 2 }],
+        "unparsed acknowledgement",
         200,
-        [{ id: 1 }, { id: 2 }],
+        { ids: [1, 2] },
       ],
-      ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
-      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
-      ["GET", "/api/books", []],
+      ...DELETED_READS,
     ]);
-    expect(books.answer("delete_books", { body: [{ id: 2 }] })).toMatchObject({
-      status: 200,
-      body: [{ id: 2 }],
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: false,
+      reason: "body-unusable",
     });
-    expect(books.store.ofType("/api/books").map((book) => book.id)).toEqual([
-      "1",
-    ]);
   });
 
-  it("learns an update whose recording returned multiple entity objects", () => {
-    const renamed = [FIRST_BOOK, SECOND_BOOK].map((book) =>
-      renamedBook(book, "Renamed Book", 3),
-    );
+  it("serves a recorded acknowledgement that names and counts no targets", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,
-      [
-        "PATCH",
-        "/api/books",
-        renamed,
-        200,
-        { ids: [1, 2], name: "Renamed Book" },
-      ],
-      ["GET", "/api/books/1", renamed[0]!],
-      ["GET", "/api/books/2", renamed[1]!],
-      ["GET", "/api/books", renamed],
+      ["DELETE", "/api/books", { ok: true }, 200, { ids: [1, 2] }],
+      ...DELETED_READS,
     ]);
-    expect(
-      books.answer("patch_books", { body: { ids: [2], name: "Changed" } }),
-    ).toMatchObject({
-      status: 200,
-      body: [{ id: 2, name: "Changed", slug: "changed" }],
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: true,
     });
-    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
-      FIRST_BOOK,
+    expect(books.answer("delete_books", { body: { ids: [2] } }).body).toEqual({
+      ok: true,
+    });
+    expect(books.store.ofType("/api/books").map((entity) => entity.id)).toEqual(
+      ["1"],
     );
-    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
-      name: "Changed",
-    });
   });
 
+  it.each([
+    { response: [{ id: 2 }, { id: 1 }] },
+    { response: [{ id: 1 }, { id: 2, name: "Second" }] },
+  ])(
+    "withholds a response the shared first-element renderer cannot reproduce: %j",
+    ({ response }) => {
+      const books = servedFrom([
+        ...BOOK_INIT_ROWS,
+        ["DELETE", "/api/books", response, 200, [{ id: 1 }, { id: 2 }]],
+        ...DELETED_READS,
+      ]);
+      expect(books.state.writes.get("delete_books")).toMatchObject({
+        served: false,
+        reason: "body-unusable",
+      });
+    },
+  );
+
+  it("withholds a tool whose later response changes its modelled shape", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["DELETE", "/api/books", [{ id: 2 }], 200, [{ id: 2 }]],
+      ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", [FIRST_BOOK]],
+      ["DELETE", "/api/books", { ok: true }, 200, [{ id: 1 }]],
+      ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ["GET", "/api/books", []],
+    ]);
+    expect(books.state.writes.get("delete_books")).toMatchObject({
+      served: false,
+      reason: "body-unusable",
+    });
+  });
+});
+
+/** A book with an `archived` flag, which an item action sets. */
+const shelved = (entity: Book, archived: boolean) => ({ ...entity, archived });
+
+describe("served bulk writes", () => {
   it("deletes every row a call names, answering one element per row", () => {
     const books = servedFrom(BULK_DELETE_ROWS);
     expect(
@@ -165,6 +288,28 @@ describe("served bulk write queries and capacity", () => {
 });
 
 describe("served bulk write targets", () => {
+  it.each(["part/one", "%31", "A\uD800"])(
+    "resolves a literal JSON body identity without turning it into a URL: %j",
+    (id) => {
+      const unusual = { ...SECOND_BOOK, id };
+      const books = servedFrom([
+        ["GET", "/api/books", [FIRST_BOOK, unusual]],
+        ["GET", "/api/books/1", FIRST_BOOK],
+        ["DELETE", "/api/books", "", 204, { ids: [id] }],
+        ["GET", "/api/books", [FIRST_BOOK]],
+      ]);
+      expect(books.state.writes.get("delete_books")).toMatchObject({
+        served: true,
+      });
+      expect(
+        books.answer("delete_books", { body: { ids: [id] } }),
+      ).toMatchObject({ state: { ids: [id] } });
+      expect(
+        books.store.ofType("/api/books").map((entity) => entity.id),
+      ).toEqual(["1"]);
+    },
+  );
+
   it.each(["number", "string"] as const)(
     "refuses ids whose JSON kind differs from the recorded %s array, without changing state",
     (kind) => {
@@ -226,6 +371,41 @@ describe("served bulk write targets", () => {
     expect(store.byteLength()).toBe(
       Buffer.byteLength(JSON.stringify(store.snapshot()), "utf8"),
     );
+  });
+});
+
+describe("served bulk writes whose recordings answered every entity", () => {
+  it("answers an update with each entity it wrote, in the call's order", () => {
+    const books = servedFrom(BOTH_BOOKS_RENAMED_ROWS);
+    const answer = books.answer("patch_books", {
+      body: { ids: [2, 1], name: "Other Book" },
+    });
+    expect(answer).toMatchObject({
+      body: [
+        { id: 2, name: "Other Book", slug: "other-book" },
+        { id: 1, name: "Other Book", slug: "other-book" },
+      ],
+      state: { source: "state", view: "update", ids: ["2", "1"] },
+    });
+    expect(answer.body).toEqual(
+      ["2", "1"].map((id) => books.answer("get_books_by_id", { id }).body),
+    );
+  });
+
+  it("answers a delete with the rows or ids it names, never the recorded ones", () => {
+    const rows = servedFrom(
+      bothBooksDeleted([{ id: 1 }, { id: 2 }], [{ id: 1 }, { id: 2 }]),
+    );
+    expect(rows.answer("delete_books", { body: [{ id: 2 }] }).body).toEqual([
+      { id: 2 },
+    ]);
+    expect(rows.store.ofType("/api/books").map((entry) => entry.id)).toEqual([
+      "1",
+    ]);
+    const ids = servedFrom(bothBooksDeleted([1, 2], { ids: [1, 2] }));
+    expect(ids.answer("delete_books", { body: { ids: [2] } }).body).toEqual([
+      2,
+    ]);
   });
 });
 

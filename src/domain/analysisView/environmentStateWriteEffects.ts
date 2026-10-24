@@ -58,6 +58,7 @@ import {
   type StateWritePlan,
   type WriteCall,
   type WriteReason,
+  type WriteResponse,
 } from "./environmentStateWriteRules.js";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
@@ -147,6 +148,10 @@ export interface WriteStep {
   readonly observeOnly: boolean;
   /** Whether the call sent the query serving pins, its exemplar's, as every call before the plan is built does. */
   readonly pinned: boolean;
+  /** A bulk response already classified by its owning body lease. */
+  readonly response?: WriteResponse;
+  /** Its entity at the exact source pointer, or null when that response shows none. */
+  readonly responseObservation?: Observed | null;
 }
 
 /**
@@ -280,23 +285,27 @@ const updatedObservation = (
   },
 ): UpdateObservation | undefined => {
   const { required, borrow } = observing;
-  const own = context.io.withBody(
-    step.record.ordinal,
-    (body): Observed | undefined => {
-      const located =
-        body === undefined ? undefined : locateItem(body, entity.id);
-      const object =
-        located === undefined ? undefined : at(body!, located.pointer);
-      return located?.keys.includes(entity.idField) === true && isObject(object)
-        ? {
-            ordinal: step.record.ordinal,
-            pointer: located.pointer,
-            object,
-            id: entity.id,
-          }
-        : undefined;
-    },
-  );
+  const own =
+    step.responseObservation === undefined
+      ? context.io.withBody(
+          step.record.ordinal,
+          (body): Observed | undefined => {
+            const located =
+              body === undefined ? undefined : locateItem(body, entity.id);
+            const object =
+              located === undefined ? undefined : at(body!, located.pointer);
+            return located?.keys.includes(entity.idField) === true &&
+              isObject(object)
+              ? {
+                  ordinal: step.record.ordinal,
+                  pointer: located.pointer,
+                  object,
+                  id: entity.id,
+                }
+              : undefined;
+          },
+        )
+      : (step.responseObservation ?? undefined);
   if (
     own !== undefined &&
     required.every((field) => Object.hasOwn(own.object, field))
@@ -396,12 +405,14 @@ const buildUpdate = (
       ordinal: evidence.after.ordinal,
       pointer: evidence.after.pointer,
     },
-    response: context.io.withBody(ordinal, (response) =>
-      responseShapeOf(ordinal, response, context.io.emptyResponse(ordinal), {
-        idField: evidence.idField,
-        id: evidence.after.id,
-      }),
-    ),
+    response:
+      step.response ??
+      context.io.withBody(ordinal, (response) =>
+        responseShapeOf(ordinal, response, context.io.emptyResponse(ordinal), {
+          idField: evidence.idField,
+          id: evidence.after.id,
+        }),
+      ),
     body: {
       ...evidence.explained.body,
       ...envelopeMember(context.io.requestBody(ordinal)),

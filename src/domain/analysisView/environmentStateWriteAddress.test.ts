@@ -7,8 +7,10 @@ import {
 import {
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
+  BOTH_BOOKS_RENAMED_ROWS,
   FIRST_BOOK,
   SECOND_BOOK,
+  bothBooksDeleted,
   environmentStateViewOf,
   renamedBook,
   type Book,
@@ -119,6 +121,51 @@ describe("bulk writes at a collection", () => {
         "delete_books",
       ),
     ).toMatchObject({ served: false, reason: "body-unusable" });
+  });
+});
+
+describe("bulk responses listing each written entity", () => {
+  it("serves a delete answering one element per row it names", () => {
+    expect(
+      planOf(
+        bothBooksDeleted([{ id: 1 }, { id: 2 }], [{ id: 1 }, { id: 2 }]),
+        "delete_books",
+      ),
+    ).toMatchObject({
+      served: true,
+      response: { ordinal: 3, shape: "entity", pointer: "/0" },
+      checked_record_ordinals: [4, 5, 6],
+    });
+  });
+
+  it("serves a delete answering the ids it named", () => {
+    expect(planOf(bothBooksDeleted([1, 2]), "delete_books")).toMatchObject({
+      served: true,
+      response: { ordinal: 3, shape: "identity", pointer: "/0" },
+    });
+  });
+
+  it("serves an update answering every entity it wrote", () => {
+    expect(planOf(BOTH_BOOKS_RENAMED_ROWS, "patch_books")).toMatchObject({
+      served: true,
+      response: { ordinal: 3, shape: "entity", pointer: "/0" },
+    });
+  });
+
+  it("serves no bulk call whose response lists its entities in an order or form serving does not render", () => {
+    for (const response of [
+      [{ id: 2 }, { id: 1 }],
+      [{ id: 1, name: "First Book" }, { id: 2 }],
+      [{ id: 1 }, { id: 2, deleted: true }],
+      [{ id: 1 }, { id: 3, parent: 2 }],
+      [1, "2"],
+      [{ book: { id: 1 } }, { book: { id: 2 } }],
+      { data: [{ id: 1 }, { id: 2 }] },
+    ])
+      expect(planOf(bothBooksDeleted(response), "delete_books")).toMatchObject({
+        served: false,
+        reason: "body-unusable",
+      });
   });
 });
 
