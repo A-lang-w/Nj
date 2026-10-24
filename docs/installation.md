@@ -971,8 +971,15 @@ does not satisfy this host-validated admission rule. Current 12.1 releases requi
 JDK 21 or newer and set no maximum. The bridge is verified with Ghidra 12.1.4
 and JDK 21. Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
-`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
-release archives may require you to build that native component separately.
+`build/os/<platform>/` directory. Official Ghidra 12.1.4 release archives include
+native binaries only for Linux x64 and Windows x64, so on macOS x64
+(`mac_x86_64`), macOS arm64 (`mac_arm_64`) and Linux ARM64 (`linux_arm_64`) you
+must build the decompiler before REA can use it. Run `./gradlew buildNatives`
+(or `gradle buildNatives`) from the installation's `support/gradle/` directory,
+as described in Ghidra's
+[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-native-components),
+or use the make-only recipes for [macOS x64](#missing-macos-native-decompiler)
+and [macOS arm64](#macos-arm64-native-decompiler) below.
 REA checks the executable prerequisite by inspecting the file's own executable
 header, so a native component built for another platform or architecture is
 reported as incompatible instead of being admitted from its directory name, and
@@ -1230,9 +1237,10 @@ pseudocode is never treated as original source or Hopper-equivalent text.
 ### Missing macOS native decompiler
 
 If `rea doctor --json` reports `native_decompiler` as missing on macOS x64,
-the extracted Ghidra archive may include the decompiler source without the
-macOS executable. For Ghidra 12.1.4, you can build it manually with an existing
-Xcode Command Line Tools installation, `make`, and `bison`:
+the extracted Ghidra archive includes the decompiler source but no macOS
+executable; official releases ship one only for Linux x64 and Windows x64. For
+Ghidra 12.1.4, you can build it manually with an existing Xcode Command Line
+Tools installation, `make`, and `bison`:
 
 ```bash
 cd "$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"

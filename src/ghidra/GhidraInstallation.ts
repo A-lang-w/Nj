@@ -59,6 +59,21 @@ const NATIVE_PLATFORMS: Readonly<
   win32: { x64: "win_x86_64" },
 };
 
+/**
+ * Official Ghidra 12.1 release archives ship native binaries only for Linux x64
+ * and Windows x64 (GhidraDocs/GettingStarted.md, "Building Native Components").
+ * Other supported hosts must build the decompiler before REA can use it.
+ */
+const nativeBuildGuidance = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string =>
+  (platform === "darwin" &&
+    (architecture === "x64" || architecture === "arm64")) ||
+  (platform === "linux" && architecture === "arm64")
+    ? " Official Ghidra release archives do not include it for this host. Build it with ./gradlew buildNatives (or gradle buildNatives) from the installation's support/gradle directory; REA accepts the resulting build/os executable."
+    : "";
+
 /** Executable format each supported host runs its own Ghidra native tools as. */
 const NATIVE_TOOL_FORMATS: Readonly<
   Partial<Record<NodeJS.Platform, ExecutableMetadata["format"]>>
@@ -152,7 +167,7 @@ const assessNativeDecompiler = (
   return {
     status: "incompatible",
     detail: `${path} reports ${observed}, but ${platform}/${architecture} requires ${expected}`,
-    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent. REA does not build or install native tools.`,
+    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent.${nativeBuildGuidance(platform, architecture)} REA does not build or install native tools.`,
   };
 };
 
@@ -939,7 +954,7 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeBuildGuidance(platform, architecture)} REA does not build or install native tools.`,
   });
 };
 

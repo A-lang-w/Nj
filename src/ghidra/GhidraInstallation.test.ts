@@ -1464,6 +1464,60 @@ describe("Ghidra native decompiler compatibility", () => {
       remediation: expect.stringContaining("os/mac_arm_64/decompile"),
     });
   });
+
+  it.each([
+    {
+      platform: "darwin",
+      architecture: "arm64",
+      osArch: "aarch64",
+      built: true,
+    },
+    { platform: "darwin", architecture: "x64", osArch: "x86_64", built: true },
+    {
+      platform: "linux",
+      architecture: "arm64",
+      osArch: "aarch64",
+      built: true,
+    },
+    { platform: "linux", architecture: "x64", osArch: "amd64", built: false },
+  ] as const)(
+    "names buildNatives for a missing $platform/$architecture decompiler only where releases omit it",
+    async ({ platform, architecture, osArch, built }) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform,
+          architecture,
+        },
+        host({
+          executable: (path) => path === HEADLESS,
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              osArch,
+              osName: platform === "darwin" ? "Mac OS X" : "Linux",
+            }),
+        }),
+      );
+      expect(result.status).toBe("unavailable");
+      if (result.status !== "unavailable") return;
+      const check = result.checks.find(
+        ({ name }) => name === "native_decompiler",
+      );
+      expect(check).toMatchObject({
+        status: "failed",
+        detail: `Matching native decompiler for ${platform}/${architecture} was not found`,
+      });
+      const remediation = check?.status === "failed" ? check.remediation : "";
+      if (built)
+        expect(remediation).toContain(
+          "Build it with ./gradlew buildNatives (or gradle buildNatives) from the installation's support/gradle directory",
+        );
+      else expect(remediation).not.toContain("buildNatives");
+    },
+  );
 });
 
 describe("Ghidra JVM native directory admission", () => {
