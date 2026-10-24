@@ -58,6 +58,8 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 export interface JavaScriptSemanticMemberEffect {
   readonly path: JavaScriptSemanticPropertyPath;
   readonly node: t.Node | undefined;
+  /** Direct ambient store leaf, preserving sibling order within one mutation. */
+  readonly storeTarget?: t.MemberExpression | t.OptionalMemberExpression;
   /** Selected RHS values retained by the shared pattern-store owner. */
   readonly assignedSources?: readonly SemanticIterationSource[];
   /** Binding values whose receiver identities were selected for this effect. */

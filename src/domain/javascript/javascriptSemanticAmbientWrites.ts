@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -35,6 +36,8 @@ import {
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+
+import type { SemanticBeforeStore } from "./javascriptSemanticProjectedSources.js";
 
 // These static builtins do not give their namespace receiver to user code.
 const NATIVE_NAMESPACE_METHODS = {
@@ -99,18 +102,28 @@ export const retainSemanticAmbientEffect = (
   kind: "write" | "escape",
   path: AmbientPath,
   node: t.Node | undefined,
+  storeTarget?: t.MemberExpression | t.OptionalMemberExpression,
 ): boolean => {
   const selected = kind === "escape" ? [...path, null] : path;
   const byNode = retainedAmbientEffects.get(state) ?? new Map();
   const keys = byNode.get(node) ?? new Set<string>();
-  const key = JSON.stringify([kind, selected]);
+  const key = JSON.stringify([
+    kind,
+    selected,
+    storeTarget?.start,
+    storeTarget?.end,
+  ]);
   if (keys.has(key)) return false;
   keys.add(key);
   byNode.set(node, keys);
   retainedAmbientEffects.set(state, byNode);
   if (kind === "write") {
     state.ambientWrites.retain(selected);
-    state.ambientWriteEffects.push({ path: selected, node });
+    state.ambientWriteEffects.push({
+      path: selected,
+      node,
+      ...(storeTarget === undefined ? {} : { storeTarget }),
+    });
   } else {
     state.ambientEscapes.retain(selected);
     state.ambientEscapeEffects.push({ path: selected, node });
@@ -122,18 +135,58 @@ export const retainSemanticAmbientEffect = (
 export const semanticStoreMayReachAmbientSetter = (
   state: JavaScriptSemanticAnalysisState,
   key: string | null,
+  store: SemanticBeforeStore,
 ): boolean => {
   if (key === null || key === "__proto__") return true;
-  return ["Object", "Array", "Function"].some((owner) => {
-    const path = ["global", owner, "prototype", key];
-    const prototype = ["global", owner, "prototype", "__proto__"];
+  const candidates = ["Object", "Array", "Function"].map((owner) => ({
+    slot: ["global", owner, "prototype", key],
+    prototype: ["global", owner, "prototype", "__proto__"],
+  }));
+  if (
+    !candidates.some(
+      ({ slot, prototype }) =>
+        state.ambientWrites.covers(slot) ||
+        state.ambientEscapes.covers(slot) ||
+        state.ambientWrites.overlaps(prototype) ||
+        state.ambientEscapes.overlaps(prototype),
+    )
+  )
+    return false;
+  const pendingTargets = new Set<t.Node>([store.target]);
+  if (t.isAssignmentExpression(store.mutation)) {
+    let pending = false;
+    for (const target of semanticWriteTargets(store.mutation.left)) {
+      pending ||= target === store.target;
+      if (pending) pendingTargets.add(target);
+    }
+  }
+  const mayIntercept = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ) => {
+    const overlaps = (path: readonly string[], descendants: boolean) =>
+      (descendants || effect.path.length <= path.length) &&
+      effect.path.every((part, index) =>
+        index >= path.length
+          ? descendants
+          : part === null || part === path[index],
+      );
     return (
-      state.ambientWrites.covers(path) ||
-      state.ambientEscapes.covers(path) ||
-      state.ambientWrites.overlaps(prototype) ||
-      state.ambientEscapes.overlaps(prototype)
+      candidates.some(
+        ({ slot, prototype }) =>
+          overlaps(slot, false) || overlaps(prototype, true),
+      ) &&
+      !(
+        effect.node === store.mutation &&
+        effect.storeTarget !== undefined &&
+        pendingTargets.has(effect.storeTarget)
+      ) &&
+      semanticEffectTiming(store.mutation, effect.node, state) !== "after"
     );
-  });
+  };
+  return (
+    state.ambientWriteEffects.some(mayIntercept) ||
+    state.ambientEscapeEffects.some(mayIntercept)
+  );
 };
 
 /** Parsed receiver facts stay separate from mutation-dependent safety. */
@@ -145,6 +198,34 @@ export const semanticIntrinsicReceiverIsSafe = (
   return (
     fact !== undefined &&
     !semanticAmbientPathMayHaveChanged(state, fact.readAt, fact.path)
+  );
+};
+
+/** A native descriptor write does not expose its ordinary builtin target to user code. */
+export const semanticNativeDescriptorTargetIsSafe = (
+  node: t.Node,
+  target: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const fact = state.intrinsicReceiverCalls.get(node);
+  if (
+    fact?.path.length !== 3 ||
+    !["Object", "Reflect"].includes(fact.path[1] ?? "") ||
+    fact.path[2] !== "defineProperty" ||
+    !semanticIntrinsicReceiverIsSafe(node, state) ||
+    (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+    node.arguments[0] !== target
+  )
+    return false;
+  const identities = createAmbientPathResolver(state, false)(target);
+  const identity = identities[0];
+  return (
+    identities.length === 1 &&
+    identity?.length === 3 &&
+    identity[0] === "global" &&
+    ["Object", "Array", "Function", "Map"].includes(identity[1] ?? "") &&
+    identity[2] === "prototype" &&
+    !semanticAmbientPathMayHaveChanged(state, target, identity)
   );
 };
 
@@ -770,7 +851,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   }[] = [];
   const storedSites = new WeakSet<t.Node>();
   const storedReferences: SemanticIterationSource[] = [];
-  const writes: { node: t.Node; path: AmbientPath }[] = [];
+  const writes: {
+    node: t.Node;
+    path: AmbientPath;
+    storeTarget?: t.MemberExpression | t.OptionalMemberExpression;
+  }[] = [];
   const targets: { node: t.Node; capture: t.Node }[] = [];
   const escapes: {
     node: t.Node;
@@ -910,8 +995,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     interop.intrinsicInvocation,
     interop.staticString,
     interop.isFreshObject,
-    (node, path) => {
-      writes.push({ node, path });
+    (node, path, storeTarget) => {
+      writes.push({
+        node,
+        path,
+        ...(storeTarget === undefined ? {} : { storeTarget }),
+      });
       const target =
         path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
       if (target !== undefined)
@@ -1113,7 +1202,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         ),
       });
   }
-  for (const { node, path } of writes) {
+  for (const { node, path, storeTarget } of writes) {
     const target =
       path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
     const paths =
@@ -1123,15 +1212,16 @@ export function* indexJavaScriptAmbientWritesSteps(
             prototypeReceiver: true,
           }).map((identity) => [...identity, ...path.slice(2)]);
     for (const resolved of paths) {
-      retainSemanticAmbientEffect(state, "write", resolved, node);
+      retainSemanticAmbientEffect(state, "write", resolved, node, storeTarget);
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes)
-    for (const path of ambientWrites(target, node, true, projection))
-      // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
-        retainSemanticAmbientEffect(state, "escape", path, node);
-      }
+    if (!semanticNativeDescriptorTargetIsSafe(node, target, state))
+      for (const path of ambientWrites(target, node, true, projection))
+        // Only proven browser APIs keep their global receiver from user code.
+        if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
+          retainSemanticAmbientEffect(state, "escape", path, node);
+        }
   // A setter can rewrite any property of its receiver, not just the assigned
   // key. Publish that exposure before deciding whether a recognized native
   // method still keeps its receiver away from user code.
@@ -1142,6 +1232,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       !semanticStoreMayReachAmbientSetter(
         state,
         semanticStaticPropertyKey(target.property, target.computed),
+        { mutation: source.mutation, target },
       )
     )
       continue;

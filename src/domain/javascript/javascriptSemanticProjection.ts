@@ -180,9 +180,9 @@ export function* collectSemanticReferencesSteps(
         (name !== undefined && node.name !== name)
       )
         return;
-      const ancestors = readAncestors();
-      const role = semanticIdentifierRole(node, parent, ancestors);
+      const role = semanticIdentifierRole(node, parent, readAncestors);
       if (role === null) return;
+      const ancestors = readAncestors();
       // A compound assignment or update reads before it writes; emit both so
       // reference consumers see the read they actually execute.
       const roles =
@@ -631,8 +631,15 @@ export const semanticReadsBeforeWrite = (
 export const semanticIdentifierRole = (
   node: t.Identifier,
   parent: t.Node,
-  ancestors: readonly t.Node[],
+  readAncestors: () => readonly t.Node[],
 ): JavaScriptSemanticReference["role"] | null => {
+  // Babel can reject member names without materializing or scanning ancestry.
+  // A deep member chain otherwise repeats a full pattern walk for every key.
+  if (
+    (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+    !t.isReferenced(node, parent)
+  )
+    return null;
   if (
     t.isObjectProperty(parent) &&
     parent.key === node &&
@@ -640,6 +647,7 @@ export const semanticIdentifierRole = (
     parent.value !== node
   )
     return null;
+  const ancestors = readAncestors();
   const patternAncestor = enclosingPatternAncestor(node, parent, ancestors);
   if (patternAncestor !== null) {
     if (isPatternOwnerDeclaration(patternAncestor)) return null;

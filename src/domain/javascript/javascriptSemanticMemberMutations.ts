@@ -4,6 +4,7 @@ import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
   semanticIntrinsicReceiverIsSafe,
+  semanticNativeDescriptorTargetIsSafe,
   semanticStoreMayReachAmbientSetter,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
@@ -474,6 +475,9 @@ export function* collectSemanticMemberMutationsSteps(
   const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
+  const deferredDescriptorTargets = new Set<
+    t.CallExpression | t.OptionalCallExpression
+  >();
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -837,7 +841,17 @@ export function* collectSemanticMemberMutationsSteps(
                 key === null || typeof key === "object" ? null : String(key),
               ),
             ))
-              if (retainSemanticAmbientEffect(state, effect, path, mutation)) {
+              if (
+                retainSemanticAmbientEffect(
+                  state,
+                  effect,
+                  path,
+                  mutation,
+                  effect === "write" && assignedSources?.length === 1
+                    ? assignedSources[0]?.target
+                    : undefined,
+                )
+              ) {
                 recordedEffectCount += 1;
                 clearSemanticValueCaches(state);
               }
@@ -1394,7 +1408,13 @@ export function* collectSemanticMemberMutationsSteps(
     const target = source.target;
     if (target === undefined) return true;
     const key = semanticStaticPropertyKey(target.property, target.computed);
-    if (semanticStoreMayReachAmbientSetter(state, key)) return true;
+    if (
+      semanticStoreMayReachAmbientSetter(state, key, {
+        mutation: source.mutation,
+        target,
+      })
+    )
+      return true;
     const setters = localAccessorMethods(target.object, [key], "set", state, {
       ...completeSetterSelection,
       beforeStore: { mutation: source.mutation, target },
@@ -1491,7 +1511,12 @@ export function* collectSemanticMemberMutationsSteps(
               mutation: node,
               originAt: node,
             });
-          else markEscaped(argument, node);
+          else if (
+            semanticNativeDescriptorTargetIsSafe(node, argument, state)
+          ) {
+            if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+              deferredDescriptorTargets.add(node);
+          } else markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
           if (state.intrinsicReceiverCalls.has(node))
@@ -1515,7 +1540,8 @@ export function* collectSemanticMemberMutationsSteps(
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
     deferredMapReceivers.size > 0 ||
-    deferredIntrinsicReceivers.size > 0
+    deferredIntrinsicReceivers.size > 0 ||
+    deferredDescriptorTargets.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1611,6 +1637,13 @@ export function* collectSemanticMemberMutationsSteps(
               storeMayInvokeSetter(reference.store)),
         },
       );
+    }
+    for (const node of deferredDescriptorTargets) {
+      const target = node.arguments[0];
+      if (!t.isNode(target) || t.isSpreadElement(target)) continue;
+      if (semanticNativeDescriptorTargetIsSafe(node, target, state)) continue;
+      deferredDescriptorTargets.delete(node);
+      markEscaped(target, node);
     }
     // Recheck parsed native receiver facts when later getter/alias effects settle.
     for (const node of deferredIntrinsicReceivers) {

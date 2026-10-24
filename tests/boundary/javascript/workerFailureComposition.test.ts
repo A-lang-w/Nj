@@ -48,6 +48,7 @@ vi.mock("node:fs/promises", async (original) => {
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "../../../src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.js";
@@ -152,11 +153,17 @@ it.each([false, true])(
         _tag: "AnalysisResourceConstraintError",
         reason: expect.stringContaining("Expanded application relationships"),
       });
-      if (!result.ok)
+      if (!result.ok) {
+        expect(result.error.error).toBeInstanceOf(ProviderCleanupError);
         expect(result.error.error).toMatchObject({
-          _tag: "ProviderCleanupError",
+          _tag: "ProviderAdapterError",
           cleanupIncomplete: true,
         });
+        expect(projectAnalysisError(result.error.error)).toMatchObject({
+          code: "cleanup_incomplete",
+          details: { cleanup: "incomplete" },
+        });
+      }
       expect(faults.removals).toBe(removalFailure ? 1 : 0);
     } finally {
       faults.sourceRemoval = false;

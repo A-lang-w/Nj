@@ -22,7 +22,14 @@ const NOMINAL_CATEGORIES: ReadonlyMap<string, SwiftTypeCategory> = new Map([
  */
 export const classifySwiftSymbol = (
   name: string,
-): { readonly category: SwiftTypeCategory | null } | undefined => {
+):
+  | {
+      /** Nominal context, including the owner of a member or compiler descriptor. */
+      readonly category: SwiftTypeCategory | null;
+      /** A recognized protocol declaration label, rather than a protocol member. */
+      readonly protocolDeclaration: boolean;
+    }
+  | undefined => {
   const prefix = /^_?(?:\$[sS]|_T0)/u.exec(name);
   if (prefix === null) {
     if (!name.startsWith("_Tt")) return undefined;
@@ -30,12 +37,15 @@ export const classifySwiftSymbol = (
       category:
         LEGACY_CATEGORIES.find(([prefix]) => name.startsWith(prefix))?.[1] ??
         null,
+      protocolDeclaration: name.startsWith("_TtP"),
     };
   }
   const mangling = name.slice(prefix[0].length);
   let offset = identifierEnd(mangling, 0);
-  if (offset === undefined) return { category: null };
+  if (offset === undefined)
+    return { category: null, protocolDeclaration: false };
   let category: SwiftTypeCategory | null = null;
+  let protocolDeclaration = false;
   for (;;) {
     const end = identifierEnd(mangling, offset);
     if (end === undefined) {
@@ -50,6 +60,8 @@ export const classifySwiftSymbol = (
         mangling.startsWith("AA", offset)
       )
         category = null;
+      protocolDeclaration =
+        category === "protocols" && mangling.slice(offset) === "Mp";
       break;
     }
     const kind = mangling.charAt(end);
@@ -58,14 +70,16 @@ export const classifySwiftSymbol = (
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") category = "protocols";
-      else if (kind === "E" && category !== null) category = "extensions";
+      if (mangling.slice(end) === "Mp") {
+        category = "protocols";
+        protocolDeclaration = true;
+      } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
     offset = end + 1;
   }
-  return { category };
+  return { category, protocolDeclaration };
 };
 
 /**

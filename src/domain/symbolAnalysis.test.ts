@@ -257,3 +257,21 @@ it("does not recognize embedded Swift runtime markers in Objective-C selectors",
   });
   expect(discoverObjcProtocols(names)).toEqual({ count: 0, protocols: [] });
 });
+
+it("distinguishes protocol declaration labels from members in a protocol context", () => {
+  const names = [
+    "_$s4main7ScoringMp",
+    "_$s4main7ScoringP5scoreSiyFTq",
+    "_$s4main7ScoringTL",
+    "_$s4main7ScoringP5scoreSiyFTqMp",
+    "$s4main7ScoringPMp",
+    "_TtP4main7Scoring_",
+  ].map((name, index) => ({ address: `0x${index + 1}`, name }));
+  expect(discoverObjcProtocols(names)).toEqual({
+    count: 3,
+    protocols: [names[0], names[4], names[5]],
+  });
+  expect(categorizeSwiftTypes([names[1]!])).toMatchObject({
+    categories: { protocols: { count: 1 } },
+  });
+});

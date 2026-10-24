@@ -309,3 +309,65 @@ it.each([
     }),
   );
 });
+
+it.each([
+  [
+    'const box = {}; box.p = Map.prototype; Object.defineProperty(Object.prototype, "p", { set(v) { v.get = fetch; } });',
+    false,
+  ],
+  [
+    'const box = {}; Object.defineProperty(Object.prototype, "p", { set(v) { v.get = fetch; } }); box.p = Map.prototype;',
+    true,
+  ],
+  [
+    'const box = {}; box.p = (Object.defineProperty(Object.prototype, "p", { set(v) { v.get = fetch; } }), Map.prototype);',
+    true,
+  ],
+  [
+    'const box = {}; [box.p, box.other] = [Map.prototype, Object.defineProperty(Object.prototype, "p", { set(v) { v.get = fetch; } })];',
+    true,
+  ],
+  [
+    'const box = {}; [box.other, box.p] = [Object.defineProperty(Object.prototype, "p", { set(v) { v.get = fetch; } }), Map.prototype];',
+    true,
+  ],
+  [
+    "const box = {}; [box.p, Object.prototype.p] = [Map.prototype, undefined];",
+    false,
+  ],
+] as const)(
+  "selects ambient setters at the store clock: %s",
+  (setup, invoked) => {
+    const source = `${setup} new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);
+
+it.each([
+  'Object.defineProperty = function(target) { target.get = fetch; }; Object.defineProperty(Map.prototype, "p", {});',
+  'Reflect.defineProperty = function(target) { target.get = fetch; return true; }; Reflect.defineProperty(Map.prototype, "p", {});',
+  'const proxy = new Proxy(Map.prototype, { defineProperty(target) { target.get = fetch; return true; } }); Object.defineProperty(proxy, "p", { value: 1 });',
+  'Object.defineProperty(Object.prototype, "p", { get set() { Map.prototype.get = fetch; return function() {}; } });',
+])("retains descriptor target traps and getter effects: %s", (setup) => {
+  const source = `${setup} new Map().get("/accounts");`;
+  const calls: unknown[] = [];
+  runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+  expect(calls).toEqual(["/accounts"]);
+  expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});
