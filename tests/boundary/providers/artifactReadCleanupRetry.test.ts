@@ -11,6 +11,12 @@ const cleanupState = vi.hoisted(() => ({
   firstHandleCloseAttempts: 0,
 }));
 
+const openedFirstHandle = (): FileHandle => {
+  const handle = cleanupState.firstHandle;
+  if (handle === undefined) throw new Error("Missing admitted descriptor");
+  return handle;
+};
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -86,12 +92,13 @@ it.each(["go", "pe"] as const)(
         cleanupResources: [path],
       });
       expect(cleanupState.firstHandleCloseAttempts).toBe(1);
-      expect(cleanupState.firstHandle?.fd).toBeGreaterThanOrEqual(0);
+      const retainedHandle = openedFirstHandle();
+      expect(retainedHandle.fd).toBeGreaterThanOrEqual(0);
 
       const retry = await provider.inspect(input);
       expect(retry.ok).toBe(true);
       expect(cleanupState.firstHandleCloseAttempts).toBe(2);
-      expect(cleanupState.firstHandle?.fd).toBe(-1);
+      expect(retainedHandle.fd).toBe(-1);
     } finally {
       await provider.close();
       cleanupState.failFirstClose = false;
