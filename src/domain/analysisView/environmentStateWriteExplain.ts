@@ -182,7 +182,7 @@ const generatedRule = (
     evidence.type.every((member) => member[field] !== value)
   )
     return { field, rule: "unique" };
-  if (createdToken(field, evidence.entity, evidence.type))
+  if (createdToken(field, evidence.entity, evidence.type) === "independent")
     return { field, rule: "unique" };
   return createdNestedClock(field, value, evidence);
 };

@@ -6,6 +6,8 @@ import {
   locateItem,
   at,
   type JsonObject,
+  type ParsedRequestBody,
+  requestJson,
   type StateDocument,
   type StateEntity,
   type StateRecordFacts,
@@ -41,11 +43,7 @@ import {
   viewFields,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import {
-  envelopeMember,
-  plannedObject,
-  restampedFields,
-} from "./environmentStateWriteStamps.js";
+import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
 import { readClock } from "./environmentStateWriteValues.js";
 import {
   actionItemPath,
@@ -96,7 +94,7 @@ export interface WriteIo {
     ordinal: number,
     use: (body: JsonValue | undefined) => T,
   ) => T;
-  readonly requestBody: (ordinal: number) => JsonValue | undefined;
+  readonly requestBody: (ordinal: number) => ParsedRequestBody;
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => void;
   readonly queryOf: (ordinal: number) => string | null | undefined;
@@ -213,16 +211,18 @@ export const refuse = (
   if (!step.observeOnly) draft.plan.reason = reason;
 };
 
-/** A call's body object, none for a call serving refuses by its query; an entity write's is unwrapped from a one-element envelope, and once its plan is built only one sent with the exemplar's wrapping counts, as serving takes it. */
-export const requestObject = (
+/** Shared request interpretation: the object's own fields take precedence over a one-element envelope. */
+export const requestBodyPlan = (
   context: EffectContext,
   step: WriteStep,
-  draft?: WriteDraft,
-): JsonObject | undefined =>
+  draft: WriteDraft,
+  observed?: JsonObject,
+) =>
   step.pinned
-    ? plannedObject(
-        context.io.requestBody(step.record.ordinal),
-        draft && { built: built(draft), envelope: draft.plan.body?.envelope },
+    ? plannedBody(
+        requestJson(context.io.requestBody(step.record.ordinal)),
+        { built: built(draft), envelope: draft.plan.body?.envelope },
+        (member) => observed !== undefined && Object.hasOwn(observed, member),
       )
     : undefined;
 
@@ -399,6 +399,12 @@ const buildUpdate = (
   }
   retainFixed(context, evidence.explained.body.fixed);
   const { ordinal } = step.record;
+  const envelope = requestBodyPlan(
+    context,
+    step,
+    draft,
+    evidence.after.object,
+  )?.envelope;
   Object.assign(draft.plan, {
     exemplar_ordinal: ordinal,
     observation: {
@@ -415,7 +421,7 @@ const buildUpdate = (
       ),
     body: {
       ...evidence.explained.body,
-      ...envelopeMember(context.io.requestBody(ordinal)),
+      ...(envelope === undefined ? {} : { envelope }),
     },
     rules: evidence.explained.rules,
   });
@@ -437,14 +443,7 @@ export const applyUpdate = (
   const named = itemTarget(context.state, draft.plan.target!, {
     path: action ? actionItemPath(step.record.path) : step.record.path,
   });
-  // An item action names its change in its path, so it may send no body.
-  const body =
-    action &&
-    step.pinned &&
-    context.io.requestBody(step.record.ordinal) === undefined
-      ? {}
-      : requestObject(context, step, draft);
-  return updateEntity(context, draft, step, { ...named, body });
+  return updateEntity(context, draft, step, { ...named, request: true });
 };
 
 /** Apply a recorded update to the held entity a call names, with the members it wrote to that entity. */
@@ -455,15 +454,20 @@ export const updateEntity = (
   named: {
     readonly collection: string;
     readonly id: string;
-    readonly body: JsonObject | undefined;
-  },
+  } & ({ readonly request: true } | { readonly body: JsonObject | undefined }),
 ): EffectResult => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
-  const { collection, id, body } = named;
+  const { collection, id } = named;
   const needs = observationNeeds(
     draft.plan,
-    { ...named, type, idField },
+    {
+      collection,
+      id,
+      type,
+      idField,
+      body: "body" in named ? named.body : undefined,
+    },
     context.pending,
   );
   const entity = context.state.entity(type, collection, id);
@@ -481,6 +485,15 @@ export const updateEntity = (
     return UNKNOWN;
   }
   const { targets, target, recorded } = outcomes(context, entity, after.object);
+  // Only confirmed absence makes a bodyless action; malformed or unretained content stays unknown.
+  const body =
+    "body" in named
+      ? named.body
+      : draft.plan.address?.by === "action" &&
+          step.pinned &&
+          context.io.requestBody(step.record.ordinal).kind === "absent"
+        ? {}
+        : requestBodyPlan(context, step, draft, after.object)?.object;
   if (step.observeOnly || body === undefined) {
     fail(draft, step, "body-unusable");
     return recorded();

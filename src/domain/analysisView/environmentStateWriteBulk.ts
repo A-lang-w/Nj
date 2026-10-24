@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
   at,
+  requestJson,
   isObject,
   locateItem,
   same,
@@ -29,6 +30,7 @@ import {
   type WriteDraft,
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
+import { integerOf } from "./environmentStateWriteValues.js";
 import type { WriteBody, WriteResponse } from "./environmentStateWriteRules.js";
 
 /** Whether any scalar in a body passes the test. */
@@ -64,7 +66,8 @@ export const bulkResponseFits = (
       !holds(
         body,
         (scalar) =>
-          ids.has(scalarText(scalar) ?? "") || scalar === named.length,
+          ids.has(scalarText(scalar) ?? "") ||
+          integerOf(scalar) === named.length,
       )
     );
   if (response.pointer !== "/0" || !Array.isArray(body)) return false;
@@ -149,7 +152,7 @@ export const applyBulk = (
 ): EffectResult[] => {
   const type = draft.plan.target!;
   const { address } = draft.plan;
-  const body = context.io.requestBody(step.record.ordinal);
+  const body = requestJson(context.io.requestBody(step.record.ordinal));
   const named =
     address === undefined || address.by === "action"
       ? undefined

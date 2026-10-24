@@ -10,13 +10,14 @@ import {
   segmentsOf,
   selectedCollection,
   type JsonObject,
+  requestJson,
   type StateEntity,
   type SuppliedSegment,
 } from "./environmentStateRules.js";
 import { createdFields } from "./environmentStateWriteApply.js";
 import {
-  envelopeMember,
-  envelopeOf,
+  unenveloped,
+  createdToken,
   isOpaqueToken,
   restampedFields,
   sameQuery,
@@ -38,7 +39,7 @@ import {
   fail,
   itemReads,
   refuse,
-  requestObject,
+  requestBodyPlan,
   retainFixed,
   searchFrom,
   startOf,
@@ -145,10 +146,11 @@ const buildCreate = (
     readonly call: WriteCall & { readonly body: JsonObject };
     readonly collection: string;
   },
-): void => {
+): boolean => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
   const members = fieldsOf(context.state.members(type, evidence.collection));
+  const held = fieldsOf(context.state.ofType(type));
   // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
   const calls = new Set(step.tool.record_ordinals);
   const taken = context.records.filter(
@@ -157,21 +159,38 @@ const buildCreate = (
       succeeded(record) &&
       sameQuery(record.query, step.record.query),
   );
+  const request = requestBodyPlan(
+    context,
+    step,
+    draft,
+    evidence.observed.object,
+  )!;
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
     idField,
     startMs: startOf(context, step),
     collection: members,
-    type: fieldsOf(context.state.ofType(type)),
+    type: held,
     named: (id) => context.state.named(id),
     varied: variedMembers(
       taken.map(({ ordinal }) => {
-        const body = context.io.requestBody(ordinal);
-        return envelopeOf(body)?.object ?? body;
+        const body = requestJson(context.io.requestBody(ordinal));
+        return unenveloped(body, request.envelope);
       }),
     ),
   });
+  const explainedFields = new Set(explained.rules.map((rule) => rule.field));
+  if (
+    Object.keys(evidence.observed.object).some(
+      (field) =>
+        !explainedFields.has(field) &&
+        createdToken(field, evidence.observed.object, held) === "linked",
+    )
+  ) {
+    refuse(draft, step, "unexplained-change");
+    return false;
+  }
   const clocks = explained.rules.flatMap((rule) =>
     rule.rule === "clock" ? [rule.field] : [],
   );
@@ -214,7 +233,7 @@ const buildCreate = (
     ),
     body: {
       ...explained.body,
-      ...envelopeMember(context.io.requestBody(step.record.ordinal)),
+      ...(request.envelope === undefined ? {} : { envelope: request.envelope }),
     },
     rules: explained.rules,
     collection:
@@ -222,6 +241,7 @@ const buildCreate = (
     insert: draft.candidates[0]!,
   });
   draft.observed = evidence.observed.object;
+  return true;
 };
 
 type SequenceRule = Extract<FieldRule, { rule: "sequence" }>;
@@ -424,13 +444,13 @@ export const applyCreate = (
       (draft.linked !== undefined && !fromLinkedSource(context, draft, step)))
   )
     return UNKNOWN;
-  const body = requestObject(context, step, draft);
   const observed = createdObservation(context, step, {
     type,
     collection,
     idField,
     linked: draft.linked !== undefined,
   });
+  const body = requestBodyPlan(context, step, draft, observed?.object)?.object;
   if (observed === undefined) {
     fail(draft, step, body === undefined ? "body-unusable" : "no-observation");
     return UNKNOWN;
@@ -462,7 +482,26 @@ export const applyCreate = (
   const call = { ...callOf(step, body), body };
   // The exemplar defines the plan's sequences; each later call must follow them.
   const later = built(draft);
-  if (!later) buildCreate(context, draft, step, { observed, call, collection });
+  if (
+    later &&
+    draft.plan.rules.some(
+      (rule) =>
+        rule.rule === "unique" &&
+        createdToken(
+          rule.field,
+          observed.object,
+          fieldsOf(context.state.ofType(type)),
+        ) === "linked",
+    )
+  ) {
+    refuse(draft, step, "unexplained-change");
+    return recorded();
+  }
+  if (
+    !later &&
+    !buildCreate(context, draft, step, { observed, call, collection })
+  )
+    return recorded();
   // Rules learn from the recorded path; serving fills path fields from the collection it selects.
   const created = {
     ...call,

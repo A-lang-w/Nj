@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
   at,
+  requestJson,
   isObject,
   isParam,
   locateItem,
@@ -199,7 +200,7 @@ export const bulkWrite = (
   const idField = target === undefined ? undefined : facts.idField(target);
   if (target === undefined || idField === undefined) return undefined;
   const forms = facts.calls.map((record) =>
-    addressOf(facts.requestBody(record.ordinal), idField),
+    addressOf(requestJson(facts.requestBody(record.ordinal)), idField),
   );
   const [first] = forms;
   if (

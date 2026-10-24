@@ -38,11 +38,17 @@ export type ParsedBody =
   | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "unusable" };
 
+/** A request distinguishes confirmed absence from content the state cannot interpret. */
+export type ParsedRequestBody = ParsedBody | { readonly kind: "absent" };
+
+export const requestJson = (body: ParsedRequestBody): JsonValue | undefined =>
+  body.kind === "json" ? body.value : undefined;
+
 /** Budgeted access the accumulator lends extraction; null and false mean the budget is exhausted. */
 export interface StateBudget {
   readonly body: (ordinal: number) => ParsedBody | null;
   /** A record's request body, admitted as response bodies are. */
-  readonly requestBody: (ordinal: number) => ParsedBody | null;
+  readonly requestBody: (ordinal: number) => ParsedRequestBody | null;
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;

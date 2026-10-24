@@ -612,3 +612,32 @@ describe("call shapes", () => {
     expect(pinnedQuery(null, new Map([["page", "2"]])).ok).toBe(false);
   });
 });
+
+it("does not explain nested opaque-token references as independent generation", () => {
+  const before = "Abcdef0123456789A";
+  const after = "Abcdef0123456789B";
+  const other = "Abcdef0123456789C";
+  for (const metadata of [
+    { version: after },
+    [after],
+    { text: `token:${after}` },
+  ]) {
+    const creation = explainCreate(
+      created(
+        { id: "42", title: "New", version: after, metadata },
+        { title: "New" },
+        [{ id: "41", version: before }],
+      ),
+    );
+    expect(ruleFor(creation.rules, "version")?.rule).not.toBe("unique");
+    const update = explainUpdate(
+      updated(
+        { id: "42", version: before, metadata },
+        { id: "42", version: after, metadata },
+        {},
+        [{ id: "41", version: other }],
+      ),
+    );
+    expect(update.unexplained).toContain("version");
+  }
+});

@@ -14,7 +14,11 @@ import {
 import { singleQueryValues } from "../recordedTransportUrl.js";
 import { queryKey, queryValuesKey } from "./environmentStateCheckedLines.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
-import { isUuid, readClock } from "./environmentStateWriteValues.js";
+import {
+  containsDelimited,
+  isUuid,
+  readClock,
+} from "./environmentStateWriteValues.js";
 
 /** A clock value counts as written by the request when it lies this close to the request's start. */
 const CLOCK_WINDOW_MS = 10 * 60_000;
@@ -83,14 +87,6 @@ export const envelopeOf = (
     : undefined;
 };
 
-/** The envelope a body wraps its object in, as a write plan's body records it. */
-export const envelopeMember = (
-  body: JsonValue | undefined,
-): { readonly envelope?: string } => {
-  const wrapped = envelopeOf(body);
-  return wrapped === undefined ? {} : { envelope: wrapped.member };
-};
-
 /** A call's body as a plan with this envelope takes it: the object it wraps, the body itself without one, or undefined when the envelope is missing. */
 export const unenveloped = (
   body: JsonValue | undefined,
@@ -101,24 +97,22 @@ export const unenveloped = (
   return wrapped?.member === envelope ? wrapped.object : undefined;
 };
 
-/** A call's body object as its plan takes it: an entity write's unwrapped from its envelope, and once the plan is built only one sent with the exemplar's wrapping. */
-export const plannedObject = (
+/** The request object and its wrapping, decided once from known entity fields and retained by the plan. */
+export const plannedBody = (
   body: JsonValue | undefined,
-  plan:
-    | {
-        readonly built: boolean;
-        readonly envelope: string | undefined;
-      }
-    | undefined,
-): JsonObject | undefined => {
-  const envelope =
-    plan === undefined
-      ? undefined
-      : plan.built
-        ? plan.envelope
-        : envelopeOf(body)?.member;
+  plan: { readonly built: boolean; readonly envelope: string | undefined },
+  knownField: (member: string) => boolean,
+): { readonly object: JsonObject; readonly envelope?: string } | undefined => {
+  const wrapped = plan.built ? undefined : envelopeOf(body);
+  const envelope = plan.built
+    ? plan.envelope
+    : wrapped !== undefined && !knownField(wrapped.member)
+      ? wrapped.member
+      : undefined;
   const object = unenveloped(body, envelope);
-  return object !== undefined && isObject(object) ? object : undefined;
+  return object !== undefined && isObject(object)
+    ? { object, ...(envelope === undefined ? {} : { envelope }) }
+    : undefined;
 };
 
 /** Whether two queries name the same values; a query repeating a name with another value matches none. */
@@ -257,24 +251,34 @@ export const nestedClockValue = (
       })
     : err(`The entity holds no ${rule.field} object for the write to stamp.`);
 
-/** A created token no other entity holds and no other field repeats, where every other entity holds one of its length. */
+/** A created opaque token's proof: independent generation, an unsupported nested link, or insufficient evidence. */
 export const createdToken = (
   field: string,
   entity: JsonObject,
   type: readonly JsonObject[],
-): boolean => {
+): "independent" | "linked" | undefined => {
   const value = entity[field];
-  return (
-    isOpaqueToken(value) &&
-    type.length > 0 &&
-    !Object.entries(entity).some(
-      ([other, held]) => other !== field && held === value,
-    ) &&
-    type.every(
+  if (
+    !isOpaqueToken(value) ||
+    type.length === 0 ||
+    !type.every(
       (member) =>
         member[field] !== value && isOpaqueToken(member[field], value),
     )
-  );
+  )
+    return undefined;
+  if (
+    Object.entries(entity).some(
+      ([other, held]) =>
+        other !== field &&
+        (held === value ||
+          (typeof held === "object" &&
+            held !== null &&
+            containsDelimited(held, value))),
+    )
+  )
+    return "linked";
+  return "independent";
 };
 
 /** What judging an unsent change reads: the entity before and after, the call's body and the type's other entities. */
@@ -296,11 +300,11 @@ export const freshToken = (
     isOpaqueToken(after, before) &&
     isOpaqueToken(before) &&
     before !== after &&
-    !Object.values(evidence.call.body).includes(after) &&
+    !containsDelimited(evidence.call.body, after) &&
     !Object.entries(evidence.after).some(
-      ([name, value]) => name !== field && value === after,
+      ([name, value]) => name !== field && containsDelimited(value, after),
     ) &&
-    !evidence.others.some((other) => other[field] === after)
+    !evidence.others.some((other) => containsDelimited(other, after))
   );
 };
 

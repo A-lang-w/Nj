@@ -30,6 +30,8 @@ import {
   type JsonObject,
   type RecordedViewReason,
   type StateBudget,
+  type ParsedRequestBody,
+  requestJson,
   type StateDocument,
   type StateEntity,
   type StateRecordFacts,
@@ -284,7 +286,7 @@ export class EnvironmentStateExtraction {
         volatileOf: (type) => this.#volatileOf(type),
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
-          requestBody: (ordinal) => this.#requestBody(ordinal),
+          requestBody: (ordinal) => this.#parsedRequestBody(ordinal),
           emptyResponse: (ordinal) => this.#budget.emptyResponse(ordinal),
           retain: (bytes) => this.#retain(bytes),
           queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
@@ -293,10 +295,14 @@ export class EnvironmentStateExtraction {
     };
   }
 
-  #requestBody(ordinal: number): JsonValue | undefined {
+  #parsedRequestBody(ordinal: number): ParsedRequestBody {
     const parsed = this.#budget.requestBody(ordinal);
     if (parsed === null) throw new StateBudgetExhausted();
-    return parsed.kind === "json" ? parsed.value : undefined;
+    return parsed;
+  }
+
+  #requestBody(ordinal: number): JsonValue | undefined {
+    return requestJson(this.#parsedRequestBody(ordinal));
   }
 
   #retain(bytes: number): void {
