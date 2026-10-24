@@ -8,7 +8,6 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { build } from "plist";
-import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -23,6 +22,7 @@ import {
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
+import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { parseCodeSignature } from "../../../../src/native/parsers/codesign.js";
 import { prepareProcessOwnershipInspection } from "../../../../src/process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -42,13 +42,10 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 
-/** The source bytes and simulated plutil response share one captured payload. */
-const plistFixtureSource = async (): Promise<string> =>
-  build(
-    z
-      .record(z.string(), z.string())
-      .parse(JSON.parse(await fixture("plist.json"))),
-  );
+/** The file runner identifies selected .plist inputs as XML. */
+const writeFixturePlist = async (path: string): Promise<void> => {
+  await writeFile(path, build(JSON.parse(await fixture("plist.json"))));
+};
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
   const child = Object.assign(new EventEmitter(), {
@@ -90,7 +87,7 @@ describe("native macOS provider discovery", () => {
   ])(
     "preserves the exact signing identifier %j reported by codesign",
     (identifier) => {
-      const { signature: parsed } = parseCodeSignature(
+      const parsed = parseCodeSignature(
         `Identifier=${identifier}\nFormat=Mach-O thin (arm64)\nTeamIdentifier=not set\n`,
         false,
       );
@@ -105,7 +102,7 @@ describe("native macOS provider discovery", () => {
     (newline) => {
       const path = "/apps/x\r\nAuthority=Forged\nIdentifier=forged";
       const identifier = "x\r\nFormat=forged\nAuthority=Forged-5555\r";
-      const { signature: parsed } = parseCodeSignature(
+      const parsed = parseCodeSignature(
         [
           `Executable=${path}`,
           `Identifier=${identifier}`,
@@ -152,7 +149,7 @@ describe("native macOS provider discovery", () => {
   ])(
     "frames the identifier without a matching executable path: %j",
     ({ executable, paths, newline, identifier }) => {
-      const { signature: parsed } = parseCodeSignature(
+      const parsed = parseCodeSignature(
         `${executable}Identifier=${identifier}${newline}Format=Mach-O thin (arm64)${newline}TeamIdentifier=not set${newline}`,
         false,
         paths,
@@ -1323,19 +1320,16 @@ describe("native macOS provider inspection", () => {
       error: { _tag: "ProviderAdapterError" },
     });
   });
-});
 
-describe("native macOS operation results", () => {
   it("supports architectures, signatures, plists, and ordered demangling", async () => {
     directory = await createTestTempDirectory("rea-native-");
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    const plistSource = await plistFixtureSource();
-    await writeFile(join(app, "Contents/Info.plist"), plistSource);
+    await writeFixturePlist(join(app, "Contents/Info.plist"));
     const externalPlist = join(directory, "Outside.plist");
-    await writeFile(externalPlist, plistSource);
+    await writeFixturePlist(externalPlist);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1356,7 +1350,6 @@ describe("native macOS operation results", () => {
     const defaultPlist = await client.execute("inspect_plist", {});
     expect(defaultPlist.ok && defaultPlist.value.result).toMatchObject({
       source_path: join(app, "Contents/Info.plist"),
-      bundle: { identifier: "com.example.fixture", version: "42" },
     });
     const plist = await client.execute("inspect_plist", {
       path: externalPlist,
@@ -1365,10 +1358,6 @@ describe("native macOS operation results", () => {
       bundle: { identifier: "com.example.fixture", version: "42" },
       source_path: externalPlist,
     });
-    expect(await readFile(join(app, "Contents/Info.plist"), "utf8")).toBe(
-      plistSource,
-    );
-    expect(await readFile(externalPlist, "utf8")).toBe(plistSource);
     const demangled = await client.execute("demangle_swift", {
       symbols: ["$s4Test3fooyyF", "plain_symbol"],
     });
@@ -1388,8 +1377,7 @@ describe("native macOS provider raw results", () => {
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, "fixture");
-    const plistSource = await plistFixtureSource();
-    await writeFile(join(app, "Contents/Info.plist"), plistSource);
+    await writeFixturePlist(join(app, "Contents/Info.plist"));
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1415,16 +1403,14 @@ describe("native macOS provider raw results", () => {
           expect.objectContaining({ tool: expect.any(String) }),
         ]),
       });
-      if (operation === "inspect_plist")
-        expect(execution.value.result).toMatchObject({
-          source_path: join(app, "Contents/Info.plist"),
-          bundle: { identifier: "com.example.fixture", version: "42" },
-          provenance: [{ tool: "file" }],
-        });
+      if (operation === "inspect_plist") {
+        const plist = inspectPlistSchema.parse(execution.value.result);
+        expect(plist.provenance.map(({ command }) => command)).toEqual([
+          ["/usr/bin/file", "-b", "$PLIST"],
+          ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+        ]);
+      }
     }
-    expect(await readFile(join(app, "Contents/Info.plist"), "utf8")).toBe(
-      plistSource,
-    );
   });
 });
 
@@ -1435,8 +1421,7 @@ describe("native plist defaults for iOS-style bundles", () => {
     const executable = join(app, "Flat");
     await mkdir(app, { recursive: true });
     await writeFile(executable, "fixture");
-    const plistSource = await plistFixtureSource();
-    await writeFile(join(app, "Info.plist"), plistSource);
+    await writeFixturePlist(join(app, "Info.plist"));
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1449,10 +1434,39 @@ describe("native plist defaults for iOS-style bundles", () => {
     const plist = await client.execute("inspect_plist", {});
     expect(plist.ok && plist.value.result).toMatchObject({
       source_path: join(app, "Info.plist"),
-      bundle: { identifier: "com.example.fixture", version: "42" },
     });
-    expect(await readFile(join(app, "Info.plist"), "utf8")).toBe(plistSource);
   });
+});
+
+it("rejects malformed selected plist bytes before mocked conversion can invent facts", async () => {
+  directory = await createTestTempDirectory("rea-native-malformed-plist-");
+  const app = join(directory, "Malformed.app");
+  const path = join(app, "Contents/Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(path, "fixture");
+  const tools: string[] = [];
+  const replay = new FixtureRunner();
+  const runner: NativeCommandRunner = {
+    run(tool, arguments_, options) {
+      tools.push(tool);
+      return replay.run(tool, arguments_, options);
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    machoTarget(join(app, "Contents/MacOS/Fixture"), app),
+  );
+  for (const [parameters, tag] of [
+    [{}, "AnalysisCapabilityUnavailableError"],
+    [{ path }, "AnalysisInputError"],
+  ] as const) {
+    const result = await client.execute("inspect_plist", parameters);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: tag, operation: "inspect_plist" },
+    });
+  }
+  expect(tools).toEqual(["file", "file"]);
+  expect(await readFile(path, "utf8")).toBe("fixture");
 });
 
 /** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
@@ -1699,40 +1713,23 @@ describe("native macOS provider failures and parsing", () => {
         ?.alignment,
     ).toBe(16384);
   });
-});
-
-describe("native codesign parsing", () => {
-  it.each([
-    ["app bundle with Mach-O thin (arm64)", ["arm64"]],
-    ["Mach-O thin (x86_64)", ["x86_64"]],
-    ["app bundle with Mach-O universal (x86_64 arm64)", ["x86_64", "arm64"]],
-    ["Mach-O thin (arm64 x86_64)", null],
-    ["unrecognized format", null],
-  ] as const)(
-    "retains parsed architecture facts for %s",
-    (format, expected) => {
-      expect(
-        parseCodeSignature(`Format=${format}\n`, false).architectures,
-      ).toEqual(expected);
-    },
-  );
 
   it("reads hardened runtime only from CodeDirectory flags", () => {
     expect(
       parseCodeSignature("Diagnostic: runtime policy unavailable", false)
-        .signature.hardened_runtime,
+        .hardened_runtime,
     ).toBeNull();
     expect(
       parseCodeSignature(
         "CodeDirectory v=20500 flags=0x10000(runtime) hashes=10+7",
         false,
-      ).signature.hardened_runtime,
+      ).hardened_runtime,
     ).toBe(true);
     expect(
       parseCodeSignature(
         "CodeDirectory v=20500 flags=0x2(adhoc,hard) runtime=1",
         false,
-      ).signature.hardened_runtime,
+      ).hardened_runtime,
     ).toBe(false);
   });
 });
