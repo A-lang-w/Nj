@@ -22,6 +22,8 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
       process.execPath,
       // Keep the synthetic JS producer within the real engines' address-space ceiling.
       "--jitless",
+      // Disable Wasm explicitly so Node 22 does not prepend a flag warning to stderr.
+      "--no-expose-wasm",
       fileURLToPath(new URL("./producer.mjs", import.meta.url)),
       engine,
     ]
