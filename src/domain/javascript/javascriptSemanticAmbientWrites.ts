@@ -1,3 +1,7 @@
+import {
+  isIntrinsicMapConstruction,
+  INTRINSIC_MAP_PROTOTYPE_CHAIN,
+} from "./javascriptSemanticNativeConstructions.js";
 import * as t from "@babel/types";
 
 import {
@@ -8,6 +12,7 @@ import {
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
+  type JavaScriptPropertyWrite,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
@@ -32,6 +37,7 @@ import {
   semanticIterationSources,
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
+import { semanticObjectAccessorSelection } from "./javascriptSemanticObjectReferences.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticCopiedReferencePath,
@@ -103,6 +109,7 @@ export const retainSemanticAmbientEffect = (
   path: AmbientPath,
   node: t.Node | undefined,
   storeTarget?: t.MemberExpression | t.OptionalMemberExpression,
+  propertyWrite?: JavaScriptPropertyWrite,
 ): boolean => {
   const selected = kind === "escape" ? [...path, null] : path;
   const byNode = retainedAmbientEffects.get(state) ?? new Map();
@@ -123,6 +130,11 @@ export const retainSemanticAmbientEffect = (
       path: selected,
       node,
       ...(storeTarget === undefined ? {} : { storeTarget }),
+      ...(propertyWrite === undefined
+        ? storeTarget === undefined
+          ? {}
+          : { propertyWrite: { kind: "store" as const } }
+        : { propertyWrite }),
     });
   } else {
     state.ambientEscapes.retain(selected);
@@ -188,6 +200,13 @@ const ambientSetterCandidates = (
     // Escaping an arbitrary ambient function does not itself prove a setter
     // exists on an unrelated unknown chain. Its possible prototype changes
     // still apply when the receiver owner resolves that same prototype.
+    if (
+      effect.propertyWrite?.kind === "store" &&
+      selected !== undefined &&
+      selected !== null &&
+      selected !== "__proto__"
+    )
+      return;
     const candidate = {
       effect,
       prototype,
@@ -231,6 +250,19 @@ export const semanticStoreMayReachAmbientSetter = (
           prototype.every((part, i) => part === null || part === path[i]),
       );
     if (!applicable) return false;
+    const descriptor =
+      effect.propertyWrite?.kind === "define"
+        ? effect.propertyWrite.descriptor
+        : undefined;
+    if (
+      descriptor !== undefined &&
+      t.isObjectExpression(descriptor) &&
+      effect.node !== undefined &&
+      semanticIntrinsicReceiverIsSafe(effect.node, state) &&
+      semanticObjectAccessorSelection(descriptor, "set", state, "get", "own")
+        .ownDescriptor === "absent"
+    )
+      return false;
     const overlaps = (path: readonly (string | null)[], descendants: boolean) =>
       (descendants || effect.path.length <= path.length) &&
       effect.path.every((part, i) =>
@@ -312,6 +344,7 @@ interface AmbientResolution {
   readonly nullPrototype: boolean;
   readonly directNullPrototype: boolean;
   readonly localPrototypes: readonly t.Node[];
+  readonly knownPrototypePaths?: readonly AmbientPath[];
 }
 
 interface AmbientPrototypeReplacement {
@@ -372,6 +405,7 @@ export const createAmbientPathResolver = (
     let nullPrototype = false;
     let traversedLocalPrototype = false;
     const localPrototypes = new Set<t.Node>();
+    const knownPrototypePaths = new Map<string, AmbientPath>();
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
@@ -620,6 +654,13 @@ export const createAmbientPathResolver = (
                     ],
             });
           }
+        }
+        if (suffix?.length === 0 && isIntrinsicMapConstruction(root, state)) {
+          // Native construction is a local allocation, not an unresolved
+          // JavaScript factory invocation. Its retained own stores were queued above.
+          if (!selection?.actualPrototype) hasLocalIdentity = true;
+          resolvedIdentity = true;
+          continue;
         }
         if (
           t.isMetaProperty(root) &&
@@ -880,6 +921,19 @@ export const createAmbientPathResolver = (
           t.isNewExpression(root) &&
           (suffix?.[0] === "__proto__" || suffix?.[0] === "constructor")
         ) {
+          if (
+            selection?.actualPrototype &&
+            suffix[0] === "__proto__" &&
+            suffix.length === 1 &&
+            isIntrinsicMapConstruction(root, state)
+          ) {
+            if (!intrinsicReplacement)
+              for (const prototype of INTRINSIC_MAP_PROTOTYPE_CHAIN) {
+                retain(prototype);
+                knownPrototypePaths.set(JSON.stringify(prototype), prototype);
+              }
+            continue;
+          }
           continueWith(
             root.callee,
             suffix[0] === "__proto__"
@@ -1085,6 +1139,7 @@ export const createAmbientPathResolver = (
       directNullPrototype:
         nullPrototype && !traversedLocalPrototype && paths.length === 0,
       localPrototypes: [...localPrototypes],
+      knownPrototypePaths: [...knownPrototypePaths.values()],
     };
     if (!possibleWrites) cached.set(node, resolution);
     return resolution;
@@ -1114,6 +1169,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     node: t.Node;
     path: AmbientPath;
     storeTarget?: t.MemberExpression | t.OptionalMemberExpression;
+    propertyWrite?: JavaScriptPropertyWrite;
   }[] = [];
   const targets: { node: t.Node; capture: t.Node }[] = [];
   const escapes: {
@@ -1243,6 +1299,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   };
   const freshObject = (node: t.Node) =>
     interop.isFreshObject(node) ||
+    isIntrinsicMapConstruction(node, state) ||
     state.nativeObjectCreationAt?.(node) !== undefined;
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
@@ -1296,11 +1353,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     interop.intrinsicInvocation,
     interop.staticString,
     interop.isFreshObject,
-    (node, path, storeTarget) => {
+    (node, path, storeTarget, propertyWrite) => {
       writes.push({
         node,
         path,
         ...(storeTarget === undefined ? {} : { storeTarget }),
+        ...(propertyWrite === undefined ? {} : { propertyWrite }),
       });
       const target =
         path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
@@ -1492,7 +1550,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       });
     }
   }
-  for (const { node, path, storeTarget } of writes) {
+  for (const { node, path, storeTarget, propertyWrite } of writes) {
     const target =
       path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
     const paths =
@@ -1502,7 +1560,14 @@ export function* indexJavaScriptAmbientWritesSteps(
             prototypeReceiver: true,
           }).paths.map((identity) => [...identity, ...path.slice(2)]);
     for (const resolved of paths) {
-      retainSemanticAmbientEffect(state, "write", resolved, node, storeTarget);
+      retainSemanticAmbientEffect(
+        state,
+        "write",
+        resolved,
+        node,
+        storeTarget,
+        propertyWrite,
+      );
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes) {
@@ -1542,14 +1607,23 @@ export function* indexJavaScriptAmbientWritesSteps(
       { actualPrototype: true, prototypeReceiver: true, beforeStore: store },
     );
     if (resolved.unknownReasons.length > 0) return undefined;
-    const prototypePaths: AmbientPath[] = [];
+    const prototypePaths = new Map<string, AmbientPath>();
     let unknownAncestors = false;
     for (const path of resolved.paths) {
       const owner = path[1];
       if (path.length !== 3 || path[0] !== "global" || path[2] !== "prototype")
         return undefined;
-      prototypePaths.push(path);
-      if (owner !== "Object" && owner !== "Array" && owner !== "Function")
+      prototypePaths.set(JSON.stringify(path), path);
+      if (
+        owner !== "Object" &&
+        owner !== "Array" &&
+        owner !== "Function" &&
+        !resolved.knownPrototypePaths?.some(
+          (known) =>
+            known.length === path.length &&
+            known.every((key, i) => key === path[i]),
+        )
+      )
         unknownAncestors = true;
       if (owner !== "Object") {
         if (
@@ -1565,12 +1639,15 @@ export function* indexJavaScriptAmbientWritesSteps(
         )
           return undefined;
         if (!unknownAncestors)
-          prototypePaths.push(["global", "Object", "prototype"]);
+          prototypePaths.set(
+            JSON.stringify(["global", "Object", "prototype"]),
+            ["global", "Object", "prototype"],
+          );
       }
     }
     return resolved.paths.length > 0 || resolved.nullPrototype
       ? {
-          prototypePaths,
+          prototypePaths: [...prototypePaths.values()],
           unknownAncestors,
           directNullPrototype: resolved.directNullPrototype,
           localPrototypes: resolved.localPrototypes,

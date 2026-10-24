@@ -691,3 +691,67 @@ it("retains conversion from a possible integer-indexed receiver", () => {
     }),
   );
 });
+
+it.each([
+  ["Array.prototype.p=0;const box=[];box.p=Map.prototype;", false],
+  [
+    'Object.defineProperty(Array.prototype,"p",{value:0,writable:true});const box=[];box.p=Map.prototype;',
+    false,
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"p",{get(){return 0}});const box=[];box.p=Map.prototype;',
+    false,
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"p",{set(value){value.get=fetch}});const box=[];box.p=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Set.prototype,"p",{set(value){value.get=fetch}});const box=new Map();box.p=Map.prototype;',
+    false,
+  ],
+  [
+    'Object.defineProperty(Map.prototype,"p",{set(value){value.get=fetch}});const box=new Map();box.p=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});Array.prototype.p=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Object.prototype,"p",{set(){Object.defineProperty(this,"q",{set(value){value.get=fetch}})}});Array.prototype.p=0;const box=[];box.q=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Set.prototype,"p",{set(value){value.get=fetch}});const box=new Map();Object.setPrototypeOf(box,Set.prototype);box.p=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Set.prototype,"p",{set(value){value.get=fetch}});const box=new Map();box.__proto__=Set.prototype;box.p=Map.prototype;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Set.prototype,"p",{set(value){value.get=fetch}});function make(){return flag?new Map():new Set()}const box=make();box.p=Map.prototype;',
+    true,
+  ],
+])(
+  "keeps data stores distinct from setters on the captured native chain: %s",
+  (setup, invoked) => {
+    const source = `${setup}new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, {
+      flag: false,
+      fetch: (value: unknown) => calls.push(value),
+    });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);

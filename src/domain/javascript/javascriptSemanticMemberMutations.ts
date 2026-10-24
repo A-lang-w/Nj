@@ -10,8 +10,9 @@ import {
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import {
   isIntrinsicTypedArrayConstruction,
+  isIntrinsicMapConstruction,
   isTypedArrayNumericIndex,
-} from "./javascriptSemanticTypedArrays.js";
+} from "./javascriptSemanticNativeConstructions.js";
 
 import {
   semanticGlobalProcessOrigin,
@@ -361,6 +362,14 @@ const localAccessorMethods = (
           path: current.path,
           capturedSelections: current.capturedSelections,
         });
+    } else if (
+      lookup === "own" &&
+      current.path.length === 1 &&
+      isIntrinsicMapConstruction(node, state)
+    ) {
+      // The native allocation owner proves no constructor-installed own slots.
+      // Captured slot/escape changes were checked before resolving this node.
+      selection.ownDescriptors?.push("absent");
     } else if (
       (t.isClass(node) || t.isNewExpression(node)) &&
       current.path.length > 0

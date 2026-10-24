@@ -1,3 +1,4 @@
+import type { JavaScriptPropertyWrite } from "./javascriptElectronMemberWrites.js";
 import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
@@ -57,6 +58,7 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 
 /** Mutable binding state used only while constructing the immutable IR. */
 export interface JavaScriptSemanticMemberEffect {
+  readonly propertyWrite?: JavaScriptPropertyWrite;
   readonly path: JavaScriptSemanticPropertyPath;
   readonly node: t.Node | undefined;
   /** Direct ambient store leaf, preserving sibling order within one mutation. */
