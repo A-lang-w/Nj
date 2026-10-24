@@ -99,6 +99,7 @@ const reportedRequest = (
   const mimeType = scenarioContentMediaType(content);
   return {
     method: request.method,
+    bodySize: body !== undefined && !body.redacted ? body.bytes : -1,
     url: request.url.redacted ? null : request.url.url,
     ...(text === undefined || mimeType === undefined
       ? {}
