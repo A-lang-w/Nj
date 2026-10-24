@@ -72,8 +72,7 @@ afterAll(async () => {
     await cliSession?.close();
   }
 });
-const WEBPACK_FACTORY_BODY = `
-  const key = "dynamic";
+const WEBPACK_REQUIRE_ORACLE = `
   const __webpack_require__ = {
     d(target, definitions) {
       for (const name of Object.keys(definitions))
@@ -83,6 +82,9 @@ const WEBPACK_FACTORY_BODY = `
         });
     },
   };
+`;
+const WEBPACK_FACTORY_BODY = `
+  const key = "dynamic";
   exports[key] = 1;
   exports["dot.key"] = 2;
   exports[""] = 3;
@@ -1106,13 +1108,23 @@ describe("Webpack factory CommonJS export keys", () => {
     }]);`;
     await writeFile(join(root, "bundle.js"), bundle);
 
-    // Execute the same factory body as CommonJS, outside the analyzer, to
-    // verify Node's alias behavior and the exact runtime object keys.
+    // Node parses the complete bundle and invokes its actual factory with the
+    // Webpack calling convention, independently of the analyzer.
     const oracleRoot = await createTestTempDirectory(
       "rea-webpack-export-oracle-",
     );
     const oraclePath = join(oracleRoot, "oracle.cjs");
-    await writeFile(oraclePath, WEBPACK_FACTORY_BODY);
+    await writeFile(
+      oraclePath,
+      `${WEBPACK_REQUIRE_ORACLE}
+const globalThis = { webpackChunkStaticExports: [] };
+${bundle}
+const factoryModule = { exports: {} };
+const factories = globalThis.webpackChunkStaticExports[0][1];
+factories[1](factoryModule, factoryModule.exports, __webpack_require__);
+module.exports = factoryModule.exports;
+`,
+    );
     const actual = requireFixture(oraclePath) as Record<string, unknown>;
     expect(Reflect.ownKeys(actual).sort()).toEqual([
       "",
