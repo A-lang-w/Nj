@@ -87,7 +87,7 @@ it("extracts, validates, and sorts root CSS variables deterministically", async 
   expect(result).toEqual({
     status: "included",
     origin_scope: "same_origin",
-    total: 3,
+    total: 4,
     retained_count: 3,
     items: [
       { name: "--alpha", value: "16px" },
@@ -95,6 +95,13 @@ it("extracts, validates, and sorts root CSS variables deterministically", async 
       { name: "--zebra", value: "#000" },
     ],
   });
+  expect(
+    limitations.some(
+      (lim) =>
+        lim.includes("1 root CSS custom property was rejected") &&
+        lim.includes("--bad-val"),
+    ),
+  ).toBe(true);
 });
 
 it("marks status as truncated when variables exceed 250 items", async () => {
@@ -250,6 +257,58 @@ it("handles detached node error (-32000) during in-flight navigation gracefully"
 
   expect(result.status).toBe("unavailable");
   expect(sentCommands).toContain("CSS.disable");
+  expect(
+    limitations.some(
+      (lim) =>
+        lim.includes("CSS.getComputedStyleForNode failed (CDP error -32000)") &&
+        lim.includes("Could not find node with given id"),
+    ),
+  ).toBe(true);
+});
+
+it("preserves observed count and records rejection limitation when tokens fail schema validation", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--valid-token", value: "#333333" },
+        { name: "--oversized-token", value: "x".repeat(600) },
+        { name: "not-a-css-var", value: "ignored" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.total).toBe(2);
+  expect(result.retained_count).toBe(1);
+  expect(result.items).toEqual([{ name: "--valid-token", value: "#333333" }]);
+  expect(
+    limitations.some(
+      (lim) =>
+        lim.includes("1 root CSS custom property was rejected") &&
+        lim.includes("--oversized-token"),
+    ),
+  ).toBe(true);
 });
 
 it("records informational limitation when CSS variables are truncated", async () => {

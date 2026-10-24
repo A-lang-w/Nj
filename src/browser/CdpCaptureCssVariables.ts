@@ -42,6 +42,9 @@ const safeCdpCommand = async (
     return await optionalCdpCommand(context, method, parameters, limitations);
   } catch (cause: unknown) {
     if (cause instanceof CdpCommandRejection && cause.code === -32000) {
+      limitations.push(
+        `${method} failed (CDP error -32000): ${cause.reportedMessage ?? "target node detached or unavailable"}.`,
+      );
       return undefined;
     }
     throw cause;
@@ -112,7 +115,8 @@ export const captureCssVariables = async (
     recordValue(computedResult)?.computedStyle,
   );
   const validItems: BrowserCssVariableItem[] = [];
-  let totalValid = 0;
+  let totalObserved = 0;
+  const rejectedReasons: string[] = [];
 
   for (const prop of computedProps) {
     const name = cdpStringValue(prop.name);
@@ -120,20 +124,36 @@ export const captureCssVariables = async (
     if (name === undefined || value === undefined) continue;
     if (!name.startsWith("--")) continue;
 
+    totalObserved += 1;
+
     const parsed = browserCssVariableItemSchema.safeParse({ name, value });
     if (parsed.success) {
-      totalValid += 1;
       if (validItems.length < MAX_INTAKE_CSS_VARIABLES) {
         validItems.push(parsed.data);
       }
+    } else {
+      const issue =
+        parsed.error.issues[0]?.message ?? "invalid token format or size";
+      rejectedReasons.push(`${name} (${issue})`);
     }
+  }
+
+  if (rejectedReasons.length > 0) {
+    const preview = rejectedReasons.slice(0, 3).join(", ");
+    const remaining =
+      rejectedReasons.length > 3
+        ? ` and ${String(rejectedReasons.length - 3)} more`
+        : "";
+    limitations.push(
+      `${String(rejectedReasons.length)} root CSS custom ${rejectedReasons.length === 1 ? "property was" : "properties were"} rejected: ${preview}${remaining}.`,
+    );
   }
 
   validItems.sort((left, right) =>
     compareUnicodeCodePoints(left.name, right.name),
   );
 
-  const total = totalValid;
+  const total = totalObserved;
   const status: BrowserCssVariables["status"] =
     total > MAX_RETAINED_CSS_VARIABLES ? "truncated" : "included";
   const items = validItems.slice(0, MAX_RETAINED_CSS_VARIABLES);
