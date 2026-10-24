@@ -293,3 +293,29 @@ it("keeps retained header values and URL query pairs only for review", () => {
     expect(projected?.reported).not.toHaveProperty("response.headers");
   }
 });
+
+it("keeps a request body without a media type for review only", () => {
+  const capture = scenarioCaptureFixture(
+    [
+      {
+        method: "POST",
+        url: "/api/session",
+        status: 200,
+        mediaType: "application/json",
+        body: "{}",
+        requestBody: '{"password":"x"}',
+      },
+    ],
+    { request_body: true, response_body: true, header_values: true },
+  );
+  // A body the capture could not classify is still shipped Evidence, so review sees its text.
+  expect(
+    scenarioCaptureRecords(capture, "review").records[0]?.reported,
+  ).toMatchObject({
+    request: { postData: { mimeType: "", text: '{"password":"x"}' } },
+  });
+  // The manifest still reads only bodies whose media type it can classify.
+  expect(
+    scenarioCaptureRecords(capture, "manifest").records[0]?.reported,
+  ).not.toHaveProperty("request.postData");
+});

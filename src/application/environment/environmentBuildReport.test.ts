@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
+import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import {
   anonymousOrigin,
@@ -128,6 +130,47 @@ describe("scanCredentialNames", () => {
         "record 7 response /tokens",
       ],
     });
+  });
+
+  it("counts every occurrence of a repeated form field that holds a value", () => {
+    const form = (text: string): WebNetworkCaptureRecord => {
+      const scanned = record(3, undefined, undefined);
+      (
+        scanned.reported as { request: { postData?: unknown } }
+      ).request.postData = {
+        mimeType: "application/x-www-form-urlencoded",
+        text,
+      };
+      return scanned;
+    };
+    // A later empty occurrence does not hide the earlier value the Evidence ships.
+    expect(scanCredentialNames([form("api_key=secret&api_key=")])).toEqual({
+      count: 1,
+      pointers: ["record 3 request /api_key"],
+    });
+    expect(scanCredentialNames([form("token=a&page=1&token=b")])).toEqual({
+      count: 2,
+      pointers: ["record 3 request /token", "record 3 request /token"],
+    });
+  });
+
+  it("scans a scenario request body the capture recorded without a media type", () => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session",
+          status: 200,
+          mediaType: "application/json",
+          body: "{}",
+          requestBody: '{"password":"x"}',
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    expect(
+      scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
+    ).toEqual({ count: 1, pointers: ["record 0 request /password"] });
   });
 
   it("walks bodies nested deeper than the call stack allows", () => {
