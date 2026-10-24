@@ -316,3 +316,13 @@ existence or loadability. Earlier real-ApiDemos measurements keep their exact
 source pins and are not re-labelled as measurements of this correction. The
 public response schema and ordinary valid-name output are unchanged by source
 reasoning; no new token or speed improvement is claimed.
+
+Executed space-preservation source pin `d1f15f68f65bc546590000eee86c91b1e061bf55`
+incorporates merged IL2CPP/main `3ce311757dd8ac444c8297b2871464536f93816d`.
+All **135** component/JADX/protocol/MCP checks pass without changing deadlines:
+47.168 s elapsed, 43.081 CPU s and 1,550.0 MiB sampled peak family RSS.
+Type/lint, full formatting and generated-document checks pass. Earlier combined
+integration had 672 passes and one Android 30-second MCP timeout; the unchanged
+three-case MCP file passed separately at the original deadline. These outcomes
+remain distinct. This repeat is a fresh runner with primed OS/file caches;
+validation costs are not evidence of a general performance improvement.
