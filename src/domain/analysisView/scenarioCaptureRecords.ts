@@ -14,6 +14,10 @@ import {
   type BrowserScenarioTransactionIndex,
 } from "../browserScenarioTransactions.js";
 import type { JsonValue } from "../jsonValue.js";
+import {
+  iterateUrlQueryParameters,
+  parseRecordedTransportUrl,
+} from "../recordedTransportUrl.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
@@ -24,6 +28,9 @@ import { textBytes } from "./webNetworkRouteTemplates.js";
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
 type CapturedBody = Extract<BrowserNetworkBody, { state: "captured" }>;
+
+/** What records keep beyond replay's: `manifest` adds request bodies, and `review` also the header values and URL query pairs HAR records carry. */
+export type ScenarioRecordPurpose = "manifest" | "replay" | "review";
 
 /** A scenario capture's network transactions in the record shape HAR captures project from. */
 export interface ScenarioCaptureRecords {
@@ -81,18 +88,39 @@ const mediaType = (content: ContentEvent | undefined): string | undefined =>
   captured(content)?.media_type ??
   headerValue(content?.headers, "content-type");
 
+/** Retained header name/value pairs; a value the capture excluded is null. */
+const retainedHeaders = (content: ContentEvent | undefined): JsonValue =>
+  content?.headers.state === "captured" ? content.headers.items : [];
+
+/** The recorded URL's form-decoded query pairs, as a HAR queryString lists them. */
+const queryPairs = (url: string): JsonValue => {
+  const { query } = parseRecordedTransportUrl(url, { includeQuery: true });
+  return query === undefined
+    ? []
+    : Array.from(iterateUrlQueryParameters(query), ([name, value]) => ({
+        name,
+        value,
+      }));
+};
+
 /** The request object HAR readers expect; a redacted URL is withheld so no path is templated from it. */
 const reportedRequest = (
   request: RequestEvent,
   content: ContentEvent | undefined,
-  purpose: "manifest" | "replay",
+  purpose: ScenarioRecordPurpose,
 ): { readonly [key: string]: JsonValue } => {
-  const body = purpose === "manifest" ? captured(content) : undefined;
+  const body = purpose === "replay" ? undefined : captured(content);
   const text = body === undefined ? undefined : utf8Text(body);
   const mimeType = mediaType(content);
   return {
     method: request.method,
     url: request.url.redacted ? null : request.url.url,
+    ...(purpose === "review"
+      ? {
+          headers: retainedHeaders(content),
+          queryString: queryPairs(request.url.url),
+        }
+      : {}),
     ...(text === undefined || mimeType === undefined
       ? {}
       : { postData: { mimeType, text } }),
@@ -103,7 +131,7 @@ const record = (
   ordinal: number,
   observed: { readonly event: RequestEvent; readonly item: number },
   index: BrowserScenarioTransactionIndex,
-  purpose: "manifest" | "replay",
+  purpose: ScenarioRecordPurpose,
 ): {
   readonly record: WebNetworkCaptureRecord;
   /** The record keeps a usable request line, so the manifest may cite it. */
@@ -154,6 +182,9 @@ const record = (
           : {
               response: {
                 status: response.status,
+                ...(purpose === "review"
+                  ? { headers: retainedHeaders(responseContent) }
+                  : {}),
                 content:
                   body === undefined
                     ? { mimeType }
@@ -185,7 +216,7 @@ const record = (
 /** Project each network transaction, in request order, as one record; the ordinal is its zero-based position. */
 export const scenarioCaptureRecords = (
   capture: RetainedBrowserScenarioCapture,
-  purpose: "manifest" | "replay",
+  purpose: ScenarioRecordPurpose,
 ): ScenarioCaptureRecords => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];

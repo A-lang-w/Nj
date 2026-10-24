@@ -236,3 +236,44 @@ it("does not decode request text when projecting replay records", () => {
     decoder.mockRestore();
   }
 });
+
+it("keeps retained header values and URL query pairs only for review", () => {
+  const capture = scenarioCaptureFixture(
+    [
+      {
+        method: "GET",
+        url: "/api/users/2?api_key=k-1&page=",
+        status: 200,
+        mediaType: "application/json",
+        body: '{"id":2}',
+        requestHeaders: [
+          { name: "X-Api-Key", value: "k-123" },
+          { name: "Authorization", value: null },
+        ],
+        responseHeaders: [{ name: "X-Auth-Token", value: "t-9" }],
+      },
+    ],
+    { request_body: true, response_body: true, header_values: true },
+  );
+  const reviewed = scenarioCaptureRecords(capture, "review").records[0];
+  expect(reviewed?.reported).toMatchObject({
+    request: {
+      url: "http://127.0.0.1:3101/api/users/2?api_key=k-1&page=",
+      headers: [
+        { name: "X-Api-Key", value: "k-123" },
+        { name: "Authorization", value: null },
+      ],
+      queryString: [
+        { name: "api_key", value: "k-1" },
+        { name: "page", value: "" },
+      ],
+    },
+    response: { headers: [{ name: "X-Auth-Token", value: "t-9" }] },
+  });
+  for (const purpose of ["manifest", "replay"] as const) {
+    const projected = scenarioCaptureRecords(capture, purpose).records[0];
+    expect(projected?.reported).not.toHaveProperty("request.headers");
+    expect(projected?.reported).not.toHaveProperty("request.queryString");
+    expect(projected?.reported).not.toHaveProperty("response.headers");
+  }
+});
