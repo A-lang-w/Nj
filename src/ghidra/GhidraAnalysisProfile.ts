@@ -169,7 +169,7 @@ export const resolveGhidraAnalysisProfile = async (
           no_return_repair:
             installation.platform === "win32"
               ? "disabled-windows-p0"
-              : "returning-imports-decoded-return-v2",
+              : "returning-imports-decoded-return-v3",
           process_launch:
             installation.platform === "win32"
               ? "official-headless-script-v1"
@@ -266,7 +266,7 @@ export const resolveGhidraAnalysisProfile = async (
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"
-            : "returning-imports-decoded-return-v2",
+            : "returning-imports-decoded-return-v3",
         process_launch:
           installation.platform === "win32"
             ? "official-headless-script-v1"
