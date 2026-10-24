@@ -326,3 +326,34 @@ integration had 672 passes and one Android 30-second MCP timeout; the unchanged
 three-case MCP file passed separately at the original deadline. These outcomes
 remain distinct. This repeat is a fresh runner with primed OS/file caches;
 validation costs are not evidence of a general performance improvement.
+
+## Final declared-value review
+
+Source pin `d87801811cc80dd683f482a76f9cb9ad1ab9b670` removes the last `trimmed` helper. Service
+`foreground_service_type` now preserves the declared Android attribute exactly:
+absence is null, while explicit empty, space-only, padded, token-list and
+resource-reference spellings remain distinct. This field records a declaration;
+it does not validate service-type tokens or establish runtime eligibility.
+The component guide now distinguishes valid DEX boundary spaces from invalid
+controls and from the separate manifest-package grammar.
+
+Six source-boundary cases were added. Against the previous implementation,
+95 checks pass and 3 fail (empty, space-only and padded declarations). After the
+owner fix, all **141** selected component/JADX/protocol/MCP checks pass at the
+original deadlines. The newly malformed foreground-type values are verified at
+the parser boundary; the existing SDK retention workflows do not constitute a
+real Android runtime verification of those values.
+
+The selected suite took 51.269 s elapsed,
+41.298 CPU s and
+1632.789 MiB sampled peak family RSS.
+`check:fast`, full `format:check` and `docs:check` pass. Earlier real ApiDemos
+measurements retain their stated source pins; no new performance improvement
+or real DEX 040 space-named class verification is claimed.
+
+At the superseded `d799bafa5f2f7c563da04955b540345f7bae70e4` CI run,
+the source worker exited while starting a JavaScript reference-lifetimes test;
+there was no failed Android assertion or complete source-suite result. That
+JavaScript source tree is byte-identical to the integrated main source. This is
+an observed worker failure, not a reproduced main failure or a passing check.
+The final head requires its own CI assessment.
