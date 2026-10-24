@@ -25,20 +25,50 @@ export const isElectronRendererLoad = (
     return false;
   const method = semanticStaticPropertyKey(callee.property, callee.computed);
   if (method !== "loadFile" && method !== "loadURL") return false;
-  let receiver = unwrapJavaScriptExpression(callee.object).node;
-  const path: string[] = [method];
-  if (
-    t.isMemberExpression(receiver) &&
-    semanticStaticPropertyKey(receiver.property, receiver.computed) ===
-      "webContents"
-  ) {
-    receiver = unwrapJavaScriptExpression(receiver.object).node;
-    path.unshift("webContents");
-  }
+  const receiver = resolveElectronBrowserWindowReceiver(
+    callee.object,
+    site,
+    [method],
+    context,
+    index,
+  );
+  return (
+    receiver !== undefined &&
+    (receiver.path.length === 1 ||
+      (receiver.path.length === 2 && receiver.path[0] === "webContents"))
+  );
+};
+
+/** Source allocation identity, not a claim about runtime window/frame identity. */
+export const resolveElectronBrowserWindowReceiver = (
+  node: t.Node,
+  site: t.Node,
+  suffix: readonly string[],
+  context: JavaScriptFindingContext,
+  index: JavaScriptBindingIndex,
+):
+  | { readonly owner: t.NewExpression; readonly path: readonly string[] }
+  | undefined => {
+  let receiver = unwrapJavaScriptExpression(node).node;
+  const path = [...suffix];
   const seen = new Set<string>();
-  while (t.isIdentifier(receiver)) {
+  for (;;) {
+    if (
+      t.isMemberExpression(receiver) ||
+      t.isOptionalMemberExpression(receiver)
+    ) {
+      const member = semanticStaticPropertyKey(
+        receiver.property,
+        receiver.computed,
+      );
+      if (member === null) return undefined;
+      path.unshift(member);
+      receiver = unwrapJavaScriptExpression(receiver.object).node;
+      continue;
+    }
+    if (!t.isIdentifier(receiver)) break;
     const binding = index.bindingForReferenceAt(receiver);
-    if (binding === undefined || seen.has(binding.bindingId)) return false;
+    if (binding === undefined || seen.has(binding.bindingId)) return undefined;
     seen.add(binding.bindingId);
     const initializer = semanticStableInitializer(binding, index.bindings);
     if (
@@ -47,15 +77,14 @@ export const isElectronRendererLoad = (
       !semanticBindingAtRead(binding, receiver, index.bindings.parentsByNode)
         .hasDefiniteInitializer
     )
-      return false;
+      return undefined;
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    if (index.referenceMayHaveChangedAt(site, receiver, path)) return false;
+    if (index.referenceMayHaveChangedAt(site, receiver, path)) return undefined;
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
-  if (!t.isNewExpression(receiver)) return false;
+  if (!t.isNewExpression(receiver)) return undefined;
   const constructor = electronCalleePath(receiver.callee, context);
-  return (
-    constructor?.length === 1 &&
+  return constructor?.length === 1 &&
     constructor[0] === "BrowserWindow" &&
     context.electronExportIntact?.([
       "electron",
@@ -63,5 +92,6 @@ export const isElectronRendererLoad = (
       "prototype",
       ...path,
     ]) === true
-  );
+    ? { owner: receiver, path }
+    : undefined;
 };
