@@ -285,11 +285,31 @@ export const itemTarget = (
 ): { readonly collection: string; readonly id: string } => {
   const read = segmentsOf(record.path);
   const raw = read.pop() ?? "";
-  const path = {
+  return targetFrom(state, type, {
     read,
     ids: [...new Set([decodedSegment(raw), raw])],
     written: `/${read.join("/")}`,
-  };
+  });
+};
+
+/** A JSON body's identity is literal, independent of URL escaping or path-segment syntax. */
+export const bodyTarget = (
+  state: SimulatedState,
+  type: string,
+  read: readonly string[],
+  id: string,
+): { readonly collection: string; readonly id: string } =>
+  targetFrom(state, type, { read, ids: [id], written: `/${read.join("/")}` });
+
+const targetFrom = (
+  state: SimulatedState,
+  type: string,
+  path: {
+    readonly read: readonly string[];
+    readonly ids: readonly string[];
+    readonly written: string;
+  },
+): { readonly collection: string; readonly id: string } => {
   const removed = state.removedTargets(type);
   return (
     matchingTarget(

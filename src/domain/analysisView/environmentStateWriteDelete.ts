@@ -47,12 +47,14 @@ export const deleteEntity = (
   if (!built(draft) && !step.observeOnly)
     Object.assign(draft.plan, {
       exemplar_ordinal: ordinal,
-      response: context.io.withBody(ordinal, (body) =>
-        responseShapeOf(ordinal, body, context.io.emptyResponse(ordinal), {
-          idField: context.idField(type),
-          id,
-        }),
-      ),
+      response:
+        step.response ??
+        context.io.withBody(ordinal, (body) =>
+          responseShapeOf(ordinal, body, context.io.emptyResponse(ordinal), {
+            idField: context.idField(type),
+            id,
+          }),
+        ),
     });
   context.state.remove(entity);
   const targets = [

@@ -13,7 +13,9 @@ import {
   namedEntities,
   type NamedEntity,
 } from "./environmentStateWriteAddress.js";
-import { itemTarget } from "./environmentStateWriteChecks.js";
+import { bodyTarget } from "./environmentStateWriteChecks.js";
+import { responseShapeOf } from "./environmentStateWriteExplain.js";
+import { writtenBulkResponse } from "./environmentStateWriteApply.js";
 import { deleteEntity } from "./environmentStateWriteDelete.js";
 import {
   built,
@@ -57,9 +59,13 @@ export const bulkResponseFits = (
   if (response.shape === "empty") return true;
   const ids = new Set(named.map(({ id }) => id));
   if (response.shape === "recorded")
-    return !holds(
-      body,
-      (scalar) => ids.has(scalarText(scalar) ?? "") || scalar === named.length,
+    return (
+      body !== undefined &&
+      !holds(
+        body,
+        (scalar) =>
+          ids.has(scalarText(scalar) ?? "") || scalar === named.length,
+      )
     );
   if (response.pointer !== "/0" || !Array.isArray(body)) return false;
   return (
@@ -72,6 +78,36 @@ export const bulkResponseFits = (
       return located?.pointer === "" && isObject(at(element!, ""));
     })
   );
+};
+
+/** Classify a complete bulk response by corresponding element, without changing its source pointers. */
+const bulkResponseShape = (
+  ordinal: number,
+  body: JsonValue | undefined,
+  empty: boolean,
+  named: readonly NamedEntity[],
+  idField: string,
+): WriteResponse => {
+  if (!empty && Array.isArray(body) && body.length === named.length) {
+    let shape: "entity" | "identity" | undefined;
+    for (const [index, target] of named.entries()) {
+      const element = responseShapeOf(ordinal, body[index], false, {
+        idField,
+        id: target.id,
+      });
+      if (
+        element.pointer !== "" ||
+        (element.shape !== "entity" && element.shape !== "identity") ||
+        (shape !== undefined && shape !== element.shape)
+      ) {
+        shape = undefined;
+        break;
+      }
+      shape = element.shape;
+    }
+    if (shape !== undefined) return { ordinal, shape, pointer: "/0" };
+  }
+  return responseShapeOf(ordinal, body, empty, { idField, id: named[0]!.id });
 };
 
 /** The members a bulk delete sends besides the ids and each element's `identity` member, alike for every entity it names; undefined when they differ. */
@@ -136,29 +172,78 @@ export const applyBulk = (
     fail(draft, step, "body-unusable");
     return [UNKNOWN];
   }
-  const collection = `/${bulkCollectionOf(type, segmentsOf(step.record.path), (text) => text).join("/")}`;
-  const wasBuilt = built(draft);
-  const results = named.map(({ id, body: members }) => {
-    const target = itemTarget(context.state, type, {
-      path: `${collection}/${encodeURIComponent(id)}`,
+  const collection = bulkCollectionOf(
+    type,
+    segmentsOf(step.record.path),
+    (text) => text,
+  );
+  const targets = named.map(({ id }) =>
+    bodyTarget(context.state, type, collection, id),
+  );
+  // Keep the response's one parsed lease while its rows are interpreted. Nested reads retain its scratch charge.
+  return context.io.withBody(step.record.ordinal, (recorded) => {
+    const empty = context.io.emptyResponse(step.record.ordinal);
+    const response = bulkResponseShape(
+      step.record.ordinal,
+      recorded,
+      empty,
+      named,
+      context.idField(type),
+    );
+    const before = targets.map((target) =>
+      context.state.entity(type, target.collection, target.id),
+    );
+    const wasBuilt = built(draft);
+    const results = named.map(({ id, body: members }, index) => {
+      const target = targets[index]!;
+      const object =
+        response.shape === "entity" &&
+        response.pointer === "/0" &&
+        Array.isArray(recorded)
+          ? recorded[index]
+          : undefined;
+      const call = {
+        ...step,
+        response,
+        responseObservation: isObject(object)
+          ? { ordinal: step.record.ordinal, pointer: `/${index}`, id, object }
+          : null,
+      };
+      return deleted
+        ? deleteEntity(context, draft, call, target)
+        : updateEntity(context, draft, call, { ...target, body: members });
     });
-    return deleted
-      ? deleteEntity(context, draft, step, target)
-      : updateEntity(context, draft, step, { ...target, body: members });
+    if (!wasBuilt && built(draft) && options !== undefined) {
+      draft.plan.body = deleteBody(options, identity);
+      retainFixed(context, draft.plan.body.fixed);
+    }
+    const planned = draft.plan.response;
+    if (planned !== null) {
+      const written = targets.flatMap((target, index) => {
+        const entity = deleted
+          ? before[index]
+          : context.state.entity(type, target.collection, target.id);
+        return entity === undefined ? [] : [entity];
+      });
+      const fits =
+        planned.shape === response.shape &&
+        planned.pointer === response.pointer &&
+        bulkResponseFits(planned, recorded, named);
+      const render = (exemplar: JsonValue | undefined) =>
+        writtenBulkResponse(planned, exemplar, written);
+      const rendered =
+        !fits || written.length !== named.length
+          ? undefined
+          : planned.ordinal === step.record.ordinal
+            ? render(recorded)
+            : context.io.withBody(planned.ordinal, render);
+      if (
+        !fits ||
+        (rendered !== undefined &&
+          (!rendered.ok || !same(rendered.value, empty ? undefined : recorded)))
+      )
+        refuse(draft, step, "body-unusable");
+    }
+    return results;
   });
-  if (!wasBuilt && built(draft) && options !== undefined) {
-    draft.plan.body = deleteBody(options, identity);
-    retainFixed(context, draft.plan.body.fixed);
-  }
-  // The plan's response is the exemplar's; serving answers any ids with it only in a shape it can render for them.
-  const { response } = draft.plan;
-  if (
-    !wasBuilt &&
-    response !== null &&
-    !context.io.withBody(step.record.ordinal, (recorded) =>
-      bulkResponseFits(response, recorded, named),
-    )
-  )
-    refuse(draft, step, "body-unusable");
-  return results;
 };
