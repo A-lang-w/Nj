@@ -279,11 +279,7 @@ export const browserCssVariableItemSchema = z.object({
         message:
           "Disallowed control characters or bidirectional overrides in CSS variable value",
       },
-    )
-    .refine((val) => (val.match(/var\(/gu)?.length ?? 0) <= 5, {
-      message:
-        "Excessive nested var() references exceeding recursion safety limit",
-    }),
+    ),
 });
 export type BrowserCssVariableItem = z.infer<
   typeof browserCssVariableItemSchema

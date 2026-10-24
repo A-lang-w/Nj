@@ -205,7 +205,10 @@ const captureAuthorizedPage = async (
           retained_count: 0,
           items: [],
         }
-      : await captureCssVariables(context, limitations);
+      : await captureCssVariables(
+          { ...context, events: state.events },
+          limitations,
+        );
   if ("include_css_variables" in input && input.include_css_variables) {
     if (cssVariables.status === "unavailable") {
       state.events.completeness.unavailable("css_variables");

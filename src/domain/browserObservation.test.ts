@@ -363,18 +363,18 @@ describe("browser observation CSS variables contracts", () => {
       }).success,
     ).toBe(false);
 
-    // Security 4: Rejects excessive nested var() expansion cycles (>5 references)
+    // Retains valid custom property values containing multiple literal var() substrings
     expect(
       browserCssVariablesSchema.safeParse({
         ...valid,
         items: [
           {
-            name: "--nested-cycle",
+            name: "--multi-var",
             value: "var(--a, var(--b, var(--c, var(--d, var(--e, var(--f))))))",
           },
         ],
       }).success,
-    ).toBe(false);
+    ).toBe(true);
 
     // Preserves whitespace verbatim without trimming producer values
     const itemWithWhitespace = { name: "--spaced-val", value: " 16px " };
@@ -395,6 +395,9 @@ describe("browser observation CSS variables contracts", () => {
   });
 
   it("scopes include_css_variables to inspect_web_page and rejects it in bundle analysis", () => {
+    expect("include_css_variables" in analyzeWebBundleInputSchema.shape).toBe(
+      false,
+    );
     const bundleInput = {
       cdp_endpoint: "http://127.0.0.1:9222",
       target_id: "PAGE_1",

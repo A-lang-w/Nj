@@ -205,7 +205,7 @@ export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,
 });
 
-const inspectWebPageInputFacts = {
+const baseBrowserInspectionFacts = {
   ...browserInput,
   target_id: z.string().trim().min(1),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
@@ -216,11 +216,20 @@ const inspectWebPageInputFacts = {
   include_websocket_shapes: z.boolean().default(false),
   include_storage_keys: z.boolean().default(false),
   include_storage_fingerprints: z.boolean().default(false),
+} as const;
+
+export const inspectWebPageInputFacts = {
+  ...baseBrowserInspectionFacts,
   include_css_variables: z
     .boolean()
     .default(false)
     .describe("Include root CSS custom properties and variables"),
 } as const;
+
+export const analyzeWebBundleBaseShapeSchema = z.strictObject({
+  ...baseBrowserInspectionFacts,
+  include_script_sources: z.literal(true).default(true),
+});
 
 const inspectWebPageWithoutSourceSchema = z.strictObject({
   ...inspectWebPageInputFacts,

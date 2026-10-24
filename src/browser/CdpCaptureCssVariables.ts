@@ -24,39 +24,16 @@ const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
 
 const MAX_CSS_VALUE_LENGTH = 512;
-const CSS_URL_QUOTED_PATTERN = /(url\(\s*(["']))([^"'\r\n]+)(\2\s*\))/gi;
+const CSS_URL_DOUBLE_QUOTED_PATTERN = /(url\(\s*")([^"\r\n]+)("\s*\))/gi;
+const CSS_URL_SINGLE_QUOTED_PATTERN = /(url\(\s*')([^'\r\n]+)('\s*\))/gi;
 const CSS_URL_UNQUOTED_PATTERN = /(url\(\s*)([^"'\s()\r\n]+)(\s*\))/gi;
 
 const sanitizeDiagnosticPreview = (text: string): string =>
   text.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, "");
 
-export const redactCssUrlCredentials = (value: string): string => {
-  if (
-    value.length > MAX_CSS_VALUE_LENGTH ||
-    !value.toLowerCase().includes("url(")
-  ) {
-    return value;
-  }
-  const withQuotedRedacted = value.replace(
-    CSS_URL_QUOTED_PATTERN,
-    (
-      fullMatch,
-      prefix: string,
-      _quote: string,
-      rawUrl: string,
-      suffix: string,
-    ) => {
-      try {
-        const sanitized = sanitizeBrowserUrl(rawUrl);
-        if (!sanitized.redacted) return fullMatch;
-        return `${prefix}${sanitized.url}${suffix}`;
-      } catch {
-        return fullMatch;
-      }
-    },
-  );
-  return withQuotedRedacted.replace(
-    CSS_URL_UNQUOTED_PATTERN,
+const redactUrlPattern = (text: string, pattern: RegExp): string =>
+  text.replace(
+    pattern,
     (fullMatch, prefix: string, rawUrl: string, suffix: string) => {
       try {
         const sanitized = sanitizeBrowserUrl(rawUrl);
@@ -67,6 +44,17 @@ export const redactCssUrlCredentials = (value: string): string => {
       }
     },
   );
+
+export const redactCssUrlCredentials = (value: string): string => {
+  if (
+    value.length > MAX_CSS_VALUE_LENGTH ||
+    !value.toLowerCase().includes("url(")
+  ) {
+    return value;
+  }
+  const step1 = redactUrlPattern(value, CSS_URL_DOUBLE_QUOTED_PATTERN);
+  const step2 = redactUrlPattern(step1, CSS_URL_SINGLE_QUOTED_PATTERN);
+  return redactUrlPattern(step2, CSS_URL_UNQUOTED_PATTERN);
 };
 
 const emptyCssVariables = (
@@ -112,6 +100,15 @@ export const captureCssVariables = async (
     readonly sessionId: string | undefined;
     readonly input: InspectWebPageInput;
     readonly signal?: AbortSignal;
+    readonly events?: {
+      readonly completeness: {
+        readonly exclude: (
+          section: "css_variables",
+          reason: "invalid_protocol_value",
+          count: number | null,
+        ) => void;
+      };
+    };
   },
   limitations: string[],
 ): Promise<BrowserCssVariables> => {
@@ -170,17 +167,43 @@ export const captureCssVariables = async (
     return emptyCssVariables("unavailable");
   }
 
-  const computedProps = recordsValue(computedStyleVal);
   const validItems: BrowserCssVariableItem[] = [];
   let totalObserved = 0;
   let rejectedCount = 0;
+  let malformedProtocolEntries = 0;
   const rejectedPreviews: string[] = [];
 
-  for (const prop of computedProps) {
+  for (const entry of computedStyleVal) {
+    const prop = recordValue(entry);
+    if (prop === undefined) {
+      malformedProtocolEntries += 1;
+      continue;
+    }
     const name = cdpStringValue(prop.name);
+    if (name === undefined) {
+      malformedProtocolEntries += 1;
+      continue;
+    }
+    if (!name.startsWith("--")) {
+      continue;
+    }
     const rawValue = cdpStringValue(prop.value);
-    if (name === undefined || rawValue === undefined) continue;
-    if (!name.startsWith("--")) continue;
+    if (rawValue === undefined) {
+      malformedProtocolEntries += 1;
+      totalObserved += 1;
+      rejectedCount += 1;
+      if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
+        const sanitizedName = sanitizeDiagnosticPreview(name);
+        const truncatedName =
+          sanitizedName.length > MAX_PREVIEW_NAME_LENGTH
+            ? `${sanitizedName.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
+            : sanitizedName;
+        rejectedPreviews.push(
+          `${truncatedName} (missing or invalid protocol string value)`,
+        );
+      }
+      continue;
+    }
 
     totalObserved += 1;
 
@@ -208,6 +231,17 @@ export const captureCssVariables = async (
     }
   }
 
+  if (malformedProtocolEntries > 0) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      malformedProtocolEntries,
+    );
+    limitations.push(
+      `CSS.getComputedStyleForNode response contained ${String(malformedProtocolEntries)} malformed property ${malformedProtocolEntries === 1 ? "entry" : "entries"} (missing or invalid protocol values).`,
+    );
+  }
+
   if (rejectedCount > 0) {
     const preview = rejectedPreviews.join(", ");
     const remaining =
@@ -224,11 +258,15 @@ export const captureCssVariables = async (
   );
 
   const total = totalObserved;
-  const status: BrowserCssVariables["status"] =
-    total > MAX_RETAINED_CSS_VARIABLES ? "truncated" : "included";
   const items = validItems.slice(0, MAX_RETAINED_CSS_VARIABLES);
+  const status: BrowserCssVariables["status"] =
+    malformedProtocolEntries > 0 && items.length === 0
+      ? "unavailable"
+      : total > items.length || malformedProtocolEntries > 0
+        ? "truncated"
+        : "included";
 
-  if (status === "truncated") {
+  if (total > MAX_RETAINED_CSS_VARIABLES) {
     limitations.push(
       `CSS custom properties were truncated to ${String(MAX_RETAINED_CSS_VARIABLES)} items (${String(total)} were observed on the root element).`,
     );

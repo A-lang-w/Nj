@@ -85,7 +85,7 @@ it("extracts, validates, and sorts root CSS variables deterministically", async 
   );
 
   expect(result).toEqual({
-    status: "included",
+    status: "truncated",
     origin_scope: "same_origin",
     total: 4,
     retained_count: 3,
@@ -618,4 +618,177 @@ it("accepts valid Unicode and non-ASCII custom property names", async () => {
   expect(result.items.some((item) => item.name === "--カラー-メイン")).toBe(
     true,
   );
+});
+
+it("marks malformed computedStyle entries incomplete and excludes invalid_protocol_value", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        // Entry missing string value
+        { name: "--brand" },
+        // Non-record entry
+        "malformed-entry",
+        // Valid custom property
+        { name: "--valid-token", value: "#333333" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const exclusions: {
+    section: string;
+    reason: string;
+    count: number | null;
+  }[] = [];
+  const mockEvents = {
+    completeness: {
+      exclude: (
+        section: "css_variables",
+        reason: "invalid_protocol_value",
+        count: number | null,
+      ) => {
+        exclusions.push({ section, reason, count });
+      },
+    },
+  };
+
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+      events: mockEvents,
+    },
+    limitations,
+  );
+
+  // Partial valid items retained, but section marked truncated/incomplete
+  expect(result.status).toBe("truncated");
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]?.name).toBe("--valid-token");
+  expect(exclusions).toEqual([
+    { section: "css_variables", reason: "invalid_protocol_value", count: 2 },
+  ]);
+  expect(
+    limitations.some((lim) =>
+      lim.includes("contained 2 malformed property entries"),
+    ),
+  ).toBe(true);
+});
+
+it("marks section truncated when observed custom properties are rejected by schema or length bound", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--valid", value: "10px" },
+        // Oversized value (>512 chars) rejected by schema
+        { name: "--too-long", value: "x".repeat(600) },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  // Even though total (2) <= 250, because 1 item was rejected, status is truncated!
+  expect(result.total).toBe(2);
+  expect(result.retained_count).toBe(1);
+  expect(result.status).toBe("truncated");
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]?.name).toBe("--valid");
+  expect(
+    limitations.some((lim) =>
+      lim.includes("1 root CSS custom property was rejected"),
+    ),
+  ).toBe(true);
+});
+
+it("redacts credentials from quoted and unquoted CSS URLs including opposite quotes", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        {
+          name: "--with-single-quote",
+          value: 'url("https://alice:secret@example.com/a\'b")',
+        },
+        {
+          name: "--with-double-quote",
+          value: "url('https://alice:secret@example.com/a\"b')",
+        },
+        {
+          name: "--unquoted",
+          value: "url(https://alice:secret@example.com/path)",
+        },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("included");
+  expect(result.items).toEqual([
+    {
+      name: "--unquoted",
+      value: "url(https://example.com/path)",
+    },
+    {
+      name: "--with-double-quote",
+      value: "url('https://example.com/a\"b')",
+    },
+    {
+      name: "--with-single-quote",
+      value: 'url("https://example.com/a\'b")',
+    },
+  ]);
 });
