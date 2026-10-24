@@ -6,7 +6,7 @@ import {
   semanticLiteralRestSlots,
 } from "./javascriptSemanticLiteralProjection.js";
 import {
-  semanticPatternSuspendsBeforeGeneratorRead,
+  semanticPatternCompletionBeforeGeneratorRead,
   semanticPatternSuspendsBeforeTarget,
   semanticGeneratorReadInCleanup,
   semanticGeneratorReadAfterYield,
@@ -28,6 +28,8 @@ import {
   javaScriptClassField,
   javaScriptFunctionCanConstruct,
   semanticDirectFunctionReturn,
+  semanticDirectFunctionResult,
+  semanticFinalObjectSlot,
   semanticValueIsRead,
   semanticValueWriteSite,
   javaScriptExactResultOperand,
@@ -327,8 +329,41 @@ const webSocketFreshMethodSelection = (
               Math.max(Math.trunc(value.value), 0),
               Number.MAX_SAFE_INTEGER,
             )
-        )
-          return consumer;
+        ) {
+          // A later indexed getter is entered only after every earlier Get
+          // completes. Prove an own slot for the entire prefix; missing or
+          // dynamic slots may select an inherited getter and remain unknown.
+          const prior = new Set<string>();
+          for (const item of literal.properties) {
+            if (t.isSpreadElement(item)) continue;
+            const name = semanticStaticPropertyKey(item.key, item.computed);
+            const position = name === null ? NaN : Number(name);
+            if (
+              String(position) !== name ||
+              position < 0 ||
+              !Number.isSafeInteger(position) ||
+              position >= index
+            )
+              continue;
+            const slot = semanticFinalObjectSlot(literal, name!);
+            if (slot.kind === "undefined") {
+              prior.add(name!);
+              continue;
+            }
+            if (slot.kind !== "member") continue;
+            if (t.isObjectMethod(slot.node) && slot.node.kind === "get") {
+              const result = semanticDirectFunctionResult(slot.node);
+              if (
+                result.kind !== "undefined" &&
+                (result.kind !== "value" ||
+                  !syntaxEvaluationCannotThrow(result.node))
+              )
+                continue;
+            }
+            prior.add(name!);
+          }
+          if (prior.size === index) return consumer;
+        }
       }
     }
     if (
@@ -2173,7 +2208,8 @@ type WebSocketConsumerPhase =
   | "same-turn"
   | "after-wait"
   | "unknown"
-  | "unknown-resource";
+  | "unknown-resource"
+  | "unreachable";
 
 /** A delegated generator inherits the surrounding generator's actual consumer phase. */
 const webSocketGeneratorConsumerPhase = (
@@ -2187,8 +2223,8 @@ const webSocketGeneratorConsumerPhase = (
   if (seen.has(invocation)) return "unknown";
   seen.add(invocation);
   if (t.isSpreadElement(invocation)) return "same-turn";
-  if (t.isArrayPattern(invocation))
-    return semanticPatternSuspendsBeforeGeneratorRead({
+  if (t.isArrayPattern(invocation)) {
+    const completion = semanticPatternCompletionBeforeGeneratorRead({
       executionFrames: (node) => webSocketExecutionContexts(node, state, true),
       read,
       body,
@@ -2199,9 +2235,13 @@ const webSocketGeneratorConsumerPhase = (
       maySuspend: (node) => webSocketBodyMaySuspend(node, state) !== false,
       completedSuspension: (node) =>
         webSocketCompletedSuspension(node, state) !== undefined,
-    })
-      ? "after-wait"
-      : "same-turn";
+    });
+    return completion === "blocked" || completion === "suspended-blocked"
+      ? "unreachable"
+      : completion === "suspended"
+        ? "after-wait"
+        : "same-turn";
+  }
   if (t.isForOfStatement(invocation)) {
     const cleanup = semanticGeneratorReadInCleanup(
       read,
@@ -2775,6 +2815,7 @@ const webSocketExecutionContextsForCalls = (
               generatorInvocation,
             )
           : "unknown";
+      if (consumerPhase === "unreachable") return [];
       if (
         // Unknown consumer acquisition is not evidence that a synchronous
         // yield let the surrounding caller initialize later locals.
@@ -2794,6 +2835,10 @@ const webSocketExecutionContextsForCalls = (
           )
         )
           suspendedOwner = parent;
+        else if (consumerPhase === "after-wait" && t.isArrayPattern(invocation))
+          // Before the first iterator step, the consumer's target reference
+          // suspends its own activation, not the unstarted generator body.
+          suspendedOwner = webSocketSuspensionOwner(invocation, state);
         const continuation = webSocketContinuation(point, parent.body, state);
         if (continuation !== undefined)
           suspendedOwner = webSocketSuspensionOwner(continuation, state);

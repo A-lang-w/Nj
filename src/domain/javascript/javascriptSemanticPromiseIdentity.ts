@@ -587,7 +587,10 @@ export const semanticAwaitedResultSites = (
   state: JavaScriptSemanticAnalysisState,
   executionFrames: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): readonly t.AwaitExpression[] => {
-  let cached = awaitedResults.get(state);
+  // Mutation collection can query ordering while filling the same effect map.
+  // Only completed facts may be shared with subsequent analysis.
+  const completedEffects = state.memberMutationFactsPhase === "indexed";
+  let cached = completedEffects ? awaitedResults.get(state) : undefined;
   if (
     cached === undefined ||
     cached.literalEffects !== state.literalMemberEffects ||
@@ -637,7 +640,8 @@ export const semanticAwaitedResultSites = (
       iterationUnknown: state.arrayIterationUnknown,
       sites: index,
     };
-    awaitedResults.set(state, cached);
+    if (completedEffects && state.memberMutationFactsPhase === "indexed")
+      awaitedResults.set(state, cached);
   }
   return cached.sites.get(node) ?? [];
 };

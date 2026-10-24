@@ -11,12 +11,13 @@ import {
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
-  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
@@ -32,6 +33,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  isErasedJavaScriptDeclaration,
   isTypeOnlyExportDeclaration,
   isTypeOnlyExportSpecifier,
   isTypeOnlyImportDeclaration,
@@ -97,6 +99,16 @@ export const collectSemanticModuleLink = (
     CommonJsExportReceiverEffect
   >,
 ): void => {
+  // Import/export declarations also describe erased type links. Their nested
+  // expressions do not establish runtime require or CommonJS export links.
+  if (
+    state.erasedSyntaxNodes.has(node) &&
+    !t.isTSImportEqualsDeclaration(node) &&
+    !t.isImportDeclaration(node) &&
+    !t.isExportNamedDeclaration(node) &&
+    !t.isExportAllDeclaration(node)
+  )
+    return;
   if (t.isTSImportEqualsDeclaration(node)) collectImportEquals(node, state);
   else if (t.isImportDeclaration(node)) collectImports(node, state);
   else if (t.isExportAllDeclaration(node))
@@ -117,7 +129,9 @@ export const collectSemanticModuleLink = (
     addModuleLink(
       state,
       {
-        kind: "export",
+        kind: isErasedJavaScriptDeclaration(node.declaration)
+          ? "type-import"
+          : "export",
         specifier: null,
         importedName: null,
         localName: defaultExportLocalName(node.declaration),
@@ -171,6 +185,13 @@ export const collectSemanticReferences = (
 ): JavaScriptSemanticReference[] =>
   completeSemanticSteps(collectSemanticReferencesSteps(program, state, name));
 
+/** Erased lexical names block ambient fallback without claiming runtime bindings. */
+const hasRuntimeDefinition = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.definitionNodes.some((node) => !state.erasedSyntaxNodes.has(node));
+
 /** Collect lexical references in steps while preserving resolution and visit order. */
 export function* collectSemanticReferencesSteps(
   program: t.Program,
@@ -179,7 +200,7 @@ export function* collectSemanticReferencesSteps(
 ): Generator<void, JavaScriptSemanticReference[]> {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       if (
         !t.isIdentifier(node) ||
@@ -213,10 +234,15 @@ export function* collectSemanticReferencesSteps(
           name: node.name,
           role: resolvedRole,
           location: range(node),
-          bindingId: binding?.bindingId ?? null,
+          bindingId:
+            binding !== undefined && hasRuntimeDefinition(binding, state)
+              ? binding.bindingId
+              : null,
           resolution:
             binding !== undefined
-              ? "resolved"
+              ? hasRuntimeDefinition(binding, state)
+                ? "resolved"
+                : "unknown"
               : blocked
                 ? "unknown"
                 : "unbound",
@@ -238,6 +264,7 @@ export const immutableSemanticScopes = (
     location: scope.location,
     bindingsComplete: scope.bindingsComplete,
     bindingIds: [...scope.bindings.values()]
+      .filter((binding) => hasRuntimeDefinition(binding, state))
       .map(({ bindingId }) => bindingId)
       .sort(compareUnicodeCodePoints),
   }));
@@ -247,6 +274,7 @@ export const immutableSemanticBindings = (
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticBinding[] =>
   [...state.bindingsById.values()]
+    .filter((binding) => hasRuntimeDefinition(binding, state))
     .map((binding) => ({
       bindingId: binding.bindingId,
       scopeId: binding.scopeId,

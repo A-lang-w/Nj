@@ -152,6 +152,8 @@ export interface JavaScriptSemanticAnalysisState {
     | t.NewExpression
     | t.TaggedTemplateExpression
   )[];
+  /** TypeScript syntax omitted from JavaScript value evaluation. */
+  readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
@@ -227,6 +229,12 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
   ): JavaScriptSemanticBindingState | undefined;
   effectsForReferenceAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Order declarations within one activation; deferred and repeating effects stay unknown. */
+  effectsForReferenceWithinActivationAt(
     site: t.Node,
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,

@@ -5,6 +5,81 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "array current target base waits",
+    '(async()=>{[(await 0,{})[0]]=(function*(){new Socket("wss://example.test/reference-base");yield 0})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reference-base"],
+  ],
+  [
+    "array default waits only after iterator value",
+    '(async()=>{[({})[0]=await 0]=(function*(){new Socket("wss://example.test/reference-default");yield undefined})()})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "array outer caller waits for reference continuation",
+    'export {};try{await(async()=>{[({})[await 0]]=(function*(){new Socket("wss://example.test/reference-awaited");yield 0})()})()}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "array current reference follows prior completed slot",
+    '(async()=>{let first;[first,({})[await 0]]=(function*(){yield 0;new Socket("wss://example.test/reference-second");yield 0})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reference-second"],
+  ],
+  [
+    "array current reference cannot borrow next target wait",
+    '(async()=>{let first;[first,({})[await 0]]=(function*(){new Socket("wss://example.test/reference-later");yield 0;yield 0})()})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "array reference nested base failure prevents first step",
+    'const Socket=globalThis.WebSocket;(async()=>{[((await 0,null).x)[0]]=(function*(){new Socket("wss://example.test/reference-throw");yield 0})()})();',
+    [],
+  ],
+  [
+    "apply completed data prefix retains eager getter",
+    '(()=>{}).apply(null,{length:2,0:0,get 1(){new Socket("wss://example.test/apply-data-prefix")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply completed getter prefix retains eager getter",
+    '(()=>{}).apply(null,{length:2,get 0(){return 0},get 1(){new Socket("wss://example.test/apply-getter-prefix")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply empty getter prefix retains eager getter",
+    '(()=>{}).apply(null,{length:2,get 0(){},get 1(){new Socket("wss://example.test/apply-empty-prefix")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply setter-only prefix is own undefined",
+    '(()=>{}).apply(null,{length:2,set 0(value){},get 1(){new Socket("wss://example.test/apply-setter-prefix")}});const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "apply throwing length prevents indexed getter until direct read",
+    'let args;try{(()=>{}).apply(null,args={get length(){throw 0},get 0(){new Socket("wss://example.test/apply-length-fail")}})}catch{}const Socket=globalThis.WebSocket;args[0];',
+    ["wss://example.test/apply-length-fail"],
+  ],
+  [
+    "awaited facts initialized twin keeps endpoint",
+    'export {};const Socket=globalThis.WebSocket;function expose(value){}const pending=(async()=>{await 0;Object.keys({});new Socket("wss://example.test/stale-wait-ready")})();expose(Object);try{await pending.then(()=>{})}catch{}',
+    ["wss://example.test/stale-wait-ready"],
+  ],
+  [
+    "array target reference waits before first iterator read",
+    '(async()=>{[({})[await 0]]=(function*(){new Socket("wss://example.test/reference");yield 0})()})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/reference"],
+  ],
+  [
+    "failed earlier apply index leaves later direct getter independent",
+    'let args;try{(()=>{}).apply(null,args={length:2,get 0(){throw 0},get 1(){new Socket("wss://example.test/later-getter")}})}catch{}const Socket=globalThis.WebSocket;args[1];',
+    ["wss://example.test/later-getter"],
+  ],
+  [
+    "ambient receiver indexing does not cache unfinished awaited facts",
+    'export {};function expose(value){}const pending=(async()=>{await 0;Object.keys({});new Socket("wss://example.test/stale-wait")})();expose(Object);try{await pending.then(()=>{})}catch{}const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
     "apply index getter before initialization",
     '(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index")}});const Socket=globalThis.WebSocket;',
     [],

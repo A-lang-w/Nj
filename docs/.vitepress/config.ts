@@ -35,6 +35,7 @@ export default defineConfig({
           { text: "PE certificates", link: "/pe-certificates" },
           { text: "PE imports", link: "/pe-imports" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "CPython pyc files", link: "/python-pyc" },
           { text: "Erlang BEAM", link: "/erlang-beam" },
           {
@@ -79,6 +80,7 @@ export default defineConfig({
           { text: "Ghidra raw binary", link: "/raw-binary" },
           { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
           { text: "Ghidra PowerPC", link: "/ghidra-ppc" },
+          { text: "Ghidra GameCube DOL", link: "/ghidra-dol" },
           { text: "Ghidra semantics", link: "/ghidra-provider" },
         ],
       },

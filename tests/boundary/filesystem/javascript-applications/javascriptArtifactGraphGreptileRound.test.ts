@@ -12,6 +12,23 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "review-implicit-0.mjs",
+    source:
+      '(async()=>{[({})[await 0]]=(function*(){new Socket("wss://example.test/reference");yield 0})()})();const Socket=globalThis.WebSocket;',
+    endpoint: "wss://example.test/reference",
+  },
+  {
+    file: "review-implicit-1.mjs",
+    source:
+      'let args;try{(()=>{}).apply(null,args={length:2,get 0(){throw 0},get 1(){new Socket("wss://example.test/later-getter")}})}catch{}const Socket=globalThis.WebSocket;args[1];',
+    endpoint: "wss://example.test/later-getter",
+  },
+  {
+    file: "review-implicit-2.mjs",
+    source:
+      'export {};function expose(value){}const pending=(async()=>{await 0;Object.keys({});new Socket("wss://example.test/stale-wait")})();expose(Object);try{await pending.then(()=>{})}catch{}const Socket=globalThis.WebSocket;',
+  },
+  {
     file: "review-apply-rest-6.mjs",
     source:
       '(()=>{}).apply(null,{length:1,get 0(){new Socket("wss://example.test/apply-index")}});const Socket=globalThis.WebSocket;',

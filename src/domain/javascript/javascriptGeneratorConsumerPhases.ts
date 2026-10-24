@@ -996,8 +996,8 @@ export const semanticPatternSuspendsBeforeTarget = (
   ...args: Parameters<typeof semanticPatternCompletionBeforeTarget>
 ): boolean => semanticPatternCompletionBeforeTarget(...args) === "suspended";
 
-/** Only completed work in an earlier consumed slot can delay the next iterator step. */
-export const semanticPatternSuspendsBeforeGeneratorRead = ({
+/** Completed slots and the current target reference precede its iterator step. */
+export const semanticPatternCompletionBeforeGeneratorRead = ({
   read,
   body,
   pattern,
@@ -1019,15 +1019,13 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   readonly executionFrames?: (
     node: t.Node,
   ) => readonly SemanticExecutionFrame[];
-}): boolean => {
+}): PatternCompletion => {
   // Pattern continuation depends on iterator and mutation facts even when its
   // initial constructor-order query cannot yet establish a candidate endpoint.
   state.memberMutationFactsPhase ??= "requested";
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
-  // No binding work has run while evaluating the first yielded value. Avoid
-  // asking that binding's value proof to establish its own read context.
-  if (count === undefined || count <= 0) return false;
+  if (count === undefined || count < 0) return "completed";
   const cleanup = facts.cleanup.has(read);
   // A finite pattern closes its iterator after its last slot, not another next().
   if (
@@ -1035,11 +1033,30 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     count >= pattern.elements.length &&
     !pattern.elements.some((element) => t.isRestElement(element))
   )
-    return false;
+    return "completed";
   const waited = (index: number | null, blockedIndex: number | null): boolean =>
     index !== null &&
     index < count &&
     (cleanup || blockedIndex === null || blockedIndex >= count);
+  const completion = (
+    index: number | null,
+    blockedIndex: number | null,
+  ): PatternCompletion => {
+    if (!cleanup && blockedIndex !== null && blockedIndex < count)
+      return "blocked";
+    if (waited(index, blockedIndex)) return "suspended";
+    if (cleanup) return "completed";
+    const element = pattern.elements[count];
+    if (element == null) return "completed";
+    // AssignmentElement evaluates only its reference before IteratorStep. Its
+    // selected default and final PutValue still follow the yielded value.
+    const target = t.isAssignmentPattern(element)
+      ? element.left
+      : t.isRestElement(element)
+        ? element.argument
+        : element;
+    return patternReferenceCompletion(target, completedSuspension);
+  };
   const candidate = facts.firstPatternWait.get(pattern);
   const cached =
     candidate !== undefined &&
@@ -1054,9 +1071,9 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     cached !== undefined &&
     (cached.completedCount >= count || cached.blockedIndex !== null)
   )
-    return waited(cached.index, cached.blockedIndex);
+    return completion(cached.index, cached.blockedIndex);
   // A cyclic context query cannot borrow work from a slot still being proved.
-  if (cached?.inProgress) return false;
+  if (cached?.inProgress) return "completed";
   let firstWait: number | null = cached?.index ?? null;
   let blockedAt: number | null = cached?.blockedIndex ?? null;
   let completedCount = cached?.completedCount ?? 0;
@@ -1131,7 +1148,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   } finally {
     cache(false);
   }
-  return waited(firstWait, blockedAt);
+  return completion(firstWait, blockedAt);
 };
 
 /** A consumer phase can defer a body read only after an owned yield was reached. */
