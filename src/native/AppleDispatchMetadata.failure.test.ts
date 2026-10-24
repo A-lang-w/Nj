@@ -3,18 +3,16 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { appleDispatchMetadataFailure } from "./AppleDispatchMetadata.js";
 
 it.each(["integrity", "path"] as const)(
-  "keeps %s source-read refusals distinct from provider execution failures",
+  "keeps %s bound-target refusals distinct from provider execution failures",
   (reason) => {
     const cause = new ArtifactReaderFailure(reason, "source boundary refused");
     expect(appleDispatchMetadataFailure(cause, "/selected")._tag).toBe(
-      reason === "integrity"
-        ? "AnalysisArtifactChangedError"
-        : "AnalysisInputError",
+      "AnalysisArtifactChangedError",
     );
   },
 );
 it.each(["EACCES", "EPERM", "ENOENT"])(
-  "preserves the filesystem outcome %s for a selected metadata target",
+  "preserves the filesystem outcome %s for a bound metadata target",
   (code) => {
     const physical = Object.assign(new Error("selected read refused"), {
       code,
@@ -23,7 +21,9 @@ it.each(["EACCES", "EPERM", "ENOENT"])(
       cause: physical,
     });
     expect(appleDispatchMetadataFailure(cause, "/selected")._tag).toBe(
-      code === "ENOENT" ? "AnalysisInputError" : "AnalysisAccessDeniedError",
+      code === "ENOENT"
+        ? "AnalysisArtifactChangedError"
+        : "AnalysisAccessDeniedError",
     );
   },
 );
