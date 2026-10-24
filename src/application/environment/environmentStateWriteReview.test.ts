@@ -18,6 +18,7 @@ import {
   book,
   bookClock,
   renamedBook,
+  offsetListed,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 
 import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
@@ -408,4 +409,42 @@ it("drops a write's confirmation when its read view later disproves learned arra
     served: false,
     checked_record_ordinals: [],
   });
+});
+
+it("reloads an unchanged snapshot after a view with its own clock spellings disproves sorting", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+  const written = { ...second, tags: ["zeta", "delta"] };
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/books", [first, second].map(offsetListed)],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+    [
+      "GET",
+      "/api/books",
+      [first, { ...written, tags: ["delta", "zeta"] }].map(offsetListed),
+    ],
+  ];
+  const consistent = servedFrom(rows);
+  expect(consistent.state.entities[0]?.view_fields).toContainEqual({
+    tool: "get_books",
+    fields: {
+      created_at: offsetListed(first).created_at,
+      updated_at: offsetListed(first).updated_at,
+    },
+  });
+  expect(consistent.store.replace(consistent.store.snapshot()).ok).toBe(true);
+
+  const books = servedFrom([
+    ...rows,
+    ["GET", "/api/books", [first, written].map(offsetListed)],
+  ]);
+  expect(books.state.views.get("get_books")).toMatchObject({
+    shape: "recorded",
+  });
+  const snapshot = books.store.snapshot();
+  expect(books.store.replace(snapshot)).toMatchObject({ ok: true });
+  expect(books.store.snapshot()).toEqual(snapshot);
+  expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(first);
 });
