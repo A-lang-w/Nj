@@ -348,6 +348,19 @@ export const containsDelimited = (value: JsonValue, token: string): boolean => {
   return false;
 };
 
+/** Whether any number inside a value spells `digits`. */
+export const containsNumber = (value: JsonValue, digits: string): boolean => {
+  const pending: JsonValue[] = [value];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next === "number") {
+      if (String(next) === digits) return true;
+    } else if (typeof next === "object" && next !== null)
+      for (const child of Array.isArray(next) ? next : Object.values(next))
+        pending.push(child);
+  }
+  return false;
+};
+
 /** SHA-256 bytes of a seed, extended by counter blocks to the requested length. */
 const seededBytes = (seed: string, length: number): Uint8Array => {
   const bytes = new Uint8Array(length);

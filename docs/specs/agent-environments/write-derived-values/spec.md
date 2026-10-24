@@ -24,19 +24,23 @@ model could not explain, though the application derives it deterministically:
   by non-alphanumerics; generated values may be short, other values need eight characters, as a copy does. A create
   composes a string only when at least one other entity of the type spells it with the same parts and none spells it
   otherwise, and never when one text comes from two sources serving could tell apart (two clocks the write stamps are
-  one source). An update's unsent change may be composed from members it stored as sent and fields it left as they were,
-  when the same parts also spell the value before the call and no other entity spells it otherwise. Serving rebuilds the
-  string from the written fields after every other rule and refuses a call when a part's field holds nothing to spell,
-  and a composed field no longer pins the members it reads. A composition learned on a later call is checked against
-  every earlier call.
+  one source when they spell the same zone), and never when another entity holds the field as something other than the
+  parts spell, a non-string value included. An update's unsent change may be composed from members it stored as sent and
+  fields it left as they were, when the same parts also spell the value before the call and no other entity spells it
+  otherwise. Serving rebuilds the string from the written fields after every other rule and refuses a call when a part's
+  field holds nothing to spell, and a composed field no longer pins the members it reads. A composition learned on a
+  later call is checked against every earlier call.
 - **Trimmed clocks.** A clock format may be `trimmed`: its values differ only in how many fraction digits they show and
   none ends a fraction in a zero. It is learned from the type's held values of the field, from a later create, and from
-  a later update; other clocks the plan stamps take the spelling unless their own value, or the later call's, shows a
-  fixed width. `fraction` is the most digits shown, and serving drops trailing zeros and the point with them.
-- **Generated integers.** A created integer of 10 to 20 digits that no entity of the type holds, where every held
-  entity holds a distinct one of the same length and JSON kind and none is a clock, is `unique`. Serving draws a seeded
-  integer of that length and kind that no held entity has. One that another field of the created entity also holds is
-  not `unique`, and the create is withheld as `unexplained-change`, since seeding cannot keep the two equal.
+  a later update; other clocks the plan stamps take the spelling too, and no clock takes it once a held entity, the
+  exemplar or any call the plan accepted showed the field at a fixed width; a later call that then shows it shorter is
+  withheld. `fraction` is the most digits shown, and serving drops trailing zeros and the point with them.
+- **Generated integers.** A created integer of 10 to 20 digits that no entity of the type holds, where every held entity
+  holds a distinct one of the same length and JSON kind and none is a clock, is `unique`. Serving draws a seeded integer
+  of that length and kind that no held entity has. One that another field of the created entity also holds, as a value,
+  a number at any depth or a delimited part of a nested string, is not `unique`, and the create is withheld as
+  `unexplained-change`, since seeding cannot keep the two equal. Compare treats two such integers of one JSON kind and
+  length under a `unique` rule as generated values.
 
 Plans that need none of this are unchanged.
 

@@ -33,6 +33,7 @@ import {
 import {
   built,
   callOf,
+  clockEvidence,
   fail,
   itemReads,
   refuse,
@@ -66,7 +67,10 @@ import {
   type FieldRule,
   type WriteCall,
 } from "./environmentStateWriteRules.js";
-import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
+import {
+  fittedClockFormat,
+  noteFixedWidths,
+} from "./environmentStateWriteClockFormats.js";
 import {
   generatedIntegerDigits,
   isUuid,
@@ -233,6 +237,7 @@ const buildCreate = (
     insert: draft.candidates[0]!,
   });
   draft.observed = evidence.observed.object;
+  for (const entity of held) noteFixedWidths(draft.fixedWidth, entity);
   return true;
 };
 
@@ -304,7 +309,13 @@ const followsGenerated = (
     const value = created.fields[rule.field];
     const exemplar = draft.observed?.[rule.field];
     if (rule.rule === "clock")
-      return fittedClockFormat(rule.format, value, exemplar) !== undefined;
+      return (
+        fittedClockFormat(
+          rule.format,
+          value,
+          clockEvidence(draft, rule.field),
+        ) !== undefined
+      );
     if (rule.rule === "unique")
       return (
         (isUuid(value) ||
@@ -319,20 +330,26 @@ const followsGenerated = (
     );
   }) && followsSequences(context, draft, created);
 
-/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless that call shows them at a fixed width. */
+/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless a value the plan saw shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
   const fitted = draft.plan.rules.map((rule) => {
     if (rule.rule !== "clock") return rule;
     const format = fittedClockFormat(
       rule.format,
       fields[rule.field],
-      draft.observed?.[rule.field],
+      clockEvidence(draft, rule.field),
     );
     return format === undefined || format === rule.format
       ? rule
       : { ...rule, format };
   });
-  draft.plan.rules = siblingTrimmedClocks(fitted, draft.observed, fields);
+  draft.plan.rules = siblingTrimmedClocks(
+    fitted,
+    draft.observed,
+    fields,
+    Object.fromEntries(draft.fixedWidth),
+  );
+  noteFixedWidths(draft.fixedWidth, fields);
 };
 
 /** Record the values a create's sequences took, which the next call follows. */

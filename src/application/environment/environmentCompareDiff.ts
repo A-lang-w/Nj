@@ -1,6 +1,7 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
+  generatedIntegerDigits,
   isUuid,
   readClock,
   type ClockFormat,
@@ -108,14 +109,36 @@ interface Generation {
   readonly pointer: string;
 }
 
-/** Whether a confirmed generation rule applies here and both strings retain its generated format. */
+/** Whether both values are generated integers of one JSON kind and length, as a `unique` integer field's are. */
+const sameGeneratedInteger = (
+  live: string | number,
+  env: string | number,
+): boolean => {
+  const liveDigits = generatedIntegerDigits(live);
+  const envDigits = generatedIntegerDigits(env);
+  return (
+    liveDigits !== undefined &&
+    envDigits !== undefined &&
+    typeof live === typeof env &&
+    liveDigits.length === envDigits.length
+  );
+};
+
+/** Whether a confirmed generation rule applies here and both values retain its generated format. */
 const generatedPair = (
-  live: string,
-  env: string,
+  live: string | number,
+  env: string | number,
   generation: Generation | undefined,
 ): boolean => {
   if (generation === undefined) return false;
   const { rule, pointer } = generation;
+  if (
+    rule.rule === "unique" &&
+    pointer === "" &&
+    sameGeneratedInteger(live, env)
+  )
+    return true;
+  if (typeof live !== "string" || typeof env !== "string") return false;
   if (rule.rule === "renewed")
     return rule.pointers.includes(pointer) && isUuid(live) && isUuid(env);
   if (pointer !== "") return false;
@@ -166,13 +189,21 @@ class Differ {
   }
 
   /** One answer's generated identities must rename consistently in both directions. */
-  #pairGenerated(live: string, env: string, rule: FieldRule): boolean {
+  #pairGenerated(
+    live: string | number,
+    env: string | number,
+    rule: FieldRule,
+  ): boolean {
     const uuid =
       rule.rule === "unique" ||
       rule.rule === "renewed" ||
       (rule.rule === "identity" && rule.generator === "uuid");
-    const identity = (value: string) =>
-      uuid ? `uuid:${value.toLowerCase()}` : `string:${value}`;
+    const identity = (value: string | number) =>
+      typeof value === "number"
+        ? `number:${String(value)}`
+        : uuid
+          ? `uuid:${value.toLowerCase()}`
+          : `string:${value}`;
     const liveKey = identity(live);
     const envKey = identity(env);
     const knownEnv = this.#generatedToEnv.get(liveKey);
@@ -226,8 +257,8 @@ class Differ {
     const envClock = clockFormat(env, key);
     const generatedMatch =
       generation !== undefined &&
-      typeof live === "string" &&
-      typeof env === "string" &&
+      (typeof live === "string" || typeof live === "number") &&
+      (typeof env === "string" || typeof env === "number") &&
       liveClock === undefined &&
       envClock === undefined &&
       !this.map.hasLive(live) &&

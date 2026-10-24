@@ -19,6 +19,7 @@ import {
 } from "./environmentStateWriteRules.js";
 import {
   containsDelimited,
+  containsNumber,
   generatedIntegerDigits,
   integerOf,
   isUuid,
@@ -182,7 +183,7 @@ const learnedClockFormat = (
     : learned;
 };
 
-/** A created large integer's proof, as a time-based id's: no entity of its type holds it and each holds a distinct one of the same length and kind; linked when another field holds it too, which seeding cannot keep. */
+/** A created large integer's proof, as a time-based id's: no entity of its type holds it and each holds a distinct one of the same length and kind; linked when another field holds it too, as a number at any depth or delimited in a nested string, which seeding cannot keep. */
 export const createdInteger = (
   field: string,
   entity: JsonObject,
@@ -214,6 +215,7 @@ export const createdInteger = (
     ([other, kept]) =>
       other !== field &&
       (kept === value ||
+        containsNumber(kept, digits) ||
         (typeof kept === "object" &&
           kept !== null &&
           containsDelimited(kept, digits))),
@@ -288,7 +290,7 @@ export const explainCreate = (
     if (rule === undefined) unexplained.push(field);
     else ruled.push(rule);
   }
-  const rules = siblingTrimmedClocks(ruled, evidence.entity);
+  const rules = siblingTrimmedClocks(ruled, evidence.entity, ...evidence.type);
   // Generated values first, then copies: an echoed value may recur in unrelated text, a copied one is the call's own unless also echoed.
   const echoed = new Set(
     rules.flatMap((rule) =>

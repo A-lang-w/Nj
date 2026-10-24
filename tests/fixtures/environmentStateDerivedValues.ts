@@ -377,3 +377,108 @@ export const TWO_CLOCK_TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
     synced(RENAMED_SECOND_TAG, goClock(5, "612345683")),
   ],
 ];
+
+/** A clock `seconds` after the first exchange with the fraction digits as given. */
+const clockAt = (seconds: number, fraction: string): string =>
+  bookClock(seconds).replace("Z", `.${fraction}Z`);
+
+/** The same renames whose later call trims the update clock and shows the synced clock's trailing zero. */
+export const MIXED_WIDTH_TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
+  ...TWO_CLOCK_TAG_UPDATE_ROWS.slice(0, 5),
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(2)}`,
+    synced(RENAMED_SECOND_TAG, clockAt(5, "612345680")),
+    200,
+    { name: "Outdoor gear" },
+  ],
+  [
+    "GET",
+    `/api/tags/${numberedUuid(2)}`,
+    synced(RENAMED_SECOND_TAG, clockAt(5, "612345680")),
+  ],
+];
+
+const SPARE_TAG = tag(
+  5,
+  "Spare",
+  goClock(7, "412345671"),
+  goClock(7, "412345683"),
+);
+
+/** The same creates and a third whose creation clock shows nine digits without a trailing zero. */
+export const LATER_FIXED_SIBLING_TAG_ROWS: readonly TimedCaptureRow[] = [
+  ...FIXED_SIBLING_TAG_ROWS.slice(0, 7),
+  ["POST", "/api/tags", SPARE_TAG, 201, { name: "Spare" }],
+  ["GET", `/api/tags/${numberedUuid(5)}`, SPARE_TAG],
+  [
+    "GET",
+    "/api/tags",
+    [FIRST_TAG, SECOND_TAG, HEAVY_TAG, FIXED_CREATED_TAG, SPARE_TAG],
+  ],
+];
+
+/** A held tag whose creation clock keeps a trailing zero while its update clock shows eight digits. */
+const FIXED_HELD_TAG = tag(
+  1,
+  "Fragile",
+  "2026-10-01T09:00:00.123456780Z",
+  "2026-10-01T09:00:00.12345679Z",
+);
+
+/** One tag create among held tags that show the update clock trimmed and the creation clock at a fixed width. */
+export const FIXED_HELD_TAG_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/tags", [FIXED_HELD_TAG, SECOND_TAG]],
+  ["GET", `/api/tags/${numberedUuid(1)}`, FIXED_HELD_TAG],
+  ["GET", `/api/tags/${numberedUuid(2)}`, SECOND_TAG],
+  ["POST", "/api/tags", HEAVY_TAG, 201, { name: "Heavy" }],
+  ["GET", `/api/tags/${numberedUuid(3)}`, HEAVY_TAG],
+  ["GET", "/api/tags", [FIXED_HELD_TAG, SECOND_TAG, HEAVY_TAG]],
+];
+
+const GLASS_TAG = {
+  ...FIRST_TAG,
+  name: "Fragile glass",
+  updatedAt: clockAt(3, "123456789"),
+};
+const GEAR_TAG = {
+  ...SECOND_TAG,
+  name: "Outdoor gear",
+  updatedAt: clockAt(5, "123456780"),
+};
+const GLASSWARE_TAG = {
+  ...GLASS_TAG,
+  name: "Fragile glassware",
+  updatedAt: clockAt(7, "12345678"),
+};
+
+/** Three tag renames whose update clocks show nine digits, nine ending in a zero, then eight. */
+export const MIDDLE_FIXED_TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/tags", [FIRST_TAG, SECOND_TAG]],
+  ["GET", `/api/tags/${numberedUuid(1)}`, FIRST_TAG],
+  ["GET", `/api/tags/${numberedUuid(2)}`, SECOND_TAG],
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(1)}`,
+    GLASS_TAG,
+    200,
+    { name: "Fragile glass" },
+  ],
+  ["GET", `/api/tags/${numberedUuid(1)}`, GLASS_TAG],
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(2)}`,
+    GEAR_TAG,
+    200,
+    { name: "Outdoor gear" },
+  ],
+  ["GET", `/api/tags/${numberedUuid(2)}`, GEAR_TAG],
+  [
+    "PATCH",
+    `/api/tags/${numberedUuid(1)}`,
+    GLASSWARE_TAG,
+    200,
+    { name: "Fragile glassware" },
+  ],
+  ["GET", `/api/tags/${numberedUuid(1)}`, GLASSWARE_TAG],
+];

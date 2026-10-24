@@ -8,6 +8,7 @@ import {
   joinsBefore,
   readClock,
   slugOf,
+  zoneMinutesForFormat,
 } from "./environmentStateWriteValues.js";
 import {
   CLOCK_PATTERNS,
@@ -93,11 +94,11 @@ interface CandidateIndex {
 
 const indexed = (candidates: readonly Candidate[]): CandidateIndex => {
   const byToken = new Map<string, Candidate[]>();
-  for (const candidate of candidates)
-    byToken.set(candidate.token, [
-      ...(byToken.get(candidate.token) ?? []),
-      candidate,
-    ]);
+  for (const candidate of candidates) {
+    const same = byToken.get(candidate.token);
+    if (same === undefined) byToken.set(candidate.token, [candidate]);
+    else same.push(candidate);
+  }
   const lengths = [...new Set(candidates.map(({ token }) => token.length))];
   return { byToken, lengths: lengths.sort((left, right) => right - left) };
 };
@@ -156,7 +157,7 @@ const samePart = (left: SourcePart, right: SourcePart): boolean =>
     right.as !== "clock" ||
     left.pattern === right.pattern);
 
-/** How many entities holding the field and what its parts read spell it as the parts do, or undefined when one spells it otherwise. */
+/** How many entities holding the field and what its parts read spell it as the parts do, or undefined when one holds it otherwise, a non-string value included. */
 const heldSpellings = (
   parts: readonly ComposedPart[],
   field: string,
@@ -164,11 +165,10 @@ const heldSpellings = (
 ): number | undefined => {
   let agreeing = 0;
   for (const entity of held) {
-    const value = entity[field];
-    const spelled =
-      typeof value === "string" ? composedValue(parts, entity) : undefined;
+    if (!Object.hasOwn(entity, field)) continue;
+    const spelled = composedValue(parts, entity);
     if (spelled === undefined) continue;
-    if (spelled !== value) return undefined;
+    if (spelled !== entity[field]) return undefined;
     agreeing += 1;
   }
   return agreeing;
@@ -184,32 +184,44 @@ export const createdComposer = (
   rules: readonly FieldRule[],
   held: readonly JsonObject[],
 ): ((field: string) => FieldRule | undefined) => {
-  // Serving stamps every clock a create writes with the one write clock, so their digits are one source.
-  const clocks = new Set(
-    rules.flatMap((rule) => (rule.rule === "clock" ? [rule.field] : [])),
+  // Serving stamps every clock a create writes with the one write clock, so their digits in one zone are one source.
+  const zones = new Map(
+    rules.flatMap((rule) =>
+      rule.rule === "clock"
+        ? [
+            [
+              rule.field,
+              rule.format.kind === "iso"
+                ? zoneMinutesForFormat(rule.format.zone)
+                : 0,
+            ] as const,
+          ]
+        : [],
+    ),
   );
   const alike = (left: SourcePart, right: SourcePart): boolean =>
     samePart(left, right) ||
     (left.as === "clock" &&
       right.as === "clock" &&
       left.pattern === right.pattern &&
-      clocks.has(left.from) &&
-      clocks.has(right.from));
-  const index = indexed(
-    rules.flatMap((rule) =>
-      SOURCES.has(rule.rule)
-        ? candidatesOf(
-            rule.field,
-            entity[rule.field],
-            // A generated value is short and still the call's own, as a template's is.
-            GENERATED.has(rule.rule) ? 1 : COPY_MIN_LENGTH,
-          )
-        : [],
-    ),
-  );
+      zones.has(left.from) &&
+      zones.get(left.from) === zones.get(right.from));
+  let index: CandidateIndex | undefined;
   return (field) => {
     const text = entity[field];
     if (typeof text !== "string") return undefined;
+    index ??= indexed(
+      rules.flatMap((rule) =>
+        SOURCES.has(rule.rule)
+          ? candidatesOf(
+              rule.field,
+              entity[rule.field],
+              // A generated value is short and still the call's own, as a template's is.
+              GENERATED.has(rule.rule) ? 1 : COPY_MIN_LENGTH,
+            )
+          : [],
+      ),
+    );
     const parts = segmented(text, index, alike);
     return parts === undefined ||
       parts.some((part) => "from" in part && part.from === field) ||
