@@ -15,6 +15,7 @@ import { finalizeRetainedQueryReceipt } from "./retained-query-finalization.mjs"
 const { values } = parseArgs({
   options: {
     runtime: { type: "string" },
+    identity: { type: "string" },
     oracle: { type: "string" },
     output: { type: "string" },
     lane: { type: "string", default: "complete" },
@@ -60,13 +61,35 @@ const report = {
   status: "running",
   lane: values.lane,
   artifact: expected.artifact,
+  selected_names: expected.names,
   calls: [],
   phases: {},
   client: "SDK exact discovered toolDefinition, default validator",
-  task: "Return every matching code object for exact names with original indices and selected fields.",
+  task: "Return every matching code object for exact names with original indices and selected fields; export complete source Evidence.",
   bytecode_execution: false,
   page_size: pageSize,
   direct_first_view: values.lane === "selected" && !values["two-step"],
+};
+const verifyRuntime = async (phase) => {
+  if (values.identity === undefined) return;
+  const started = performance.now();
+  const bytes = await readFile(values.identity);
+  const identity = JSON.parse(bytes);
+  for (const entry of [...identity.compiled_files, ...identity.entrypoints])
+    assert.equal(
+      hash(await readFile(join(values.runtime, entry.path))),
+      entry.sha256,
+      entry.path,
+    );
+  for (const entry of identity.driver_files)
+    assert.equal(
+      hash(await readFile(new URL(entry.path, import.meta.url))),
+      entry.sha256,
+    );
+  assert.equal(hash(await readFile(process.execPath)), identity.node_sha256);
+  report.runtime_identity_sha256 ??= hash(bytes);
+  assert.equal(hash(bytes), report.runtime_identity_sha256);
+  report.phases[`runtime_validation_${phase}_ms`] = performance.now() - started;
 };
 const transcript = [];
 let definitions;
@@ -94,6 +117,7 @@ const columns = new Set(["source_index", ...expected.fields]);
 const select = (row) =>
   Object.fromEntries(Object.entries(row).filter(([key]) => columns.has(key)));
 try {
+  await verifyRuntime("before");
   const started = performance.now();
   await client.connect(transport);
   const catalog = await client.listTools();
@@ -222,6 +246,12 @@ try {
   report.status = "failed";
   report.error = String(cause);
 } finally {
+  try {
+    await verifyRuntime("after");
+  } catch (cause) {
+    report.status = "failed";
+    report.runtime_identity_failure = String(cause);
+  }
   await finalizeRetainedQueryReceipt({
     client,
     transport,
