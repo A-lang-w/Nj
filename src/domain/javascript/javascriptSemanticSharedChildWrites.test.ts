@@ -1,4 +1,4 @@
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext, runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
@@ -121,30 +121,34 @@ it.each(
           .replaceAll("SLOT", value.slot)
           .replaceAll("READ", value.read),
         expression: shape.read.replaceAll("READ", value.read),
+        // The new local parent shares the same descendant. Its own slot write
+        // replaces the host value; an independent descendant keeps the old one.
         expected: shared ? !value.host : value.host,
+        localCall: value.slot === "load",
       })),
     ),
   ),
 )(
   "distinguishes shared and newly allocated descendant receivers: $source",
-  ({ source, expression, expected }) => {
-    // Execute with an inert module host to independently check whether a
-    // copied child still reaches its loader after the parent/slot writes.
-    const loads: string[] = [];
-    let failure: unknown;
-    try {
-      runInNewContext(
-        source,
-        { module: { require: (specifier: string) => loads.push(specifier) } },
-        { timeout: 1000 },
+  ({ source, expression, expected, localCall }) => {
+    const hostCalls: string[] = [];
+    const module = {
+      require: (specifier: string) => {
+        hostCalls.push(specifier);
+        return {};
+      },
+    };
+    const context = createContext({ module });
+    expect(source.endsWith(expression + ";")).toBe(true);
+    runInContext(source.slice(0, -expression.length - 1), context);
+    if (expected || localCall) {
+      runInContext(expression, context);
+    } else {
+      expect(() => runInContext(expression, context)).toThrow(
+        expect.objectContaining({ name: "TypeError" }),
       );
-    } catch (cause) {
-      failure = cause;
     }
-    expect(loads).toEqual(expected ? ["./shared.cjs"] : []);
-    if (expected) expect(failure).toBeUndefined();
-    else if (failure !== undefined)
-      expect(failure).toMatchObject({ name: "TypeError" });
+    expect(hostCalls).toEqual(expected ? ["./shared.cjs"] : []);
     const result = analyzeCommonJsStaticFixture(source);
     expect(result.parse_error_count).toBe(0);
     expect(
@@ -156,6 +160,54 @@ it.each(
         ? [expect.objectContaining({ kind: "require", specifier: null })]
         : [],
     );
+  },
+);
+
+it.each([
+  {
+    kind: "external call",
+    iterator: false,
+    source:
+      "const child={loader:module};const box={child};external(child);box.child.loader.require('./uncertain.cjs');",
+  },
+  {
+    kind: "custom iterator",
+    iterator: true,
+    source:
+      "const child={loader:module};const box={child};const values=[child];values[Symbol.iterator]=external;for(const selected of values)selected.loader={};box.child.loader.require('./uncertain.cjs');",
+  },
+])(
+  "retains host eligibility across an opaque shared receiver: $kind",
+  ({ source, iterator }) => {
+    const analysis = analyzeCommonJsStaticFixture(source);
+    expect(analysis.references).toContainEqual(
+      expect.objectContaining({ kind: "require", specifier: null }),
+    );
+    // Both executions fit the same unknown input: one retains the host loader,
+    // the other replaces it. Neither outcome can prove the static alternative absent.
+    for (const preserveHost of [true, false]) {
+      const calls: string[] = [];
+      const module = {
+        require: (specifier: string) => {
+          calls.push(specifier);
+          return {};
+        },
+      };
+      const external = iterator
+        ? function* (this: readonly { loader: unknown }[]) {
+            yield preserveHost ? { loader: {} } : this[0]!;
+          }
+        : (child: { loader: unknown }) => {
+            if (!preserveHost) child.loader = {};
+          };
+      try {
+        runInNewContext(source, { module, external });
+      } catch (error) {
+        expect(error).toMatchObject({ name: "TypeError" });
+        expect(preserveHost).toBe(false);
+      }
+      expect(calls).toEqual(preserveHost ? ["./uncertain.cjs"] : []);
+    }
   },
 );
 

@@ -1579,8 +1579,10 @@ export function* collectSemanticMemberMutationsSteps(
     )
       return;
     if (
-      t.isMemberExpression(expression) ||
-      t.isOptionalMemberExpression(expression)
+      (t.isMemberExpression(expression) ||
+        t.isOptionalMemberExpression(expression)) &&
+      (!state.retainedGlobalCallReceivers.has(expression.object) ||
+        !semanticIntrinsicReceiverIsSafe(mutation, state))
     )
       markValue(
         expression.object,

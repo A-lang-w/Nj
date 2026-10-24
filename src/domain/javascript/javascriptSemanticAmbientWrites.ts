@@ -1260,13 +1260,22 @@ export function* indexJavaScriptAmbientWritesSteps(
       retainSemanticAmbientEffect(state, "write", resolved, node, storeTarget);
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes)
-    if (!semanticNativeDescriptorTargetIsSafe(node, target, state))
-      for (const path of ambientWrites(target, node, true, projection).paths)
-        // Only proven browser APIs keep their global receiver from user code.
-        if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
-          retainSemanticAmbientEffect(state, "escape", path, node);
-        }
+  for (const { node, target, browserReceiver, projection } of escapes) {
+    if (semanticNativeDescriptorTargetIsSafe(node, target, state)) continue;
+    const resolved = ambientWrites(target, node, true, projection);
+    if (
+      browserReceiver &&
+      resolved.ownership === "ambient" &&
+      resolved.paths.length > 0 &&
+      resolved.paths.every((path) => path.length === 1 && path[0] === "global")
+    )
+      state.retainedGlobalCallReceivers.add(target);
+    for (const path of resolved.paths)
+      // Only proven browser APIs keep their global receiver from user code.
+      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
+        retainSemanticAmbientEffect(state, "escape", path, node);
+      }
+  }
   // A setter can rewrite any property of its receiver, not just the assigned
   // key. Publish that exposure before deciding whether a recognized native
   // method still keeps its receiver away from user code.
