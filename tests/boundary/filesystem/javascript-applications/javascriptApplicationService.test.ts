@@ -141,7 +141,7 @@ describe("JavaScript source selection cancellation boundary", () => {
             .module_path === "invalid.js",
       );
       expect(unknown?.detail).toBe(
-        "JavaScript text was unavailable: invalid-utf8.",
+        "Source bytes are not valid UTF-8; JavaScript semantics were not analyzed.",
       );
     } finally {
       await reader.close();

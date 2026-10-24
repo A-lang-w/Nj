@@ -124,7 +124,8 @@ for (const format of ["directory", "asar"] as const) {
       result.semantic_graph.unknowns.filter(
         ({ reason, detail }) =>
           reason === "incomplete-module" &&
-          detail === "JavaScript text was unavailable: invalid-utf8.",
+          detail ===
+            "Source bytes are not valid UTF-8; JavaScript semantics were not analyzed.",
       ),
     ).toHaveLength(12);
   });

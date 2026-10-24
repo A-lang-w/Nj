@@ -1387,7 +1387,7 @@ it("reports node-cap drops as truncation when an unavailable file cannot retain 
   };
   projection.recordUnavailableFile(
     file2,
-    "JavaScript text was unavailable: invalid-utf8.",
+    "Source bytes are not valid UTF-8; JavaScript semantics were not analyzed.",
     null,
     "incomplete-module",
   );
@@ -1423,7 +1423,7 @@ it("reports unknown-ceiling drops when an unavailable file exceeds unknown capac
   };
   projection.recordUnavailableFile(
     file,
-    "JavaScript text was unavailable: invalid-utf8.",
+    "Source bytes are not valid UTF-8; JavaScript semantics were not analyzed.",
     null,
     "incomplete-module",
   );
