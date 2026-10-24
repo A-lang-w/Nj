@@ -181,7 +181,8 @@ export interface JavaScriptSemanticAnalysisState {
   ambientStorePrototypeFacts?:
     | ((store: SemanticBeforeStore) =>
         | {
-            readonly owners: readonly ("Object" | "Array" | "Function")[];
+            readonly prototypePaths: readonly (readonly (string | null)[])[];
+            readonly unknownAncestors: boolean;
             readonly directNullPrototype: boolean;
             readonly localPrototypes: readonly t.Node[];
           }

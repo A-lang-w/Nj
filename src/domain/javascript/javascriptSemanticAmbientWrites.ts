@@ -131,6 +131,84 @@ export const retainSemanticAmbientEffect = (
   return true;
 };
 
+interface AmbientSetterCandidate {
+  readonly effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number];
+  readonly prototype: AmbientPath;
+  readonly unknownApplicability: boolean;
+}
+
+// Effects append during the semantic fixpoint. Index each effect once while
+// retaining its actual site/target clock; applicability is queried afresh.
+const ambientSetterIndexes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    writes: number;
+    escapes: number;
+    readonly keys: Map<string, AmbientSetterCandidate[]>;
+    readonly any: AmbientSetterCandidate[];
+  }
+>();
+
+const ambientSetterCandidates = (
+  state: JavaScriptSemanticAnalysisState,
+  key: string,
+): readonly AmbientSetterCandidate[] => {
+  const index = ambientSetterIndexes.get(state) ?? {
+    writes: 0,
+    escapes: 0,
+    keys: new Map<string, AmbientSetterCandidate[]>(),
+    any: [],
+  };
+  ambientSetterIndexes.set(state, index);
+  const retain = (effect: AmbientSetterCandidate["effect"]) => {
+    const path = effect.path.map((part) =>
+      part === null || typeof part === "object" ? null : String(part),
+    );
+    // CommonJS/module identities share the effect transport, but do not name
+    // the ambient global prototype namespace.
+    if (path[0] !== "global" && path[0] !== null) return;
+    let position = path.findIndex(
+      (part, i) => i >= 2 && (part === "prototype" || part === null),
+    );
+    if (position < 0) {
+      if (path.length > 3 || (path.length === 3 && path[2] !== null)) return;
+      position = 2;
+    }
+    const prototype = path.slice(0, position);
+    while (prototype.length < position) prototype.push(null);
+    prototype.push("prototype");
+    const selected = path[position + 1];
+    if (
+      selected !== undefined &&
+      selected !== null &&
+      selected !== "__proto__" &&
+      path.length > position + 2
+    )
+      return;
+    // Escaping an arbitrary ambient function does not itself prove a setter
+    // exists on an unrelated unknown chain. Its possible prototype changes
+    // still apply when the receiver owner resolves that same prototype.
+    const candidate = {
+      effect,
+      prototype,
+      unknownApplicability:
+        path.includes("prototype") || path.length <= 1 || path[1] === null,
+    };
+    if (selected === undefined || selected === null || selected === "__proto__")
+      index.any.push(candidate);
+    else {
+      const values = index.keys.get(selected) ?? [];
+      values.push(candidate);
+      index.keys.set(selected, values);
+    }
+  };
+  while (index.writes < state.ambientWriteEffects.length)
+    retain(state.ambientWriteEffects[index.writes++]!);
+  while (index.escapes < state.ambientEscapeEffects.length)
+    retain(state.ambientEscapeEffects[index.escapes++]!);
+  return [...index.any, ...(index.keys.get(key) ?? [])];
+};
+
 /** Ambient prototype changes can turn a property store into an opaque setter call. */
 export const semanticStoreMayReachAmbientSetter = (
   state: JavaScriptSemanticAnalysisState,
@@ -138,54 +216,32 @@ export const semanticStoreMayReachAmbientSetter = (
   store: SemanticBeforeStore,
 ): boolean => {
   if (key === null) return true;
-  const candidates = (["Object", "Array", "Function"] as const).map(
-    (owner) => ({
-      owner,
-      slot: ["global", owner, "prototype", key],
-      prototype: ["global", owner, "prototype", "__proto__"],
-    }),
-  );
-  // Most stores have no ambient descriptor changes. Keep this indexed absence
-  // check ahead of the captured receiver/prototype traversal.
-  if (
-    key !== "__proto__" &&
-    !candidates.some(
-      ({ slot, prototype }) =>
-        state.ambientWrites.covers(slot) ||
-        state.ambientEscapes.covers(slot) ||
-        state.ambientWrites.overlaps(prototype) ||
-        state.ambientEscapes.overlaps(prototype),
-    )
-  )
-    return false;
-  const prototypeFacts = state.ambientStorePrototypeFacts?.(store);
-  if (key === "__proto__" && prototypeFacts?.directNullPrototype === true)
-    return false;
-  const applicable =
-    prototypeFacts === undefined
-      ? candidates
-      : candidates.filter(({ owner }) => prototypeFacts.owners.includes(owner));
-  const mayIntercept = (
-    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-  ) => {
-    const overlaps = (path: readonly string[], descendants: boolean) =>
+  const candidates = ambientSetterCandidates(state, key);
+  // Preserve the cheap absence gate before resolving captured receiver chains.
+  if (candidates.length === 0) return false;
+  const facts = state.ambientStorePrototypeFacts?.(store);
+  if (key === "__proto__" && facts?.directNullPrototype === true) return false;
+  return candidates.some(({ effect, prototype, unknownApplicability }) => {
+    const applicable =
+      ((facts === undefined || facts.unknownAncestors) &&
+        unknownApplicability) ||
+      facts?.prototypePaths.some(
+        (path) =>
+          prototype.length === path.length &&
+          prototype.every((part, i) => part === null || part === path[i]),
+      );
+    if (!applicable) return false;
+    const overlaps = (path: readonly (string | null)[], descendants: boolean) =>
       (descendants || effect.path.length <= path.length) &&
-      effect.path.every((part, index) =>
-        index >= path.length
-          ? descendants
-          : part === null || part === path[index],
+      effect.path.every((part, i) =>
+        i >= path.length ? descendants : part === null || part === path[i],
       );
     return (
-      applicable.some(
-        ({ slot, prototype }) =>
-          overlaps(slot, false) || overlaps(prototype, true),
-      ) && semanticEffectTimingAtStore(store, effect, state) !== "after"
+      (overlaps([...prototype, key], false) ||
+        overlaps([...prototype, "__proto__"], true)) &&
+      semanticEffectTimingAtStore(store, effect, state) !== "after"
     );
-  };
-  return (
-    state.ambientWriteEffects.some(mayIntercept) ||
-    state.ambientEscapeEffects.some(mayIntercept)
-  );
+  });
 };
 
 /** Parsed receiver facts stay separate from mutation-dependent safety. */
@@ -1486,17 +1542,15 @@ export function* indexJavaScriptAmbientWritesSteps(
       { actualPrototype: true, prototypeReceiver: true, beforeStore: store },
     );
     if (resolved.unknownReasons.length > 0) return undefined;
-    const owners = new Set<"Object" | "Array" | "Function">();
+    const prototypePaths: AmbientPath[] = [];
+    let unknownAncestors = false;
     for (const path of resolved.paths) {
       const owner = path[1];
-      if (
-        path.length !== 3 ||
-        path[0] !== "global" ||
-        path[2] !== "prototype" ||
-        (owner !== "Object" && owner !== "Array" && owner !== "Function")
-      )
+      if (path.length !== 3 || path[0] !== "global" || path[2] !== "prototype")
         return undefined;
-      owners.add(owner);
+      prototypePaths.push(path);
+      if (owner !== "Object" && owner !== "Array" && owner !== "Function")
+        unknownAncestors = true;
       if (owner !== "Object") {
         if (
           [...state.ambientWriteEffects, ...state.ambientEscapeEffects].some(
@@ -1510,12 +1564,14 @@ export function* indexJavaScriptAmbientWritesSteps(
           )
         )
           return undefined;
-        owners.add("Object");
+        if (!unknownAncestors)
+          prototypePaths.push(["global", "Object", "prototype"]);
       }
     }
     return resolved.paths.length > 0 || resolved.nullPrototype
       ? {
-          owners: [...owners],
+          prototypePaths,
+          unknownAncestors,
           directNullPrototype: resolved.directNullPrototype,
           localPrototypes: resolved.localPrototypes,
         }

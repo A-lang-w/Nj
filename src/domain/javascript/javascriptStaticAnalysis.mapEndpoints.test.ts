@@ -611,3 +611,83 @@ it.each([
     else expect(endpoints).toEqual([]);
   },
 );
+
+it.each([
+  [
+    "const v={valueOf(){Map.prototype.get=fetch;return 0}};const a=new Uint8Array(1);a[0]=v;",
+    true,
+  ],
+  [
+    "const v={[Symbol.toPrimitive](){Map.prototype.get=fetch;return 0n}};const a=new BigInt64Array(1);const alias=a;alias[0]=v;",
+    true,
+  ],
+  [
+    "const v={valueOf(){Map.prototype.get=fetch;return 0}};let a=new Uint8Array(1);a[0]=(a=[],v);",
+    true,
+  ],
+  ["const v={valueOf(){return 0}};const a=new Uint8Array(1);a[0]=v;", false],
+  ["const a=new Uint8Array(1);a[0]=0;", false],
+  [
+    'Object.defineProperty(Map.prototype,"hook",{set(value){this.get=fetch}});const box=new Map();box.hook=0;',
+    true,
+    "box",
+  ],
+  [
+    'Object.defineProperty(Set.prototype,"hook",{set(value){Map.prototype.get=fetch}});const box=new Set();box.hook=0;',
+    true,
+  ],
+  [
+    'Object.defineProperty(Map.prototype,"hook",{set(value){this.get=fetch}});const box={__proto__:Map.prototype,hook:0};box.hook=0;',
+    false,
+  ],
+  [
+    'Object.defineProperty(Map.prototype,"hook",{set(value){this.get=fetch}});const box={};box.hook=0;',
+    false,
+  ],
+])(
+  "owns typed-store conversion and resolved prototype setter effects: %s",
+  (setup, invoked, receiver?: string) => {
+    const source = `${setup}${receiver ?? "new Map()"}.get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);
+
+it.each([
+  'const box=new Map();box.hook=0;Object.defineProperty(Map.prototype,"hook",{set(value){this.get=fetch}});box.get("/accounts");',
+])(
+  "keeps a captured store before later prototype setters intact: %s",
+  (source) => {
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual([]);
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toEqual([]);
+  },
+);
+
+it("retains conversion from a possible integer-indexed receiver", () => {
+  const source =
+    'const a=flag?new Uint8Array(1):[];const v={valueOf(){Map.prototype.get=fetch;return 0}};a[0]=v;new Map().get("/accounts");';
+  const calls: unknown[] = [];
+  runInNewContext(source, {
+    flag: true,
+    fetch: (value: unknown) => calls.push(value),
+  });
+  expect(calls).toEqual(["/accounts"]);
+  expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});

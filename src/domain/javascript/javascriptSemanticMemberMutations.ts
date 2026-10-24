@@ -71,7 +71,10 @@ import {
   semanticScopeExitEffect,
   type SemanticBeforeStore,
 } from "./javascriptSemanticMutationInitializers.js";
-import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
+import {
+  semanticCoercionOperands,
+  semanticIntegerIndexedStoreSource,
+} from "./javascriptSemanticLanguageInvocations.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticCopiedReferencePath,
@@ -404,6 +407,11 @@ const localAccessorMethods = (
 };
 
 type AccessorEffectOperand =
+  | {
+      readonly kind: "integer-index-coercion";
+      readonly node: t.Node;
+      readonly target: t.MemberExpression;
+    }
   | { readonly kind: "escape"; readonly node: t.Node }
   | {
       readonly kind: "read";
@@ -485,6 +493,9 @@ const accessorEffectOperands = (
       for (const expression of node.quasi.expressions)
         operands.push({ kind: "escape", node: expression });
     }
+    const indexedStore = semanticIntegerIndexedStoreSource(node);
+    if (indexedStore !== undefined)
+      operands.push({ kind: "integer-index-coercion", ...indexedStore });
     for (const operand of semanticCoercionOperands(node))
       operands.push({ kind: "escape", node: operand });
     if (t.isTemplateLiteral(node) && !t.isTaggedTemplateExpression(parent))
@@ -593,6 +604,11 @@ export function* collectSemanticMemberMutationsSteps(
           if (visitedCallables.has(callable)) continue;
           visitedCallables.add(callable);
           for (const operand of accessorEffectOperands(callable)) {
+            if (
+              operand.kind === "integer-index-coercion" &&
+              !observablePaths.mayConvertIntegerIndexedStore(operand.target)
+            )
+              continue;
             if (operand.kind === "invoke") {
               for (const target of returnedReferences(
                 operand.node,
@@ -620,7 +636,11 @@ export function* collectSemanticMemberMutationsSteps(
               const target = receiverReference
                 ? [...receiver, ...reference.path]
                 : reference.path;
-              if (operand.kind === "escape" || t.isSuper(operand.node))
+              if (
+                operand.kind === "escape" ||
+                operand.kind === "integer-index-coercion" ||
+                t.isSuper(operand.node)
+              )
                 effects.push({ node: targetRoot, path: target });
               else
                 pending.push({
@@ -1803,10 +1823,14 @@ export function* collectSemanticMemberMutationsSteps(
           iterationOnly: source.kind === "iteration",
         });
       }
-      for (const operand of semanticCoercionOperands(node, (operand) => {
-        const value = evaluateSemanticExpression(operand, state, node);
-        return value.status === "object" || value.status === "array";
-      }))
+      for (const operand of semanticCoercionOperands(
+        node,
+        (operand) => {
+          const value = evaluateSemanticExpression(operand, state, node);
+          return value.status === "object" || value.status === "array";
+        },
+        observablePaths.mayConvertIntegerIndexedStore,
+      ))
         if (!semanticKnownSymbolKey(operand, state)) markEscaped(operand, node);
       if (t.isTemplateLiteral(node) && !t.isTaggedTemplateExpression(parent))
         for (const expression of node.expressions)
@@ -2260,6 +2284,9 @@ const observableMutationPaths = (
     path: PropertyPath,
     effect: ValueEffect,
   ) => PropertyPath | null;
+  readonly mayConvertIntegerIndexedStore: (
+    target: t.MemberExpression | t.OptionalMemberExpression,
+  ) => boolean;
   readonly integerIndexedStore: (
     target: t.MemberExpression | t.OptionalMemberExpression,
   ) => boolean;
@@ -2590,14 +2617,28 @@ const observableMutationPaths = (
     repeated.set(key, result);
     return result;
   };
+  const integerIndexedStoreOrigins = (
+    target: t.MemberExpression | t.OptionalMemberExpression,
+  ): ReadonlySet<MutationObservableOrigin> | undefined => {
+    if (!isTypedArrayNumericIndex(target.property, target.computed))
+      return undefined;
+    const observer = expressionNode(target.object);
+    settle();
+    return observer.origins;
+  };
   const integerIndexedStore = (
     target: t.MemberExpression | t.OptionalMemberExpression,
   ): boolean => {
-    if (!isTypedArrayNumericIndex(target.property, target.computed))
-      return false;
-    const observer = expressionNode(target.object);
-    settle();
-    return observer.origins?.size === 1 && observer.origins.has("typed-array");
+    const origins = integerIndexedStoreOrigins(target);
+    return origins?.size === 1 && origins.has("typed-array");
   };
-  return { normalize, repeatsUnpruned, integerIndexedStore };
+  const mayConvertIntegerIndexedStore = (
+    target: t.MemberExpression | t.OptionalMemberExpression,
+  ): boolean => integerIndexedStoreOrigins(target)?.has("typed-array") === true;
+  return {
+    normalize,
+    repeatsUnpruned,
+    integerIndexedStore,
+    mayConvertIntegerIndexedStore,
+  };
 };
