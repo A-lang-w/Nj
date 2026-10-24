@@ -218,6 +218,28 @@ describe("fixed-width clock evidence", () => {
 });
 
 describe("values an application composes or generates", () => {
+  it("withholds bookmark creates a later call answers with a snapshot address the composition does not spell", () => {
+    const special = "https://web.archive.org/web/special";
+    const rows = BOOKMARK_ROWS.flatMap((row): TimedCaptureRow[] => {
+      const [method, path, body, ...rest] = row;
+      if (method === "GET" && path === "/api/bookmarks/4") return [];
+      return method === "POST" && isObject(body) && body.id === 4
+        ? [
+            [
+              method,
+              path,
+              { ...body, web_archive_snapshot_url: special },
+              ...rest,
+            ],
+          ]
+        : [row];
+    }).slice(0, -1);
+    expect(planOf(rows, "post_bookmarks")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
   it("serves creates whose snapshot address joins the creation time and the sent URL, accepting any URL", () => {
     expect(planOf(BOOKMARK_ROWS, "post_bookmarks")).toMatchObject({
       served: true,
@@ -355,6 +377,25 @@ const mirrored = (
 };
 
 describe("generated integers another field repeats", () => {
+  it("withholds folder creates a later call answers with a UUID where the exemplar generated an integer", () => {
+    const later = 1656166745726976;
+    const answered = numberedUuid(203);
+    const swap = (value: JsonValue): JsonValue =>
+      Array.isArray(value)
+        ? value.map(swap)
+        : isObject(value) && value.id === later
+          ? { ...value, id: answered }
+          : value;
+    const rows = FOLDER_ROWS.map((row): TimedCaptureRow => {
+      const [method, path, body, ...rest] = row;
+      return body === undefined ? row : [method, path, swap(body), ...rest];
+    });
+    expect(planOf(rows, "post_folders")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
   it("withholds folder creates whose generated numeric id another field repeats, which seeding cannot keep", () => {
     expect(
       planOf(

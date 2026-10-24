@@ -1,6 +1,10 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
-import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
+import type {
+  ComposedPart,
+  FieldRule,
+} from "../../domain/analysisView/environmentStateWriteRules.js";
 import { matchesClockFormat } from "../../domain/analysisView/environmentStateWriteClockFormats.js";
+import { composedValue } from "../../domain/analysisView/environmentStateWriteComposed.js";
 import {
   generatedIntegerDigits,
   isUuid,
@@ -157,6 +161,14 @@ const generatedPair = (
     characterClasses(live) === characterClasses(env)
   );
 };
+
+/** Whether a composed field's value is the composition its own response's fields spell. */
+const spellsOwn = (
+  parts: readonly ComposedPart[],
+  response: JsonObject,
+  value: JsonValue | undefined,
+): boolean =>
+  typeof value === "string" && composedValue(parts, response) === value;
 
 class Differ {
   readonly #rules: ReadonlyMap<string, FieldRule>;
@@ -441,6 +453,15 @@ class Differ {
       else {
         matched.add(other);
         const rule = self ? this.#rules.get(key) : undefined;
+        if (
+          rule?.rule === "composed" &&
+          value !== env[other] &&
+          spellsOwn(rule.parts, live, value) &&
+          spellsOwn(rule.parts, env, env[other])
+        ) {
+          this.normalised.generated += 1;
+          continue;
+        }
         this.value(
           value,
           env[other]!,

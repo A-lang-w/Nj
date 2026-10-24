@@ -183,6 +183,57 @@ const registerGeneratedValueComparisonCases = () => {
   });
 };
 
+describe("composed response fields", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "date_added",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    { field: "url", rule: "echo" },
+    {
+      field: "web_archive_snapshot_url",
+      rule: "composed",
+      parts: [
+        { text: "https://web.archive.org/web/" },
+        { from: "date_added", as: "clock", pattern: "YYYYMMDDhhmmss" },
+        { text: "/" },
+        { from: "url", as: "value" },
+      ],
+    },
+  ];
+  const bookmark = (stamp: string, snapshot: string) => ({
+    date_added: `2026-10-01T09:00:${stamp}Z`,
+    url: "https://quarry.example.test/ledger",
+    web_archive_snapshot_url: `https://web.archive.org/web/${snapshot}/https://quarry.example.test/ledger`,
+  });
+
+  it("normalizes a composed field each side spells from its own fields", () => {
+    const result = compare(
+      bookmark("00", "20261001090000"),
+      bookmark("05", "20261001090005"),
+      new IdMap(),
+      [200, 200],
+      rules,
+    );
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ clocks: 1, generated: 1 });
+  });
+
+  it("reports a composed field one side does not spell from its own fields", () => {
+    const result = compare(
+      bookmark("00", "20261001090000"),
+      bookmark("05", "20261001090009"),
+      new IdMap(),
+      [200, 200],
+      rules,
+    );
+    expect(
+      result.differences.map(({ category, pointer }) => [category, pointer]),
+    ).toEqual([["value", "/web_archive_snapshot_url"]]);
+  });
+});
+
 describe("compareAnswers", () => {
   registerGeneratedValueComparisonCases();
 

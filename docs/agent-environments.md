@@ -1056,6 +1056,8 @@ two collections can reuse a live id, and an equal pair stays in that collection.
 environment answers, a path parameter by the collection the live path names (a nested collection keeps its parent values, each decoded once, and a literal route segment stays), except a query value that pages a list, such as `limit`
 or `page`. Each call is checked against the served tool's input schema first, as the MCP server checks it. After mapping, two clock values compare by format only (ISO-8601 strings, and epoch numbers under
 `at`, `time`, `date`, `timestamp`, `created`, `updated` or `modified` field names, including snake-case and camel-case forms).
+A `composed` field compares equal when each side's response spells it from its
+own fields; those fields compare under their own rules.
 Numeric arrays retain that containing field's clock context through nested
 arrays; an object's own fields establish their own context. Numeric values at
 the body root, in root arrays, or under measurement fields remain literal.

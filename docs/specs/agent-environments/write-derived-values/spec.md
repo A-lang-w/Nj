@@ -29,7 +29,8 @@ model could not explain, though the application derives it deterministically:
   fields it left as they were, when the same parts also spell the value before the call and no other entity spells it
   otherwise. Serving rebuilds the string from the written fields after every other rule and refuses a call when a part's
   field holds nothing to spell, and a composed field no longer pins the members it reads. A composition learned on a
-  later call is checked against every earlier call.
+  later call is checked against every earlier call, and a later create whose response spells a composed field otherwise
+  is withheld.
 - **Trimmed clocks.** A clock format may be `trimmed`: its values differ only in how many fraction digits they show and
   none ends a fraction in a zero. It is learned from the type's held values of the field, from a later create, and from
   a later update; other clocks the plan stamps take the spelling too, and no clock takes it once a held entity, the
@@ -40,8 +41,9 @@ model could not explain, though the application derives it deterministically:
   of that length and kind that no held entity has. One that another field of the created entity also holds, as a value,
   a number at any depth or a delimited part of a nested string, is not `unique`, and the create is withheld as
   `unexplained-change`, since seeding cannot keep the two equal. A create is also withheld when another string holds its
-  digits and no `template` or `composed` rule rebuilds that string from it. Compare treats two such integers of one JSON
-  kind and length under a `unique` rule as generated values.
+  digits and no `template` or `composed` rule rebuilds that string from it, or when a later create answers the field
+  with anything but an integer of the same length and kind. Compare treats two such integers of one JSON kind and length
+  under a `unique` rule as generated values.
 
 Plans that need none of this are unchanged.
 
