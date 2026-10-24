@@ -486,6 +486,24 @@ export const createAmbientPathResolver = (
             resolvedIdentity = true;
           }
           for (const [source, path] of facts?.stores.get(root) ?? []) {
+            const selected =
+              suffix === undefined ||
+              path === undefined ||
+              path.every(
+                (key, index) =>
+                  index >= suffix.length ||
+                  key === null ||
+                  suffix[index] === null ||
+                  key === suffix[index],
+              );
+            if (
+              !selected ||
+              (suffix !== undefined &&
+                path !== undefined &&
+                suffix.length < path.length &&
+                !escapedContents)
+            )
+              continue;
             if (
               selection?.actualPrototype &&
               selection.beforeStore !== undefined &&
@@ -513,24 +531,6 @@ export const createAmbientPathResolver = (
                         state,
                       ) !== "after",
                   )))
-            )
-              continue;
-            const selected =
-              suffix === undefined ||
-              path === undefined ||
-              path.every(
-                (key, index) =>
-                  index >= suffix.length ||
-                  key === null ||
-                  suffix[index] === null ||
-                  key === suffix[index],
-              );
-            if (
-              !selected ||
-              (suffix !== undefined &&
-                path !== undefined &&
-                suffix.length < path.length &&
-                !escapedContents)
             )
               continue;
             const remaining =
@@ -1464,6 +1464,18 @@ export function* indexJavaScriptAmbientWritesSteps(
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
   }
+  state.inheritedMemberIdentityMayHaveChangedAt = (root, read) =>
+    (prototypeReplacements.get(root) ?? []).some(
+      (replacement) =>
+        prototypeMutation(replacement.node) &&
+        semanticEffectTiming(read, replacement.node, state) !== "after",
+    ) ||
+    [...(stores.get(root) ?? [])].some(
+      ([source, path]) =>
+        path?.length === 1 &&
+        path[0] === "__proto__" &&
+        semanticEffectTiming(read, source.mutation, state) !== "after",
+    );
   state.ambientStorePrototypeFacts = (store) => {
     const resolved = ambientWrites(
       store.target.object,

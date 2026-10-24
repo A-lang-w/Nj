@@ -189,6 +189,10 @@ export interface JavaScriptSemanticAnalysisState {
     | undefined;
   /** Ordinary local identity selected at the target argument's own read site. */
   ordinaryLocalIdentityAt?: ((node: t.Node) => boolean) | undefined;
+  /** Captured allocation's prototype mutations invalidate inherited member identity. */
+  inheritedMemberIdentityMayHaveChangedAt?:
+    | ((root: t.Node, read: t.Node) => boolean)
+    | undefined;
   /** Parsed native construction, including whether descriptors can add own accessors. */
   nativeObjectCreationAt?:
     | ((
