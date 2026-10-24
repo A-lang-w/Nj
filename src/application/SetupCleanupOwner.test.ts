@@ -161,3 +161,63 @@ it("observes exact concurrent recovery before aggregate binding", async () => {
   expect(await owner.close()).toBeUndefined();
   expect(sourceCalls).toBe(1);
 });
+
+it.each(["pending", "already recovered"] as const)(
+  "keeps delegated cleanup pending when the next report has an independent owner: %s",
+  async (timing) => {
+    const source = new ProviderCleanupError("fixture", ["/independent"], {});
+    const sourceLease = new AnalysisCleanupLease(async () => {}, [
+      "/independent",
+    ]);
+    new AnalysisCleanupLeaseGroup(source, [sourceLease]);
+    let calls = 0;
+    const owner = new SetupCleanupOwner([
+      {
+        close: async () => {
+          calls++;
+          if (calls === 1)
+            return {
+              reason: "delegated work pending",
+              resources: ["/delegated"],
+            };
+          if (calls === 2) return source;
+          return undefined;
+        },
+      },
+    ]);
+    const first = await owner.close();
+    if (timing === "already recovered") await sourceLease.release();
+    const second = await owner.close();
+    await sourceLease.release();
+    expect(source.cleanupIncomplete).toBe(false);
+    expect(first?.cleanupIncomplete).toBe(true);
+    expect(second?.cleanupIncomplete).toBe(true);
+    expect(first?.cleanupResources).toContain("/delegated");
+    expect(second?.cleanupResources).toContain("/delegated");
+    expect(first?.cleanupResources).toEqual(["/delegated"]);
+    expect(second?.cleanupResources).toEqual(["/delegated"]);
+    expect(await owner.close()).toBeUndefined();
+    expect(calls).toBe(3);
+    expect(first?.cleanupIncomplete).toBe(false);
+    expect(second?.cleanupIncomplete).toBe(false);
+  },
+);
+
+it("recognizes its own delegated typed error when the same producer returns it again", async () => {
+  const source = new ProviderCleanupError("fixture", ["/delegated"], {});
+  let held = true;
+  const owner = new SetupCleanupOwner([
+    {
+      close: async () => (held ? source : undefined),
+    },
+  ]);
+  const first = await owner.close();
+  expect(first?.cleanupResources).toEqual(["/delegated"]);
+  const second = await owner.close();
+  expect(second?.cleanupResources).toEqual(["/delegated"]);
+  held = false;
+  expect(await owner.close()).toBeUndefined();
+  expect(source.cleanupIncomplete).toBe(false);
+  expect(first?.cleanupIncomplete).toBe(false);
+  expect(second?.cleanupIncomplete).toBe(false);
+});

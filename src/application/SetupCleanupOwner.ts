@@ -52,6 +52,9 @@ class SetupCleanupChild {
   #failure: AnalysisError | undefined;
   #reason = "";
   #resources: readonly string[] = [];
+  #delegated = false;
+  #delegatedSource: AnalysisError | undefined;
+  #delegatedErrors = new WeakSet<AnalysisError>();
   #attempt: ReturnType<SetupCleanupTask["close"]> = Promise.resolve();
   #lease = this.#newLease();
 
@@ -83,6 +86,9 @@ class SetupCleanupChild {
     if (this.#lease.released || this.#completed !== undefined) {
       this.#lease = this.#newLease();
       this.#completed = undefined;
+      this.#delegated = false;
+      this.#delegatedSource = undefined;
+      this.#delegatedErrors = new WeakSet();
     }
     const generation = this.#generation;
     this.#attempted = generation;
@@ -102,7 +108,14 @@ class SetupCleanupChild {
   }
 
   get cleanupResources(): readonly string[] {
-    return this.#resources;
+    return [
+      ...new Set([
+        ...this.#resources,
+        ...(this.#delegatedSource?.cleanupIncomplete
+          ? this.#delegatedSource.cleanupResources
+          : []),
+      ]),
+    ];
   }
 
   async #execute(): Promise<void> {
@@ -128,11 +141,33 @@ class SetupCleanupChild {
           : this.task.rejectedPrefix + ": ") +
         (cause instanceof Error ? cause.message : String(cause));
     }
+    // Once this callback owns an earlier report, a different source owner's
+    // recovery cannot confirm that delegated work. Only a successful callback
+    // releases this generation; preserve the independent error as its cause.
+    const delegatedSource =
+      this.#delegated &&
+      failure.hasCleanupOwner &&
+      !this.#delegatedErrors.has(failure);
+    if (delegatedSource) {
+      this.#delegatedSource = failure;
+      const observation: AnalysisCleanupObservation = {
+        reason: this.#reason,
+        resources: this.cleanupResources,
+      };
+      failure = new ProviderCleanupError(
+        "setup",
+        observation.resources,
+        { reason: observation.reason },
+        { cause: failure, cleanup: observation, operation: "setup" },
+      );
+    }
     this.#failure = failure;
     // Existing source leases remain authoritative. A reason-only child instead
     // delegates retry authority to this registered close callback.
     if (failure.cleanupIncomplete && !failure.hasCleanupOwner) {
-      this.#resources = [...failure.cleanupResources];
+      if (!delegatedSource) this.#resources = [...failure.cleanupResources];
+      this.#delegated = true;
+      this.#delegatedErrors.add(failure);
       new AnalysisCleanupLeaseGroup(failure, [this.#lease]);
     }
     if (failure.cleanupIncomplete) throw failure;
