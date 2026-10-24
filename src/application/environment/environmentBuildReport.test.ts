@@ -275,6 +275,32 @@ describe("scanScenarioCredentialNames", () => {
     });
     expect(JSON.stringify(scanned)).not.toContain("k-2");
   });
+
+  it("scans each content event of a phase the capture recorded twice", () => {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/api/session",
+        status: 200,
+        mediaType: "application/json",
+        body: '{"token":"t-1"}',
+      },
+    ]);
+    const content = capture.events.items.find(
+      (event) => event.kind === "network-content",
+    );
+    if (content === undefined) throw new Error("Fixture lacks content");
+    expect(
+      scanScenarioCredentialNames([
+        ...capture.events.items,
+        { ...content, sequence: 99 },
+      ]),
+    ).toEqual({
+      count: 2,
+      pointers: ["event 2 response /token", "event 3 response /token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
 });
 
 describe("scanCredentialNames coverage", () => {
