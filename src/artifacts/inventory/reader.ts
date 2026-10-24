@@ -8,6 +8,7 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
+import { NodeSeaArtifactReader } from "../NodeSeaArtifactReader.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import { GzipArtifactReader } from "../GzipArtifactReader.js";
@@ -42,6 +43,8 @@ export const createReader = (
       );
     case "pyinstaller":
       return new PyInstallerArtifactReader(path, rootSource);
+    case "node-sea":
+      return new NodeSeaArtifactReader(path, rootSource);
     case "godot-pck":
       return new GodotPckArtifactReader(path, rootSource);
     case "gzip":
@@ -79,6 +82,11 @@ export const inventoryCoverage = (
               "PCK inventory establishes packaged bytes and metadata; scenes, binary resources, GDScript bytecode and runtime signal behavior were not decoded.",
             ]
           : []),
+        ...(reader.format === "node-sea"
+          ? [
+              "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
+            ]
+          : []),
         ...traversal.limitations,
       ],
     };
@@ -102,6 +110,7 @@ export const inventoryCoverage = (
     format === "directory" ||
     format === "asar" ||
     format === "godot-pck" ||
+    format === "node-sea" ||
     format === "gzip" ||
     format === "7z" ||
     format === "tar" ||

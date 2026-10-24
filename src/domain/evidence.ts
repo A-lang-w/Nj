@@ -26,6 +26,7 @@ import {
   freezeJsonSnapshot,
   freezeOwnedJsonTreeSnapshot,
   canBorrowParsedJsonSnapshot,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -50,6 +51,7 @@ const subjectFormatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "gamecube-dol",
   "zip",
   "ipa",
   "apk",
@@ -82,6 +84,7 @@ const subjectFormatSchema = z.enum([
   "jvm-class",
   "python-bytecode",
   "pyinstaller",
+  "node-sea",
 ]);
 const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
@@ -91,7 +94,7 @@ const subjectBaseSchema = z.strictObject({
 // The format owns the architecture claim, including nested Evidence subjects.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
+    format: subjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
     architecture: z
       .enum(BINARY_ARCHITECTURES)
       .exclude([...RAW_ONLY_ARCHITECTURES])
@@ -100,6 +103,10 @@ const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
     architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("gamecube-dol"),
+    architecture: z.literal("powerpc"),
   }),
 ]);
 /** Source location attached to an evidence observation. */
@@ -148,6 +155,10 @@ const evidenceBaseSchema = z
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
     parameters: jsonObjectSchema,
+    /** Verbatim selected path for a direct request; absent on older records. */
+    caller_input_path: nulFreeStringSchema
+      .exactOptional()
+      .describe("Verbatim direct-request path; not part of semantic identity."),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
@@ -261,7 +272,8 @@ export interface EvidenceObservation {
 
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-const semanticProjection = (
+/** Content committed by an Evidence ID, excluding local request/display metadata. */
+export const evidenceSemanticContent = (
   evidence: EvidenceWithoutId,
 ): Record<string, JsonValue> => ({
   subject:
@@ -288,9 +300,9 @@ const semanticProjection = (
   evidence_links: evidence.evidence_links,
 });
 
-/** Hash semantic content, including raw results and excluding display-subject fields. */
+/** Hash semantic content, including raw results and excluding local metadata. */
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
-  `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
+  `ev_${digestCanonicalValue(evidenceSemanticContent(evidence), "Evidence")}`;
 
 /** Recognize an obsolete commitment for diagnosis only; never admit or rewrite it. */
 const usesPre66NullCoverageIdentity = (
@@ -298,7 +310,7 @@ const usesPre66NullCoverageIdentity = (
   evidenceId: string,
 ): boolean => {
   if (evidence.relationship_coverage !== null) return false;
-  const legacyProjection = semanticProjection(evidence);
+  const legacyProjection = evidenceSemanticContent(evidence);
   delete legacyProjection.relationship_coverage;
   return (
     evidenceId ===
@@ -354,11 +366,36 @@ export const rebindEvidenceToTargetPath = (
   // The original authenticated Evidence owns immutable payloads. Only the
   // small display subject and envelope are new, so preserve those payloads
   // without reparsing a potentially large analysis result.
-  Object.freeze(reboundSubject.digest);
-  Object.freeze(reboundSubject);
-  Object.freeze(reboundEvidence);
-  immutableEvidenceSnapshots.set(reboundEvidence, reboundEvidence);
-  return reboundEvidence;
+  return rememberReboundEvidence(evidence, reboundEvidence);
+};
+
+/** Bind the exact selected request path without changing semantic identity or stored history. */
+export const withEvidenceCallerInputPath = (
+  evidence: Evidence,
+  rawPath: string,
+): Evidence => {
+  const callerInputPath = nulFreeStringSchema.parse(rawPath);
+  const owned = immutableEvidence(evidence);
+  if (owned.caller_input_path === callerInputPath) return owned;
+  // The authenticated source owns its immutable payloads. Only this small
+  // envelope changes, so replay does not copy a document-sized result.
+  const rebound = {
+    ...owned,
+    caller_input_path: callerInputPath,
+  };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Carry the source's sealing proof before sealing only the changed envelope. */
+const rememberReboundEvidence = (
+  source: Evidence,
+  rebound: Evidence,
+): Evidence => {
+  // Each own member belongs to an authenticated immutable source. Register
+  // these shared roots so sealing the envelope never walks their payloads.
+  for (const key of Object.keys(source))
+    immutableJsonSnapshotMember(source, key);
+  return rememberImmutableEvidence(rebound);
 };
 
 /** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
@@ -422,7 +459,7 @@ export function* createImmutableEvidenceSteps(
     observation,
   );
   const digest = yield* canonicalJsonDigestSteps(
-    semanticProjection(normalized),
+    evidenceSemanticContent(normalized),
   );
   return rememberImmutableEvidence({
     ...normalized,
