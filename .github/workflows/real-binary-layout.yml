@@ -55,6 +55,11 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      - name: Install ELF32 cross toolchains for source-owned fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-i686-linux-gnu gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu
       - name: Acquire exact upstream libraries in an isolated runner environment
         shell: bash
         run: |

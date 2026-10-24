@@ -122,6 +122,21 @@ it("retains high linked values and NOBITS without inventing file backing", () =>
 });
 
 it.each([
+  [{ machine: "EM_386", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "big" }, true],
+  [{ machine: "EM_X86_64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "big" }, false],
+  [{ machine: "EM_386", bits: 64, byte_order: "little" }, false],
+  [{ machine: "EM_MIPS", bits: 64, byte_order: "big" }, false],
+])("admits only profiled architecture %j: %s", (architecture, admitted) => {
+  expect(
+    binaryLayoutSchema.safeParse({ ...report(), architecture }).success,
+  ).toBe(admitted);
+});
+
+it.each([
   "file-backed-outside",
   "header-outside",
   "wrong-index",

@@ -35,11 +35,27 @@ if (
   !isAbsolute(strace ?? "")
 )
   throw new Error(
-    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld and strip must be available. No target is executed.",
+    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
 const execute = promisify(execFile);
-for (const command of ["gcc", "ld", "strip", "/usr/bin/prlimit", strace]) {
+const ELF32_TOOLCHAINS = [
+  ["i686-linux-gnu", "EM_386", "little"],
+  ["arm-linux-gnueabi", "EM_ARM", "little"],
+  ["mips-linux-gnu", "EM_MIPS", "big"],
+  ["mipsel-linux-gnu", "EM_MIPS", "little"],
+];
+for (const command of [
+  "gcc",
+  "ld",
+  "strip",
+  "/usr/bin/prlimit",
+  strace,
+  ...ELF32_TOOLCHAINS.flatMap(([prefix]) => [
+    `${prefix}-gcc`,
+    `${prefix}-readelf`,
+  ]),
+]) {
   try {
     await execute(command, [command === strace ? "-V" : "--version"], {
       timeout: 10_000,
@@ -324,6 +340,73 @@ try {
         }
       }
       reports.set(name, value);
+      assert.deepEqual(await readFile(path), bytes);
+      cases++;
+    }
+  }
+  // ELF32 profiles: cross-compiled, never executed, checked against GNU readelf.
+  for (const [
+    prefix,
+    machine,
+    byteOrder,
+    kind,
+    flags,
+  ] of ELF32_TOOLCHAINS.flatMap((toolchain) => [
+    [...toolchain, "executable", ["-fPIE", "-pie"]],
+    [...toolchain, "relocatable", ["-c", "-fPIC"]],
+  ])) {
+    const path = join(root.path, `${prefix}-${kind}`);
+    await execute(`${prefix}-gcc`, ["-O1", ...flags, source, "-o", path], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const { stdout } = await execute(`${prefix}-readelf`, ["-SW", path], {
+      timeout: 10_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const expected = [
+      ...stdout.matchAll(
+        /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s/gm,
+      ),
+    ]
+      .filter(([, index]) => index !== "0")
+      .map(([, index, name, address, offset, size]) => ({
+        index: Number(index),
+        name,
+        address: BigInt(`0x${address}`),
+        offset: BigInt(`0x${offset}`),
+        size: BigInt(`0x${size}`),
+      }));
+    assert.ok(expected.length > 0, `readelf listed no sections for ${path}`);
+    const bytes = await readFile(path);
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, path);
+      assert.deepEqual(value.architecture, {
+        machine,
+        bits: 32,
+        byte_order: byteOrder,
+      });
+      assert.equal(
+        value.image_type,
+        kind === "executable" ? "ET_DYN" : "ET_REL",
+      );
+      for (const section of expected) {
+        const reported = value.sections[section.index];
+        assert.equal(reported.name.display, section.name);
+        assert.equal(BigInt(reported.address), section.address);
+        assert.equal(BigInt(reported.offset), section.offset);
+        assert.equal(BigInt(reported.size), section.size);
+      }
+      assert.equal(value.sections.length, expected.length + 1);
+      if (kind === "executable") {
+        assert.ok(value.segments.length > 0);
+        assert.equal(value.linkage.interpreters.length, 1);
+        assert.ok(
+          value.linkage.needed_libraries.some(
+            (library) => library.display === "libc.so.6",
+          ),
+        );
+      } else assert.ok(value.relocations.length > 0);
       assert.deepEqual(await readFile(path), bytes);
       cases++;
     }
