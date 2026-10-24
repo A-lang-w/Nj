@@ -109,7 +109,7 @@ const reservedNameError = (name: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_EXPORT_OPERATION,
     {
-      userMessage: `The bundle name ${JSON.stringify(name)} is a device name Windows reserves, so it cannot name the env folder; pass --name with another label.`,
+      userMessage: `The bundle name ${JSON.stringify(name)} is a device name Windows reserves, so it cannot name the env folder; choose another name.`,
     },
     [
       {

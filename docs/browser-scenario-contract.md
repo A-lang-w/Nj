@@ -363,26 +363,41 @@ data you may change.
   `GET` or `HEAD` step cannot carry it.
 - `path` starts with one `/` and must resolve to the start URL's origin, which
   validation checks before the browser starts. When the step runs, the page must
-  be on that origin; add a `goto` step first if an earlier action left it.
-  `query` entries are appended in order and may reference declared secrets.
+  be on that origin, checked again in the page as the request is sent; add a
+  `goto` step first if an earlier action left it. A query in `path` is sent as
+  written, and `query` entries are appended after it in order and may
+  reference declared secrets.
+- Request steps follow no redirects: a redirect answer fails the step, and
+  nothing is sent to the location it names, so give the path the redirect
+  names.
 - Header values are literals, declared secrets, a cookie the browser holds for
-  the request URL (`{"source": "cookie", "name"}`), or a local storage entry on
-  the start origin (`{"source": "local_storage", "key"}`, with an optional
-  `json_pointer` into a stored JSON value). `prefix` is sent before the value.
-  Values read from the page are redacted like declared secrets, as
-  `[REDACTED:page:<step_id>.<header>]`, from records made after the step reads
-  them; a response recorded earlier, such as the login response that returned
-  a token, keeps the value. A missing cookie, key or
-  pointer fails the step. Header names a page's `fetch` cannot set, such as
-  `Cookie`, `Origin`, `Host` or `Sec-*`, are refused at validation.
+  the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
+  whose value the page's scripts can then see while the request runs), or a
+  local storage entry on the start origin (`{"source": "local_storage",
+  "key"}`, with an optional `json_pointer` to a string or number in a stored
+  JSON value). `prefix` is sent before the value. A value read from the page is
+  redacted like a declared secret, as `[REDACTED:page:<step_id>.<header>]`,
+  from records made after the step reads it; a response recorded earlier, such
+  as the login response that returned a token, keeps the value. A value read
+  again keeps its first marker, and a value shorter than 8 characters is not
+  redacted, since redacting it would rewrite ids, ports and hosts throughout
+  the capture. A missing cookie, key or pointer fails the step.
+- Validation refuses a header name given twice in a step, header names a
+  page's `fetch` cannot set, such as `Cookie`, `Origin`, `Host` or `Sec-*`, and
+  `User-Agent`, which Chrome drops; it refuses line breaks and control
+  characters in literal values and prefixes, and the step fails before sending
+  when a secret or page value holds them.
 - The step completes when the whole response has been read. With
   `expected_status`, any other status fails the step and the later actions are
   recorded as `cancelled`; without it, any response completes the step. A
-  network error, or `timeout_ms` passing, fails the step.
+  network error fails the step. `timeout_ms` covers reading the header values
+  and the request: a step whose time runs out, or that is cancelled, before
+  its request is sent sends nothing, but a request already sent can still reach
+  the application after the step fails.
 
 The request runs in the page's main world, so an application that wraps
 `fetch` sees it, and it goes through the same network observation as other
-page requests: select `network` events and network content to record it.
+page requests: select network content (bodies or header values) to record it.
 Captures with request steps state in `limitations` that the steps sent their
 declared requests through the page's fetch. A scenario without request steps
 is unchanged.

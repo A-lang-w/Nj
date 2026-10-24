@@ -12,7 +12,6 @@ import {
 } from "../../domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonByteLength, jsonParts } from "../../domain/jsonSerialization.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -141,7 +140,7 @@ const harAsJson = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `${path} is a HAR document, not capture Evidence; build it as a .har file, or inspect it with inspect-web-network-capture first.`,
+      userMessage: `${path} is a HAR document, not capture Evidence; inspect it as a HAR first, or build from the file saved as .har.`,
     },
     [
       {
@@ -204,7 +203,7 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address, and ${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name); name the environment.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name)`}; name the environment.`,
     },
     [
       {

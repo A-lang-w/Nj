@@ -110,7 +110,9 @@ client with it. Match `wait_for` locators to exactly one element.
    before any write, so fields that change on their own show up; one item of
    each.
 3. Write with `request` steps, two numbered scratch objects per write type,
-   with varied free text. Read each write back at once, by id and in its list.
+   with varied free text. After each write, and before the next one, read the
+   object back by id and then its list: create 1, read 1, list, create 2,
+   read 2, list; never several writes before their reads.
 4. Leave more than a second between a create and its first edit
    (`wait_for_timeout` with `duration_ms: 1100`).
 5. Update both objects and read each back; delete both and read each back
@@ -143,9 +145,10 @@ Evidence back into another tool.
 
 ## Check coverage
 
-`inspect_analysis_view` with the capture's retained evidence id and
-`view: {kind: "environment-coverage", template_rules: ["after-uid-literal",
-"opaque-token", "sibling-variance", "prefix-variance"]}`. It reports read tools
+`inspect_analysis_view` with `source: {kind: "retained-evidence",
+evidence_id}` (the capture's id) and `view: {kind: "environment-coverage",
+template_rules: ["after-uid-literal", "opaque-token", "sibling-variance",
+"prefix-variance"]}`. It reports read tools
 answered from the state or replayed (`reads.recorded_reasons`), the served write
 tools, and each withheld write with its `reason` and `hint`. It does not apply
 the serve-time catalog and state size checks; the export reports those.
@@ -180,11 +183,14 @@ evidence_id}` (or `{kind: "evidence-file", path}`), an absolute
 `output_directory` that does not exist yet and whose parent does, and a `name`
 (required when the application runs on `localhost` or an IP address). It returns
 the coverage again, `tool_count`, the written files and warnings; `dry_run:
-true` reports without writing.
+true` reports without writing. The bundle installs `rea-agents` of this REA's
+version from the registry; when the user runs an unreleased REA build, pass the
+`package_tarball` they give you (a packed `rea-agents` tarball) instead.
 
 Tell the user how many tools answer from the state, which writes are served and
 which are withheld and why, and the run command (`agent-env run <folder>`). Say
-that the bundle ships the recorded responses and the capture's local path, and
+that the bundle ships the recorded responses and the capture's local paths
+(for a browser scenario, the browser executable's path), and
 list any `credential-named-members` warning pointers for review. Never publish
 or share the bundle yourself.
 
