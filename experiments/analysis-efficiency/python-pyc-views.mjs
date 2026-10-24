@@ -120,6 +120,7 @@ try {
   await verifyRuntime("before");
   const started = performance.now();
   await client.connect(transport);
+  report.server_instructions = client.getInstructions() ?? "";
   const catalog = await client.listTools();
   definitions = new Map(catalog.tools.map((tool) => [tool.name, tool]));
   await writeFile(join(values.output, "catalog.json"), JSON.stringify(catalog));

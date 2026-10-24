@@ -47,6 +47,7 @@ def inspect(path, encoding):
     arguments = sum(count(compact({'name': event['name'], 'arguments': event['input']})) for event in transcript)
     replies = sum(count(block['text']) for event in transcript for block in event['reply']['content'] if block['type'] == 'text')
     inputs, prompt = count(compact(directory)), count(question)
+    instructions = count(report['server_instructions'])
     return dict(case=path.name, lane=report['lane'], artifact=report['artifact'],
                 answer_count=report['answer_count'], answer_sha256=report['answer_sha256'],
                 parent_evidence_id=report['parent_evidence_id'], source_report_sha256=report['source_report_sha256'],
@@ -56,8 +57,8 @@ def inspect(path, encoding):
                 kernel_family_peak_bytes=observed['memory_peak_bytes'],
                 events_at_payload_exit=events, payload_cleanup_verified=True,
                 final_whole_scope_events=scope.get('resource_events_final'),
-                token_proxy=dict(question=prompt, input_catalog_once=inputs, arguments=arguments,
-                                 text_replies=replies, combined=prompt + inputs + arguments + replies,
+                token_proxy=dict(question=prompt, server_instructions=instructions, input_catalog_once=inputs, arguments=arguments,
+                                 text_replies=replies, combined=prompt + instructions + inputs + arguments + replies,
                                  complete_transport_catalog=count(compact(catalog))),
                 receipt_sha256={file.name: digest(file) for file in [path / 'report.json', path / 'catalog.json',
                                path / 'transcript.json', path / 'evidence.json', path.with_suffix('.log')]})
@@ -103,7 +104,7 @@ def main():
     assert all(row['runtime_identity_sha256'] == identities[row['lane']]['sha256'] for row in rows)
     receipt = dict(tiktoken=tiktoken.__version__, encoding=encoding.name, actual_model_usage=None,
                    cohort=manifest, commands=index, runtime_identities=identities,
-                   projection='Scripted fresh SDK tasks, not model runs. One fixed question and complete input directory (name/description/inputSchema), every argument and MCP text reply including export. Raw catalog including output schemas reported separately. No framing, host injection, history replay, inference quality or billable usage measured.',
+                   projection='Scripted fresh SDK tasks, not model runs. One fixed question, server instructions and complete input directory (name/description/inputSchema), every argument and MCP text reply including export. Raw catalog including output schemas reported separately. No framing, host injection, history replay, inference quality or billable usage measured.',
                    resources='CPU quota100%, payload affinity0-1, initial observer15. Early stop3GiB, hard4GiB, swap0. Fresh HOME/client/server; Node compile cache disabled, OS caches unflushed. Whole process-family CPU and kernel memory peak include file cache, runtime identity checks, hashing, assertions, SDK/server serialization and cleanup. Oracle generation and tokenization outside timed tasks. Payload-exit counters verified; final whole-scope counters unavailable.',
                    summary=summarize(rows), recordings=rows)
     args.output.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
