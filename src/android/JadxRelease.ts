@@ -1,6 +1,4 @@
-import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
-export { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+// Imported directly by pre-install fixture scripts; keep this module dependency-free.
 /** Audited upstream release; source remains unmodified in the Git submodule. */
 export const JADX_RELEASE = Object.freeze({
   version: "0.7.1",
@@ -25,20 +23,6 @@ export const JADX_JAVA_RUNTIME_REMEDIATION =
 /** Remediation when a JADX JVM resource override is malformed. */
 export const JADX_JVM_OPTIONS_REMEDIATION =
   "Set REA_JADX_HEAP_MIB to a positive integer (heap size in MiB) and REA_JADX_ACTIVE_PROCESSOR_COUNT to a positive integer within the JVM's signed 32-bit range.";
-
-/** Remediation when the JADX operation deadline override is malformed. */
-export const JADX_OPERATION_TIMEOUT_REMEDIATION = `Set REA_JADX_OPERATION_TIMEOUT_MS to a decimal millisecond count from 1 to 2147483647, or unset it to keep the ${String(DEFAULT_JADX_OPERATION_TIMEOUT_MS)} ms default.`;
-
-/** Name the launch-environment deadline when a JADX operation reaches it. */
-export const jadxOperationTimeoutGuidance = (timeoutMs: number) => ({
-  limit: analysisSettingLimit(
-    "jadx.operation_timeout_ms",
-    timeoutMs,
-    undefined,
-  ),
-  userMessage: `JADX reached its configured operation deadline of ${String(timeoutMs)} ms (deadlineExpired).`,
-  remediationAction: `Set REA_JADX_OPERATION_TIMEOUT_MS in REA's launch environment to an integer from 1 to 2147483647 milliseconds (omitted means ${String(DEFAULT_JADX_OPERATION_TIMEOUT_MS)} ms). For a running MCP server, use update_analysis_settings with setting jadx.operation_timeout_ms and action set; it applies to the next operation without restarting REA. Environment changes apply on the next REA process start. The effective deadline for this attempt was ${String(timeoutMs)} ms. It does not raise the bridge's 30000 ms startup handshake. Raising only the MCP client deadline does not change this budget. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
 
 /** Remediation when the host cannot run the Android JADX subprocess. */
 export const JADX_UNSUPPORTED_HOST_REMEDIATION =

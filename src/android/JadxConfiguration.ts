@@ -1,3 +1,8 @@
+import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  jadxOperationTimeoutGuidance,
+  JADX_OPERATION_TIMEOUT_REMEDIATION,
+} from "./JadxOperationTimeout.js";
 import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
 import {
   JadxInterruption,
@@ -32,13 +37,10 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { DoctorProviderCheck } from "../application/Doctor.js";
 import {
-  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
-  jadxOperationTimeoutGuidance,
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
   JADX_JAVA_RUNTIME_REMEDIATION,
   JADX_JVM_OPTIONS_REMEDIATION,
-  JADX_OPERATION_TIMEOUT_REMEDIATION,
   JADX_UNSUPPORTED_HOST_REMEDIATION,
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";

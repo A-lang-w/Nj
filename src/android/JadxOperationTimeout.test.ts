@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { captureJadxFailure } from "./JadxFailure.js";
-import { jadxOperationTimeoutGuidance } from "./JadxRelease.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
 it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", () => {
   const timeout = AbortSignal.abort(new Error("deadline"));
