@@ -550,6 +550,41 @@ it("drops state with no surviving view while preserving another type and snapsho
   expect(books.answer("get_authors").body).toEqual(authors);
 });
 
+it.each([false, true])(
+  "checks later writes through a retired sorted view without adding proof (wrong values: %s)",
+  (wrong) => {
+    const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+    const second = { ...SECOND_BOOK, tags: ["gamma", "omega"] };
+    const written = { ...second, tags: ["zeta", "delta"] };
+    const later = { ...first, tags: ["theta", "epsilon"] };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/2", written, 200, { tags: written.tags }],
+      ["GET", "/api/books/2", { ...written, tags: ["delta", "zeta"] }],
+      ["GET", "/api/books", [first, written]],
+      ["PATCH", "/api/books/1", later, 200, { tags: later.tags }],
+      [
+        "GET",
+        "/api/books",
+        [
+          { ...later, tags: wrong ? ["wrong", "values"] : later.tags },
+          { ...written, tags: ["delta", "zeta"] },
+        ],
+      ],
+    ]);
+    expect(books.state.views.get("get_books")).toMatchObject({
+      shape: "recorded",
+    });
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: !wrong,
+      checked_record_ordinals: [4],
+      contradicted_by: wrong ? 7 : null,
+    });
+  },
+);
+
 it("withholds varied create states whose dependent fields still copy the first create", () => {
   const first = { ...FIRST_BOOK, status: "draft", closed_at: null };
   const second = {

@@ -104,7 +104,8 @@ interface Candidates {
 export class SortedArrays {
   readonly #candidates = new Map<string, Candidates>();
   readonly #adopted = new Map<string, string[]>();
-  readonly #inconsistent = new Set<string>();
+  /** Retired views retain their former sort fields only for checking later values. */
+  readonly #retired = new Map<string, string[]>();
   /** Values each type's initial entities held, per candidate field. */
   readonly #existing = new Map<string, Set<string>>();
 
@@ -131,20 +132,26 @@ export class SortedArrays {
     }
   }
 
-  /** The view with the array fields it was shown to sort. */
+  /** The serving projection: recorded after ordering was disproved, otherwise with learned sorts. */
   view(view: StateView): StateView {
     if (view.shape !== "item" && view.shape !== "list") return view;
-    if (this.#inconsistent.has(view.tool))
+    if (this.#retired.has(view.tool))
       return {
         tool: view.tool,
         shape: "recorded",
         reason: view.shape === "item" ? "fields-differ" : "list-differs",
       };
-    const adopted = this.#adopted.get(view.tool);
-    return adopted === undefined ? view : { ...view, sorted_arrays: adopted };
+    return this.comparisonView(view);
   }
 
-  /** The views with the array fields each was shown to sort. */
+  /** A retired view still describes where values were observed, but cannot supply serving proof. */
+  comparisonView(view: StateView): StateView {
+    if (view.shape !== "item" && view.shape !== "list") return view;
+    const fields = this.#retired.get(view.tool) ?? this.#adopted.get(view.tool);
+    return fields === undefined ? view : { ...view, sorted_arrays: fields };
+  }
+
+  /** The serving projections exported after simulation. */
   views(views: readonly StateView[]): StateView[] {
     return views.map((view) => this.view(view));
   }
@@ -165,6 +172,13 @@ export class SortedArrays {
     blocked: (targets: readonly string[]) => boolean,
   ): CheckOutcome {
     if (view.shape !== "item" && view.shape !== "list") return read.outcome;
+    const retired = this.#retired.get(view.tool);
+    if (retired !== undefined)
+      return read.outcome.pass
+        ? read.outcome
+        : (check({ ...view, sorted_arrays: retired }, (body) =>
+            this.#comparisonBody(view, retired, body),
+          ) ?? read.outcome);
     // A view with no candidate or learned field left has nothing to note or retry, so its read is never parsed.
     if (!this.#candidates.has(view.tool) && !this.#adopted.has(view.tool))
       return read.outcome;
@@ -260,7 +274,7 @@ export class SortedArrays {
     const adopted = this.#adopted.get(tool) ?? [];
     const kept = adopted.filter((field) => listedSorted(shown, field));
     if (kept.length === adopted.length) return false;
-    this.#inconsistent.add(tool);
+    this.#retired.set(tool, adopted);
     this.#adopted.delete(tool);
     this.#candidates.delete(tool);
     return true;

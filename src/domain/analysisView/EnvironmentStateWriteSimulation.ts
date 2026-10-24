@@ -526,10 +526,15 @@ export class EnvironmentStateWriteSimulation {
   #read(record: StateRecordFacts, index: number, tool: StateToolFacts): void {
     const original = this.#input.views.get(tool.name);
     if (original === undefined) return;
-    let view = this.#viewOf(original);
+    let view = this.#sorted.comparisonView(this.omitted.view(original));
     if (projectedRead(view, record, this.#input.io)) return;
     const borrowers = this.#observations.get(record.ordinal);
-    if (!borrowers && this.#resynced(view, record, index)) return;
+    if (
+      this.#viewOf(original).shape !== "recorded" &&
+      !borrowers &&
+      this.#resynced(view, record, index)
+    )
+      return;
     let outcome = this.#check(view, record);
     if (outcome === undefined) return;
     let keys = [...outcome.targets, ...outcome.unheld];
