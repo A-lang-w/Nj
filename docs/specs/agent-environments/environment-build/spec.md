@@ -30,7 +30,8 @@ before building.
 - For the same capture path, every bundle file is byte-identical to what
   `inspect-web-network-capture --format json`, `inspect-analysis-view --format
   json` (the same rules in the views' order) and `environment-export` (the
-  build's name) write, Evidence ids included.
+  build's name) write, Evidence ids included. The Evidence is serialized once
+  into one exactly sized buffer, whose bytes are both authenticated and shipped.
 - The name is `--name`, else the manifest's, unless the origin is a loopback
   name or IP literal: then the capture file's name, with a warning; a file name
   that yields no portable bundle name is refused, asking for `--name`.
@@ -43,13 +44,18 @@ before building.
 - Every write reason has a hint; a reason without one fails to compile.
 - Credential-named header names, query parameter names and JSON or form body
   members that hold a value are reported as a count and the first 20 record
-  pointers, never values, and never refuse a build; the scan cannot overflow
-  the stack on deeply nested bodies.
+  pointers, never values, and never refuse a build; the scan cannot overflow the
+  stack on deeply nested bodies. A browser scenario's retained header values and
+  the query parameters of its recorded URLs are scanned as a HAR's headers and
+  query strings are.
 - Nothing is written before the bundle stage; `--dry-run` writes nothing,
-  reports the files a build would write and refuses the package tarballs a
-  build refuses. The directory must be absent or empty.
-- SIGINT is checked between stages: a build cancelled before the bundle stage
-  writes nothing, and one cancelled during the write names the written bundle.
+  reports the files a build would write and refuses the package tarballs a build
+  refuses, admitting and releasing the tarball as a build does: a close it
+  cannot confirm is reported as incomplete cleanup that keeps its owner. The
+  directory must be absent or empty.
+- SIGINT is checked between stages and after a dry run's last step: a build
+  cancelled before the bundle stage writes nothing, and one cancelled during the
+  write names the written bundle.
 - The `environment-coverage` view summarizes the environment-state view with
   the same rules, refuses what it refuses and is inferred. It does not apply the
   serve-time catalog and state admission checks, and says so in a limitation.

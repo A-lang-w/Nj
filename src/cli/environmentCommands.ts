@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EnvironmentBuildCaptureInput } from "../application/environment/environmentBuild.js";
 import type {
@@ -639,16 +640,13 @@ const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
       "Export an environment manifest and its capture Evidence as an agent environment bundle folder the agentenv framework runs with agent-env run",
     args: z.object({
       manifest: manifestArgument,
-      directory: z
-        .string()
-        .describe(
-          "Bundle directory to create; must be absent or empty, nothing is overwritten",
-        ),
+      directory: localPathStringSchema.describe(
+        "Bundle directory to create; must be absent or empty, nothing is overwritten",
+      ),
     }),
     options: z.object({
       evidence: evidenceOption,
-      packageTarball: z
-        .string()
+      packageTarball: localPathStringSchema
         .optional()
         .describe(
           "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",

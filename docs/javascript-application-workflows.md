@@ -197,6 +197,14 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+Reassignments connect retained right-hand reads to the binding or property
+write. Compound assignments also retain the previous-value input; logical
+assignments keep conditional inputs as candidates. These edges describe
+influence without evaluating arithmetic or establishing execution order or the
+resulting value. Deferred callback bodies do not become inputs to the enclosing
+assignment. Computed method keys belong to the enclosing callable; parameter
+defaults and method bodies belong to the method. Uncertain later property reads
+remain opt-in through `include_ambiguous_dynamic_edges`.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
 these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not
@@ -501,6 +509,15 @@ Identifier references and closure captures share Babel syntax-role facts plus
 explicit binding/write roles; noncomputed declaration keys and import/meta names
 are not lexical reads. Provenance-only expression-depth omissions enter the same typed source coverage
 as value-evaluation bounds and remain visible in retained application Evidence.
+Immediate synchronous function results also share the loader reference owner.
+An expression arrow returning the retained CommonJS `require` can preserve that
+loader identity. Possible loader results with opaque alternatives or block
+bodies retain candidate uncertainty; async and generator results are their
+wrapper values.
+This does not interpret `typeof` or Proxy behavior in bundler shims. Historical
+source imports consume the same proven loader fact and keep their existing
+requirement for a known loader association.
+
 Direct generator and async calls produce iterators and
 Promises; body returns do not become direct call-result flows. Their unresolved
 consumption remains an explicit frontier. Replaced emitter bindings select their

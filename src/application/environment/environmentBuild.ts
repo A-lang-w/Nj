@@ -1,9 +1,7 @@
-import { open } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
@@ -13,10 +11,8 @@ import {
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../domain/evidence.js";
-import {
-  bufferedJsonParts,
-  jsonParts,
-} from "../../domain/jsonSerialization.js";
+import { jsonByteLength, jsonParts } from "../../domain/jsonSerialization.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -36,6 +32,7 @@ import {
 import {
   environmentExportFile,
   exportEnvironmentBundle,
+  packageTarballBytes,
   type EnvironmentExportFile,
   type WrittenBundleFile,
 } from "./environmentExport.js";
@@ -86,13 +83,16 @@ export const classifyBuildCapture = (
 };
 
 /** An Evidence file's bytes as `--format json` writes the Evidence to a file: compact JSON and a newline. */
-export const evidenceFileBytes = (evidence: Evidence): Buffer =>
-  Buffer.concat([
-    ...Array.from(bufferedJsonParts(jsonParts(evidence)), (part) =>
-      Buffer.from(part),
-    ),
-    Buffer.from("\n"),
-  ]);
+export const evidenceFileBytes = (evidence: Evidence): Buffer => {
+  // Measured first, so the document is written into one exactly sized buffer.
+  const bytes = Buffer.allocUnsafe(jsonByteLength(evidence) + 1);
+  let offset = 0;
+  for (const part of jsonParts(evidence)) offset += bytes.write(part, offset);
+  if (offset !== bytes.length - 1)
+    throw new Error("Evidence serialized to a different length than measured");
+  bytes[offset] = 0x0a;
+  return bytes;
+};
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
 export const canonicalTemplateRules = (
@@ -258,48 +258,6 @@ const packageSourceValue = (
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
 
-/** The tarball's size once it opens for reading as a regular file, refused as a build would refuse it. */
-const tarballBytes = async (
-  path: string,
-): Promise<Result<number, AnalysisInputError | AnalysisAccessDeniedError>> => {
-  try {
-    const handle = await open(path, "r");
-    try {
-      const found = await handle.stat();
-      if (found.isFile()) return ok(found.size);
-    } finally {
-      await handle.close();
-    }
-  } catch (cause: unknown) {
-    const code =
-      cause instanceof Error && "code" in cause ? String(cause.code) : "";
-    if (code === "EACCES" || code === "EPERM")
-      return err(
-        new AnalysisAccessDeniedError(
-          ENVIRONMENT_EXPORT_OPERATION,
-          path,
-          code,
-          {
-            cause,
-          },
-        ),
-      );
-  }
-  return err(
-    new AnalysisInputError(
-      ENVIRONMENT_EXPORT_OPERATION,
-      { userMessage: `${path} must name a readable regular package tarball.` },
-      [
-        {
-          path: ["package_tarball"],
-          reason: "invalid_value",
-          message: "The package tarball must be an existing regular file.",
-        },
-      ],
-    ),
-  );
-};
-
 /**
  * Build an agent environment bundle from capture Evidence: project the
  * manifest from the in-memory capture, authenticate the pair, prepare the
@@ -365,7 +323,7 @@ export const buildEnvironment = async (
   const records = parseCaptureEvidence(
     ENVIRONMENT_BUILD_OPERATION,
     input.capture.value,
-    "manifest",
+    "review",
   );
   if (!records.ok) return records;
   const scanned = scanCredentialNames(records.value.records);
@@ -424,10 +382,12 @@ export const buildEnvironment = async (
       plan.value.copies.tarball !== null &&
       input.packageTarball !== undefined
     ) {
-      const bytes = await tarballBytes(input.packageTarball);
+      const bytes = await packageTarballBytes(input.packageTarball);
       if (!bytes.ok) return bytes;
       files.push({ path: plan.value.copies.tarball, bytes: bytes.value });
     }
+    const afterPlan = await cancelled(input.signal);
+    if (afterPlan !== undefined) return err(afterPlan);
     return ok({
       status: "planned",
       directory: input.directory ?? null,

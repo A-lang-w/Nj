@@ -12,6 +12,22 @@ import {
 } from "./scenarioCaptureRecords.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 
+const manifestLimitations = (
+  projected: ReturnType<typeof scenarioCaptureRecords>,
+) => {
+  const accumulator = new EnvironmentManifestAccumulator();
+  for (const record of projected.records) {
+    const added = accumulator.add(
+      record,
+      projected.responseBodies.get(record.ordinal),
+    );
+    if (!added.ok) throw added.error;
+  }
+  const result = accumulator.finish();
+  if (!result.ok) throw result.error;
+  return result.value.limitations;
+};
+
 describe("scenarioCaptureRecords", () => {
   it("projects each transaction, in request order, as a HAR-shaped record with its retained bytes", () => {
     const projected = scenarioCaptureRecords(
@@ -57,7 +73,7 @@ describe("scenarioCaptureRecords", () => {
     expect(projected.records[7]?.reported).toEqual({
       request: { method: "GET", url: "http://127.0.0.1:3101/api/slow" },
     });
-    expect(projected.limitations).toContain(
+    expect(manifestLimitations(projected)).toContain(
       "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
     );
   });
@@ -77,10 +93,10 @@ describe("scenarioCaptureRecords", () => {
     };
     const projected = scenarioCaptureRecords(duplicated, "manifest");
     expect(projected.records[0]?.reported).toEqual({});
-    // No manifest tool can cite it, so it is not counted among bodiless tools.
+    // The shared request-line owner rejects this ambiguous transaction before body counting.
     expect(
-      projected.limitations.some((limitation) =>
-        limitation.includes("retained no response body"),
+      manifestLimitations(projected).some((limitation) =>
+        limitation.includes("scenario transactions with a usable request line"),
       ),
     ).toBe(false);
   });
@@ -128,7 +144,7 @@ describe("scenarioCaptureRecords", () => {
       "response.content.text",
     );
     expect(projected.records[1]?.binary_fields).toEqual([]);
-    expect(projected.limitations).toEqual(
+    expect(manifestLimitations(projected)).toEqual(
       expect.arrayContaining([
         "1 of 2 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
         "1 of 2 scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
@@ -234,5 +250,46 @@ it("does not decode request text when projecting replay records", () => {
     expect(projected.records[4]?.binary_fields).toHaveLength(1);
   } finally {
     decoder.mockRestore();
+  }
+});
+
+it("keeps retained header values and URL query pairs only for review", () => {
+  const capture = scenarioCaptureFixture(
+    [
+      {
+        method: "GET",
+        url: "/api/users/2?api_key=k-1&page=",
+        status: 200,
+        mediaType: "application/json",
+        body: '{"id":2}',
+        requestHeaders: [
+          { name: "X-Api-Key", value: "k-123" },
+          { name: "Authorization", value: null },
+        ],
+        responseHeaders: [{ name: "X-Auth-Token", value: "t-9" }],
+      },
+    ],
+    { request_body: true, response_body: true, header_values: true },
+  );
+  const reviewed = scenarioCaptureRecords(capture, "review").records[0];
+  expect(reviewed?.reported).toMatchObject({
+    request: {
+      url: "http://127.0.0.1:3101/api/users/2?api_key=k-1&page=",
+      headers: [
+        { name: "X-Api-Key", value: "k-123" },
+        { name: "Authorization", value: null },
+      ],
+      queryString: [
+        { name: "api_key", value: "k-1" },
+        { name: "page", value: "" },
+      ],
+    },
+    response: { headers: [{ name: "X-Auth-Token", value: "t-9" }] },
+  });
+  for (const purpose of ["manifest", "replay"] as const) {
+    const projected = scenarioCaptureRecords(capture, purpose).records[0];
+    expect(projected?.reported).not.toHaveProperty("request.headers");
+    expect(projected?.reported).not.toHaveProperty("request.queryString");
+    expect(projected?.reported).not.toHaveProperty("response.headers");
   }
 });

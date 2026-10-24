@@ -204,6 +204,13 @@ those missing bytes. New inventories preserve an ASAR companion declaration as
 unavailable bytes belonged to a companion. See [MCP integrity handling](mcp-contracts.md#integrity-record-and-continue)
 for the tool-result contract.
 
+JavaScript whose syntax cannot be parsed retains unavailable semantic coverage
+with `incomplete-module` unknowns for each semantic family and unknown omitted
+node and relation extents. The source module is retained when node capacity
+permits. A parser failure alone does not imply resource truncation or a named
+resource limit. Decoding failures and deliberately
+unselected sources retain the same explicit semantic coverage gap.
+
 HTML whose bytes are not valid UTF-8 retains its file observation and an unknown
 `parse-html-script-references` scope with artifact-byte authority. Reference
 discovery was unavailable; zero retained script links does not establish that
@@ -420,6 +427,8 @@ member-mutation owners must establish the receiver before static API facts becom
 roles or storage observations. Path `join`, `resolve`, and `fileURLToPath` use
 proven Node imports; source-relative URL conversion additionally requires an
 unmodified global or proven Node `url.URL` constructor and `import.meta.url`.
+Native constructor aliases retain that identity; their local spelling does not
+determine URL semantics, and replaced exports or local constructors remain unknown.
 Relative results of native path operations retain filesystem-expression context;
 their spelling does not turn them into module specifiers. Other calls preserve
 their expressions. A property named `preload` outside a proven BrowserWindow

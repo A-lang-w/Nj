@@ -24,6 +24,8 @@ import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js"
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
+  packageTarballRefusal,
+  withBundleTarball,
   writeEnvironmentBundle,
 } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
@@ -192,15 +194,6 @@ const hostFailurePath = (cause: unknown): string | undefined => {
   return undefined;
 };
 
-/** Host permission failures retain their typed cause; unexpected failures propagate. */
-const rethrowUnlessDenied = (
-  cause: unknown,
-  path: string,
-  operation: string,
-): never => {
-  throw accessDeniedError(cause, path, undefined, "read", operation) ?? cause;
-};
-
 /** A path that is not a readable regular file, including inline JSON text offered as one. */
 const NOT_A_FILE_CODES = new Set([
   "ENOENT",
@@ -339,7 +332,9 @@ export const readEnvironmentExportFile = async (
           `${path} could not be read as the ${role} file.`,
         ),
       );
-    return rethrowUnlessDenied(cause, path, operation);
+    const denied = accessDeniedError(cause, path, undefined, "read", operation);
+    if (denied !== undefined) return err(denied);
+    throw cause;
   }
   return environmentExportFile(role, path, bytes, operation);
 };
@@ -360,6 +355,62 @@ const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
   source.kind === "registry"
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
+
+const changedArtifact = (
+  cause: RegularFileChangedError,
+): AnalysisArtifactChangedError =>
+  new AnalysisArtifactChangedError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    cause.path,
+    cause.message,
+    { cause },
+  );
+
+/** A reader failure as an output refusal that keeps an unconfirmed cleanup bound to its owner. */
+const readerFailureError = (
+  cause: ArtifactReaderFailure,
+  directory: string | undefined,
+): AnalysisOutputError => {
+  const host = hostSystemError(cause);
+  const error = new AnalysisOutputError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    host === undefined ? cause.message : `${cause.message}: ${host.message}`,
+    {
+      cause,
+      // Only a host failure gets host recovery; an integrity or other
+      // refusal keeps its own message without disk-space advice.
+      ...(cause.cleanup !== undefined
+        ? { cleanup: cause.cleanup }
+        : directory === undefined
+          ? {}
+          : host === undefined
+            ? { diagnostics: { output_directory: directory } }
+            : hostWriteFailure(directory)),
+    },
+  );
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** The package tarball's size, admitted and released as the export admits and releases it. */
+export const packageTarballBytes = async (
+  path: string,
+): Promise<Result<number, AnalysisError>> => {
+  try {
+    return ok(
+      await withBundleTarball(path, (tarball) => Promise.resolve(tarball.size)),
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return err(cause);
+    if (cause instanceof RegularFileChangedError)
+      return err(changedArtifact(cause));
+    if (cause instanceof ArtifactReaderFailure)
+      return err(readerFailureError(cause, undefined));
+    if (systemCode(cause) !== undefined)
+      return err(packageTarballRefusal(path, cause));
+    throw cause;
+  }
+};
 
 /** Export the authenticated pair as an agent environment bundle folder. */
 export const exportEnvironmentBundle = async (
@@ -398,35 +449,9 @@ export const exportEnvironmentBundle = async (
     );
     if (denied !== undefined) return err(denied);
     if (cause instanceof RegularFileChangedError)
-      return err(
-        new AnalysisArtifactChangedError(
-          ENVIRONMENT_EXPORT_OPERATION,
-          cause.path,
-          cause.message,
-          { cause },
-        ),
-      );
-    if (cause instanceof ArtifactReaderFailure) {
-      const host = hostSystemError(cause);
-      const error = new AnalysisOutputError(
-        ENVIRONMENT_EXPORT_OPERATION,
-        host === undefined
-          ? cause.message
-          : `${cause.message}: ${host.message}`,
-        {
-          cause,
-          // Only a host failure gets host recovery; an integrity or other
-          // refusal keeps its own message without disk-space advice.
-          ...(cause.cleanup !== undefined
-            ? { cleanup: cause.cleanup }
-            : host === undefined
-              ? { diagnostics: { output_directory: input.directory } }
-              : hostWriteFailure(input.directory)),
-        },
-      );
-      bindArtifactFileCleanup(cause, error);
-      return err(error);
-    }
+      return err(changedArtifact(cause));
+    if (cause instanceof ArtifactReaderFailure)
+      return err(readerFailureError(cause, input.directory));
     if (
       cause instanceof BundleFileHostFailure ||
       (cause instanceof Error && systemCode(cause) !== undefined)

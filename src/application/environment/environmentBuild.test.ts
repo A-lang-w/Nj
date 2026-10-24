@@ -1,13 +1,29 @@
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join, sep } from "node:path";
+import { Writable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
+import {
+  scenarioCaptureEvidence,
+  scenarioCaptureFixture,
+} from "../../../tests/fixtures/browserScenarioCapture.js";
+import { environmentManifestHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisView.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
@@ -121,6 +137,13 @@ const threeStep = async (
   });
   if (!exported.ok) throw exported.error;
   return { directory, exported: exported.value };
+};
+
+/** The prototype every host file handle shares, so a test can fail one handle's host call. */
+const fileHandlePrototype = async (path: string): Promise<FileHandle> => {
+  const handle = await open(path, "r");
+  await handle.close();
+  return Object.getPrototypeOf(handle) as FileHandle;
 };
 
 const sameTree = async (left: string, right: string): Promise<number> => {
@@ -468,5 +491,203 @@ describe("canonicalTemplateRules", () => {
     expect(
       canonicalTemplateRules(["prefix-variance", "after-uid-literal"]),
     ).toEqual(["after-uid-literal", "prefix-variance"]);
+  });
+});
+
+describe("buildEnvironment credential names", () => {
+  it("flags the credential-named headers and query parameters a scenario capture retains, as a HAR's", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-scan-");
+    const evidence = scenarioCaptureEvidence(
+      scenarioCaptureFixture(
+        [
+          {
+            method: "GET",
+            url: "/api/users/2?api_key=k-1&page=1",
+            status: 200,
+            mediaType: "application/json",
+            body: '{"id":2,"login":"probe"}',
+            requestHeaders: [
+              { name: "X-Api-Key", value: "k-123" },
+              { name: "Accept", value: "application/json" },
+              { name: "Authorization", value: null },
+            ],
+            responseHeaders: [{ name: "X-Auth-Token", value: "t-9" }],
+          },
+        ],
+        { request_body: true, response_body: true, header_values: true },
+      ),
+    );
+    const planned = await buildEnvironment(
+      await buildInput(root, evidence, {
+        dryRun: true,
+        directory: undefined,
+        name: "rota",
+      }),
+    );
+    if (!planned.ok) throw planned.error;
+    expect(planned.value.capture.records).toBe(1);
+    expect(planned.value.warnings).toEqual([
+      expect.objectContaining({
+        code: "credential-named-members",
+        pointers: [
+          "record 0 request header X-Api-Key",
+          "record 0 response header X-Auth-Token",
+          "record 0 request query api_key",
+        ],
+      }),
+    ]);
+    const report = JSON.stringify(planned.value);
+    for (const value of ["k-123", "t-9"]) expect(report).not.toContain(value);
+  });
+});
+
+describe("buildEnvironment dry-run package tarball", () => {
+  it.each([false, true])(
+    "retries a failed tarball close and retains its owner when the failure persists: %s",
+    async (persistent) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-build-close-",
+      );
+      const tarball = join(root, "rea-agents.tgz");
+      await writeFile(tarball, "packed");
+      const input = await buildInput(root, undefined, {
+        dryRun: true,
+        packageTarball: tarball,
+      });
+      const prototype = await fileHandlePrototype(tarball);
+      const stat = prototype.stat;
+      let owner: FileHandle | undefined;
+      let close: (() => Promise<void>) | undefined;
+      let attempts = 0;
+      let released = false;
+      const failClose = (handle: FileHandle): void => {
+        const original = handle.close.bind(handle);
+        owner = handle;
+        close = original;
+        handle.close = () => {
+          attempts += 1;
+          return !released && (persistent || attempts === 1)
+            ? Promise.reject(
+                Object.assign(new Error("controlled tarball close failure"), {
+                  code: "EIO",
+                }),
+              )
+            : original();
+        };
+      };
+      // The tarball is the only file a dry run opens; fail its handle's close.
+      const spy = vi.spyOn(prototype, "stat").mockImplementation(function (
+        this: FileHandle,
+        ...args: unknown[]
+      ) {
+        if (owner === undefined) failClose(this);
+        return Reflect.apply(stat, this, args) as ReturnType<
+          FileHandle["stat"]
+        >;
+      } as FileHandle["stat"]);
+      try {
+        const planned = await buildEnvironment(input);
+        if (!persistent) {
+          if (!planned.ok) throw planned.error;
+          expect(attempts).toBe(2);
+          expect(planned.value.files.at(-1)).toEqual({
+            path: expect.stringMatching(/\.tgz$/u),
+            bytes: 6,
+          });
+          return;
+        }
+        if (planned.ok) throw new Error("Expected a cleanup refusal");
+        expect(planned.error).toMatchObject({
+          _tag: "AnalysisOutputError",
+          operation: "environment-export",
+          cleanupIncomplete: true,
+        });
+        const failure = planned.error.cause;
+        if (!(failure instanceof ArtifactFileCleanupFailure))
+          throw new Error("Missing exact cleanup owner");
+        released = true;
+        await failure.cleanupLease.release();
+        expect(planned.error.cleanupIncomplete).toBe(false);
+        expect(owner?.fd).toBe(-1);
+      } finally {
+        released = true;
+        spy.mockRestore();
+        if (owner !== undefined && owner.fd >= 0) await close?.();
+      }
+    },
+  );
+
+  it("is cancelled by an interrupt that arrives while it reads the tarball", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-build-tgz-stop-",
+    );
+    const tarball = join(root, "rea-agents.tgz");
+    await writeFile(tarball, "packed");
+    const controller = new AbortController();
+    const input = await buildInput(root, undefined, {
+      dryRun: true,
+      packageTarball: tarball,
+      signal: controller.signal,
+    });
+    const prototype = await fileHandlePrototype(tarball);
+    const original = prototype.stat;
+    const stat = vi.spyOn(prototype, "stat").mockImplementation(function (
+      this: FileHandle,
+      ...args: unknown[]
+    ) {
+      controller.abort();
+      return Reflect.apply(original, this, args) as ReturnType<
+        FileHandle["stat"]
+      >;
+    } as FileHandle["stat"]);
+    try {
+      const planned = await buildEnvironment(input);
+      if (planned.ok) throw new Error("Expected a cancellation");
+      expect(projectAnalysisError(planned.error)).toMatchObject({
+        code: "cancelled",
+        details: { operation: "environment-build" },
+      });
+    } finally {
+      stat.mockRestore();
+    }
+  });
+});
+
+describe("evidenceFileBytes", () => {
+  it("writes the bytes --format json writes, into one buffer", async () => {
+    // A long multibyte body with a surrogate pair across the serializer's first part boundary.
+    const [entry] = environmentManifestHar().log.entries;
+    const text = `${"a".repeat(8191)}😀${"é😀".repeat(40_000)}`;
+    const evidence = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture([
+        {
+          ...entry!,
+          response: {
+            ...entry!.response,
+            content: { ...entry!.response.content, text },
+          },
+        },
+      ]),
+    );
+    const written: Buffer[] = [];
+    await writeJsonOutput(
+      evidence,
+      new Writable({
+        write(chunk: Buffer, _encoding, done) {
+          written.push(chunk);
+          done();
+        },
+      }),
+    );
+    const expected = Buffer.concat(written);
+    const concat = vi.spyOn(Buffer, "concat");
+    try {
+      const bytes = evidenceFileBytes(evidence);
+      expect(concat).not.toHaveBeenCalled();
+      expect(bytes.length).toBeGreaterThan(200_000);
+      expect(bytes.equals(expected)).toBe(true);
+    } finally {
+      concat.mockRestore();
+    }
   });
 });
