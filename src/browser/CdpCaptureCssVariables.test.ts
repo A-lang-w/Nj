@@ -484,3 +484,138 @@ it("treats missing or non-array computedStyle as unavailable with limitation", a
     ),
   ).toBe(true);
 });
+
+it("safely bounds scan time and quickly rejects multiline or massive CSS variable values without freezing", async () => {
+  // Craft a large multiline payload that would cause quadratic backtracking if unconstrained
+  const largeValue = Array.from(
+    { length: 1000 },
+    (_, i) => `url("http://example.com/asset-${i}.png")`,
+  ).join("\n");
+  expect(largeValue.length).toBeGreaterThan(30000);
+
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--huge-token", value: largeValue },
+        { name: "--normal-token", value: "#ff0000" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const start = performance.now();
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+  const elapsedMs = performance.now() - start;
+
+  expect(elapsedMs).toBeLessThan(100);
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]?.name).toBe("--normal-token");
+  expect(result.total).toBe(2);
+  expect(
+    limitations.some((lim) =>
+      lim.includes("1 root CSS custom property was rejected"),
+    ),
+  ).toBe(true);
+});
+
+it("sanitizes control codes and bidi characters from rejected variable preview names", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        // Name containing newlines, ESC, and BiDi override code points
+        {
+          name: "--malicious\n\x1b[31m\u202Ereversed",
+          value: "too long ".repeat(100),
+        },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.items).toHaveLength(0);
+  expect(limitations.length).toBeGreaterThan(0);
+  const rejectionLim = limitations.find((lim) => lim.includes("rejected:"));
+  expect(rejectionLim).toBeDefined();
+  expect(rejectionLim).not.toContain("\n");
+  expect(rejectionLim).not.toContain("\x1b");
+  expect(rejectionLim).not.toContain("\u202E");
+});
+
+it("accepts valid Unicode and non-ASCII custom property names", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: "--顏色", value: "#ffffff" },
+        { name: "--カラー-メイン", value: "#000000" },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.items).toHaveLength(2);
+  expect(result.items.some((item) => item.name === "--顏色")).toBe(true);
+  expect(result.items.some((item) => item.name === "--カラー-メイン")).toBe(
+    true,
+  );
+});

@@ -207,9 +207,19 @@ const compareWebCaptureDimensions = (
       "metadata",
       metadataProjection(before),
       metadataProjection(after),
-      sectionsComplete(before, ["metadata"]) &&
-        sectionsComplete(after, ["metadata"]),
-      "Safe metadata capture was incomplete in at least one observation.",
+      sectionsComplete(before, [
+        "metadata",
+        ...(before.css_variables.status === "not_approved"
+          ? []
+          : ["css_variables"]),
+      ]) &&
+        sectionsComplete(after, [
+          "metadata",
+          ...(after.css_variables.status === "not_approved"
+            ? []
+            : ["css_variables"]),
+        ]),
+      "Safe metadata or CSS variables capture was incomplete in at least one observation.",
     ),
     webmcp: webMcpDimension(input.before.webmcp, input.after.webmcp),
     accessibility: accessibilityDimension(before, after),
@@ -1091,6 +1101,12 @@ const metadataProjection = (inspection: WebPageInspection) => ({
     .sort(),
   excluded_dom_urls: inspection.metadata.excluded_dom_urls,
   headers_allowlisted: inspection.metadata.headers_allowlisted,
+  css_variables:
+    inspection.css_variables.status === "not_approved"
+      ? null
+      : inspection.css_variables.items.map(
+          (item) => `${item.name}:${item.value}`,
+        ),
 });
 
 const singleton = (key: string, value: string): ReadonlyMap<string, string> =>

@@ -58,6 +58,14 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
     ),
   })
   .superRefine((input, context) => {
+    if (input.include_css_variables) {
+      context.addIssue({
+        code: "custom",
+        path: ["include_css_variables"],
+        message:
+          "include_css_variables is only supported for inspect_web_page and is not returned by analyze_web_bundle.",
+      });
+    }
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =

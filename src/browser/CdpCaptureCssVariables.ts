@@ -23,12 +23,22 @@ const MAX_INTAKE_CSS_VARIABLES = 2000;
 const MAX_REJECTED_PREVIEWS = 3;
 const MAX_PREVIEW_NAME_LENGTH = 64;
 
-const CSS_URL_PATTERN = /(url\(\s*(['"]?))([\s\S]*?)(\2\s*\))/gi;
+const MAX_CSS_VALUE_LENGTH = 512;
+const CSS_URL_QUOTED_PATTERN = /(url\(\s*(["']))([^"'\r\n]+)(\2\s*\))/gi;
+const CSS_URL_UNQUOTED_PATTERN = /(url\(\s*)([^"'\s()\r\n]+)(\s*\))/gi;
+
+const sanitizeDiagnosticPreview = (text: string): string =>
+  text.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, "");
 
 export const redactCssUrlCredentials = (value: string): string => {
-  if (!value.toLowerCase().includes("url(")) return value;
-  return value.replace(
-    CSS_URL_PATTERN,
+  if (
+    value.length > MAX_CSS_VALUE_LENGTH ||
+    !value.toLowerCase().includes("url(")
+  ) {
+    return value;
+  }
+  const withQuotedRedacted = value.replace(
+    CSS_URL_QUOTED_PATTERN,
     (
       fullMatch,
       prefix: string,
@@ -36,6 +46,18 @@ export const redactCssUrlCredentials = (value: string): string => {
       rawUrl: string,
       suffix: string,
     ) => {
+      try {
+        const sanitized = sanitizeBrowserUrl(rawUrl);
+        if (!sanitized.redacted) return fullMatch;
+        return `${prefix}${sanitized.url}${suffix}`;
+      } catch {
+        return fullMatch;
+      }
+    },
+  );
+  return withQuotedRedacted.replace(
+    CSS_URL_UNQUOTED_PATTERN,
+    (fullMatch, prefix: string, rawUrl: string, suffix: string) => {
       try {
         const sanitized = sanitizeBrowserUrl(rawUrl);
         if (!sanitized.redacted) return fullMatch;
@@ -162,7 +184,10 @@ export const captureCssVariables = async (
 
     totalObserved += 1;
 
-    const value = redactCssUrlCredentials(rawValue);
+    const value =
+      rawValue.length > MAX_CSS_VALUE_LENGTH
+        ? rawValue
+        : redactCssUrlCredentials(rawValue);
     const parsed = browserCssVariableItemSchema.safeParse({ name, value });
     if (parsed.success) {
       if (validItems.length < MAX_INTAKE_CSS_VARIABLES) {
@@ -171,10 +196,11 @@ export const captureCssVariables = async (
     } else {
       rejectedCount += 1;
       if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
+        const sanitizedName = sanitizeDiagnosticPreview(name);
         const truncatedName =
-          name.length > MAX_PREVIEW_NAME_LENGTH
-            ? `${name.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
-            : name;
+          sanitizedName.length > MAX_PREVIEW_NAME_LENGTH
+            ? `${sanitizedName.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
+            : sanitizedName;
         const issue =
           parsed.error.issues[0]?.message ?? "invalid token format or size";
         rejectedPreviews.push(`${truncatedName} (${issue})`);

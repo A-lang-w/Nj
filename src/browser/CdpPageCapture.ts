@@ -196,8 +196,17 @@ const captureAuthorizedPage = async (
     attachedUrl,
     limitations,
   );
-  const cssVariables = await captureCssVariables(context, limitations);
-  if (input.include_css_variables) {
+  const cssVariables =
+    context.operation === "analyze_web_bundle"
+      ? {
+          status: "not_approved" as const,
+          origin_scope: "same_origin" as const,
+          total: 0,
+          retained_count: 0,
+          items: [],
+        }
+      : await captureCssVariables(context, limitations);
+  if ("include_css_variables" in input && input.include_css_variables) {
     if (cssVariables.status === "unavailable") {
       state.events.completeness.unavailable("css_variables");
     } else if (cssVariables.status === "truncated") {

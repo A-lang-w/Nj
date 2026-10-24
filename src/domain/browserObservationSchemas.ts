@@ -265,7 +265,7 @@ export const browserCssVariableItemSchema = z.object({
   name: z
     .string()
     .trim()
-    .regex(/^--[a-zA-Z0-9_-]+$/u)
+    .regex(/^--[\p{L}\p{N}\p{M}_-]+$/u)
     .max(128),
   value: z
     .string()

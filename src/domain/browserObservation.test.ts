@@ -11,6 +11,7 @@ import {
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
 import { browserCssVariablesSchema } from "./browserObservationSchemas.js";
+import { analyzeWebBundleInputSchema } from "./webBundleAnalysis.js";
 
 describe("browser observation contracts", () => {
   it.each(["127.0.0.1", "[::1]"])(
@@ -382,5 +383,25 @@ describe("browser observation CSS variables contracts", () => {
       items: [itemWithWhitespace],
     });
     expect(parsedWithWhitespace.items[0]?.value).toBe(" 16px ");
+
+    // Accepts Unicode and non-ASCII custom property names
+    const unicodeItem = { name: "--顏色", value: "#ffffff" };
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [unicodeItem],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("scopes include_css_variables to inspect_web_page and rejects it in bundle analysis", () => {
+    const bundleInput = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "PAGE_1",
+      include_script_sources: true,
+      include_css_variables: true,
+    };
+    const result = analyzeWebBundleInputSchema.safeParse(bundleInput);
+    expect(result.success).toBe(false);
   });
 });

@@ -1199,6 +1199,44 @@ describe("web capture diff completeness", () => {
       status: "unknown",
       total_changes: 0,
     });
+
+    const beforeCss = structuredClone(captured.value);
+    markSectionsComplete(beforeCss, ["metadata"]);
+    beforeCss.css_variables = {
+      status: "included",
+      origin_scope: "same_origin",
+      total: 1,
+      retained_count: 1,
+      items: [{ name: "--theme-color", value: "#ff0000" }],
+    };
+
+    const afterChanged = structuredClone(beforeCss);
+    afterChanged.css_variables.items = [
+      { name: "--theme-color", value: "#0000ff" },
+    ];
+    const changedResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterChanged },
+      }),
+    );
+    expect(changedResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+    });
+
+    const afterIncomplete = structuredClone(beforeCss);
+    afterIncomplete.css_variables.status = "truncated";
+    afterIncomplete.completeness.truncated_sections.push("css_variables");
+    const incompleteResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterIncomplete },
+      }),
+    );
+    expect(incompleteResult.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
   });
 });
 
