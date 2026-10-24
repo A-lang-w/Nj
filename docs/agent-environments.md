@@ -85,8 +85,9 @@ name it `.har`.
   as for `inspect-web-network-capture`.
 - `--dry-run` runs every stage and prints the report with `status: "planned"`
   and the files a build would write, but writes nothing and does not check the
-  directory, which may then be omitted. It opens a `--package-tarball` for
-  reading, so it refuses the tarballs a build refuses.
+  directory, which may then be omitted. It reads and hashes a
+  `--package-tarball` as a build does before copying it, so it refuses the
+  tarballs a build refuses, including one whose contents cannot be read.
 
 The directory must be absent or empty, as for the export; the build never
 replaces a folder. A refusal before the write leaves nothing behind. Each
@@ -181,8 +182,12 @@ report's `credential-named-members` warning counts recorded header names, query
 parameter names and JSON or form body members whose names look like
 credentials (whole name segments such as `token`, `secret`, `password`,
 `api_key`, `authorization` or `session`) and hold a value, and lists the first
-20 by record and pointer, never by value. Names do not establish sensitivity,
-so the build never refuses on them. Capture
+20 by record and pointer, never by value. Text bodies over 4 MiB are not
+scanned: a `credential-scan-incomplete` warning counts them and lists the first
+20 by record and side (`record 3 response`), so the absence of
+`credential-named-members` covers every body only when this warning is absent
+too. Names do not establish sensitivity, so the build never refuses on them.
+Capture
 Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle
 carries it: build from a neutral folder when that path should not ship.

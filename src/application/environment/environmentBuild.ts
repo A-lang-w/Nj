@@ -27,8 +27,8 @@ import {
 } from "./environmentBundle.js";
 import {
   anonymousOrigin,
+  credentialScanWarnings,
   nameFromCaptureFile,
-  scanCredentialNames,
   type EnvironmentBuildWarning,
 } from "./environmentBuildReport.js";
 import {
@@ -346,13 +346,7 @@ export const buildEnvironment = async (
     "review",
   );
   if (!records.ok) return records;
-  const scanned = scanCredentialNames(records.value.records);
-  if (scanned.count > 0)
-    warnings.push({
-      code: "credential-named-members",
-      message: `${String(scanned.count)} recorded body members have credential-like names and a value; evidence.json ships them, so review it before sharing.`,
-      pointers: scanned.pointers,
-    });
+  warnings.push(...credentialScanWarnings(records.value.records));
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined
       ? registryPackageSource()

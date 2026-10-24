@@ -52,12 +52,19 @@ before building.
   or query parameter does. A HAR request recorded with structured form
   parameters and no text is scanned by those parameters, and a scenario
   transaction that cannot be attributed to one response still has its request
-  side scanned.
+  side scanned. Text bodies over the 4 MiB scan limit, including a response body
+  decoded only as a prefix, are not scanned; they are reported as a
+  `credential-scan-incomplete` warning with a count and the first 20 record and
+  side pointers (`record 3 response`), never contents, and never refuse a build.
+  Binary bodies hold no JSON or form text and are neither scanned nor reported.
+- An empty or NUL-containing capture, directory or package tarball argument is
+  refused as invalid input; it is never resolved to the working directory.
 - Nothing is written before the bundle stage; `--dry-run` writes nothing,
   reports the files a build would write and refuses the package tarballs a build
-  refuses, admitting and releasing the tarball as a build does: a close it
-  cannot confirm is reported as incomplete cleanup that keeps its owner. The
-  directory must be absent or empty.
+  refuses, admitting, reading and hashing, and releasing the tarball as a build
+  does before copying it, so a tarball whose contents cannot be read is refused:
+  a close it cannot confirm is reported as incomplete cleanup that keeps its
+  owner. The directory must be absent or empty.
 - SIGINT is checked between stages and after a dry run's last step: a build
   cancelled before the bundle stage writes nothing, and one cancelled during the
   write names the written bundle.

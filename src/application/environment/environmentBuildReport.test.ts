@@ -42,6 +42,9 @@ const record = (
     binary_fields: [],
   }) as unknown as WebNetworkCaptureRecord;
 
+/** Every body of these records was small enough to scan. */
+const NONE_SKIPPED = { count: 0, pointers: [] };
+
 describe("credentialNamed", () => {
   it("matches whole name segments, not substrings", () => {
     for (const name of [
@@ -83,6 +86,7 @@ describe("scanCredentialNames", () => {
         "record 3 response /data/0/sessionId",
         "record 4 response /a~1b/apiKey",
       ],
+      skipped: NONE_SKIPPED,
     });
     expect(JSON.stringify(scanned)).not.toContain("s3cr3t");
   });
@@ -129,6 +133,7 @@ describe("scanCredentialNames", () => {
         "record 7 request /password",
         "record 7 response /tokens",
       ],
+      skipped: NONE_SKIPPED,
     });
   });
 
@@ -147,10 +152,12 @@ describe("scanCredentialNames", () => {
     expect(scanCredentialNames([form("api_key=secret&api_key=")])).toEqual({
       count: 1,
       pointers: ["record 3 request /api_key"],
+      skipped: NONE_SKIPPED,
     });
     expect(scanCredentialNames([form("token=a&page=1&token=b")])).toEqual({
       count: 2,
       pointers: ["record 3 request /token", "record 3 request /token"],
+      skipped: NONE_SKIPPED,
     });
   });
 
@@ -170,7 +177,11 @@ describe("scanCredentialNames", () => {
     );
     expect(
       scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
-    ).toEqual({ count: 1, pointers: ["record 0 request /password"] });
+    ).toEqual({
+      count: 1,
+      pointers: ["record 0 request /password"],
+      skipped: NONE_SKIPPED,
+    });
   });
 
   it("walks bodies nested deeper than the call stack allows", () => {
@@ -201,6 +212,7 @@ describe("scanCredentialNames over structured and unattributed records", () => {
     expect(scanCredentialNames([structured])).toEqual({
       count: 2,
       pointers: ["record 4 request /api_key", "record 4 request /token"],
+      skipped: NONE_SKIPPED,
     });
   });
 
@@ -240,7 +252,67 @@ describe("scanCredentialNames over structured and unattributed records", () => {
         "record 0 request query api_key",
         "record 0 request /password",
       ],
+      skipped: NONE_SKIPPED,
     });
+  });
+});
+
+describe("scanCredentialNames coverage", () => {
+  it("reports text bodies too large to scan by record and side, never by content", () => {
+    const large = JSON.stringify({
+      token: "t-large",
+      pad: "a".repeat(4 * 1024 * 1024),
+    });
+    const oversized = record(5, undefined, undefined);
+    const reported = oversized.reported as {
+      request: { postData?: unknown };
+      response: { content: { text: string } };
+    };
+    reported.request.postData = { mimeType: "application/json", text: large };
+    reported.response.content.text = large;
+    const base64 = (ordinal: number, bytes: Buffer): WebNetworkCaptureRecord =>
+      ({
+        ...record(ordinal, undefined, undefined),
+        reported: {
+          request: { method: "GET", url: "http://127.0.0.1/api" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: "",
+              encoding: "base64",
+            },
+          },
+        },
+        binary_fields: [
+          {
+            pointer: "/response/content/text",
+            state: "retained",
+            content_base64: bytes.toString("base64"),
+          },
+        ],
+      }) as unknown as WebNetworkCaptureRecord;
+    const scanned = scanCredentialNames([
+      oversized,
+      // Decoded only as a prefix, so its end is never read.
+      base64(6, Buffer.from(large)),
+      // Binary bytes hold no JSON or form text, so nothing was left unscanned.
+      base64(7, Buffer.alloc(5 * 1024 * 1024, 0xff)),
+      record(8, { token: "t-small" }, {}),
+    ]);
+    expect(scanned).toEqual({
+      count: 1,
+      pointers: ["record 8 request /token"],
+      skipped: {
+        count: 3,
+        pointers: [
+          "record 5 request",
+          "record 5 response",
+          "record 6 response",
+        ],
+      },
+    });
+    expect(JSON.stringify(scanned)).not.toContain("t-large");
   });
 });
 

@@ -6,7 +6,10 @@ import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js"
 
 /** A note the build report carries; warnings never change what is built. */
 export interface EnvironmentBuildWarning {
-  readonly code: "name-from-file" | "credential-named-members";
+  readonly code:
+    | "name-from-file"
+    | "credential-named-members"
+    | "credential-scan-incomplete";
   readonly message: string;
   readonly pointers?: readonly string[];
 }
@@ -84,15 +87,16 @@ const member = (value: unknown, name: string): unknown =>
     ? Reflect.get(value, name)
     : undefined;
 
-/** A recorded body: a JSON value to walk, or form fields in order with every occurrence kept, as headers and query strings are. */
+/** A recorded body: a JSON value to walk, form fields in order with every occurrence kept, as headers and query strings are, or text too large to scan. */
 type ScannedBody =
   | { readonly kind: "json"; readonly value: unknown }
-  | { readonly kind: "form"; readonly fields: readonly [string, string][] };
+  | { readonly kind: "form"; readonly fields: readonly [string, string][] }
+  | { readonly kind: "skipped" };
 
-/** A recorded body as JSON or form fields, or undefined when it is neither. */
-const parsedBody = (text: unknown): ScannedBody | undefined => {
-  if (typeof text !== "string" || text.length > SCAN_BODY_LIMIT_BYTES)
-    return undefined;
+/** A recorded body as JSON or form fields, skipped when it is cut or over the limit, or undefined when it is neither. */
+const parsedBody = (text: unknown, cut = false): ScannedBody | undefined => {
+  if (typeof text !== "string") return undefined;
+  if (cut || text.length > SCAN_BODY_LIMIT_BYTES) return { kind: "skipped" };
   const start = text.trimStart()[0];
   if (start === "{" || start === "[") {
     try {
@@ -120,20 +124,39 @@ const namedValues = (value: unknown): (readonly [string, unknown])[] =>
       })
     : [];
 
+/** The response text the scan reads; binary bytes hold no JSON or form text. */
+const responseBody = (
+  record: WebNetworkCaptureRecord,
+): ScannedBody | undefined => {
+  const body = readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES);
+  return body.bodyEncoding === "base64"
+    ? undefined
+    : parsedBody(body.bodyText, body.bodyCut === true);
+};
+
+/** A count of matches and the first of their pointers. */
+interface ScanTally {
+  count: number;
+  readonly pointers: string[];
+}
+
+const tallied = (tally: ScanTally, pointer: string): void => {
+  tally.count++;
+  if (tally.pointers.length < REPORTED_POINTERS) tally.pointers.push(pointer);
+};
+
 /**
  * Credential-named members that hold a value in recorded JSON and form
  * bodies, headers and query strings: a count and the first pointers, never
- * values. The walk keeps its own stack, so nesting depth cannot overflow it.
+ * values, and the bodies too large to scan by record and side. The walk keeps
+ * its own stack, so nesting depth cannot overflow it.
  */
 export const scanCredentialNames = (
   records: readonly WebNetworkCaptureRecord[],
-): { readonly count: number; readonly pointers: readonly string[] } => {
-  let count = 0;
-  const pointers: string[] = [];
-  const found = (pointer: string): void => {
-    count++;
-    if (pointers.length < REPORTED_POINTERS) pointers.push(pointer);
-  };
+): Readonly<ScanTally> & { readonly skipped: Readonly<ScanTally> } => {
+  const matches: ScanTally = { count: 0, pointers: [] };
+  const skipped: ScanTally = { count: 0, pointers: [] };
+  const found = (pointer: string): void => tallied(matches, pointer);
   const walk = (root: unknown, label: string): void => {
     const stack: [unknown, string][] = [[root, ""]];
     while (stack.length > 0) {
@@ -155,7 +178,8 @@ export const scanCredentialNames = (
     }
   };
   const scanBody = (body: ScannedBody | undefined, label: string): void => {
-    if (body?.kind === "json") walk(body.value, label);
+    if (body?.kind === "skipped") tallied(skipped, label);
+    else if (body?.kind === "json") walk(body.value, label);
     else if (body?.kind === "form")
       for (const [name, value] of body.fields)
         if (credentialNamed(name) && holdsValue(value))
@@ -192,14 +216,30 @@ export const scanCredentialNames = (
         : parsedBody(text),
       `record ${ordinal} request`,
     );
-    scanBody(
-      parsedBody(
-        readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES).bodyText,
-      ),
-      `record ${ordinal} response`,
-    );
+    scanBody(responseBody(record), `record ${ordinal} response`);
   }
-  return { count, pointers };
+  return { ...matches, skipped };
+};
+
+/** The credential-name scan's warnings: what it found, and the bodies it could not scan. */
+export const credentialScanWarnings = (
+  records: readonly WebNetworkCaptureRecord[],
+): EnvironmentBuildWarning[] => {
+  const scanned = scanCredentialNames(records);
+  const warnings: EnvironmentBuildWarning[] = [];
+  if (scanned.count > 0)
+    warnings.push({
+      code: "credential-named-members",
+      message: `${String(scanned.count)} recorded body members have credential-like names and a value; evidence.json ships them, so review it before sharing.`,
+      pointers: scanned.pointers,
+    });
+  if (scanned.skipped.count > 0)
+    warnings.push({
+      code: "credential-scan-incomplete",
+      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
+      pointers: scanned.skipped.pointers,
+    });
+  return warnings;
 };
 
 /** Whether an origin's host is a loopback name or an IP literal, which says nothing about the application. */
