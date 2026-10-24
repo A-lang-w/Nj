@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -377,6 +377,7 @@ it
     "success",
     "format",
     "unsupported",
+    "output-limit",
     "wrong-version",
     "wrong-decoded-carrier",
     "broken-reply",
@@ -409,11 +410,14 @@ it
           scenario === "broken-reply"
             ? "broken"
             : JSON.stringify(
-                ["format", "unsupported"].includes(scenario)
+                ["format", "unsupported", "output-limit"].includes(scenario)
                   ? {
                       ok: false,
                       reason: scenario,
-                      message: "Malformed hex carrier.",
+                      message:
+                        scenario === "output-limit"
+                          ? "Complete interface evidence exceeds the 16 MiB reply budget."
+                          : "Malformed hex carrier.",
                     }
                   : {
                       ok: true,
@@ -465,7 +469,9 @@ it
               ? "AnalysisInputError"
               : scenario === "unsupported"
                 ? "AnalysisUnsupportedTargetError"
-                : "AnalysisOutputError",
+                : scenario === "output-limit"
+                  ? "AnalysisResourceConstraintError"
+                  : "AnalysisOutputError",
         },
       });
     if (!result.ok)
@@ -562,6 +568,41 @@ it.runIf(!unsupportedHost)(
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   },
 );
+it.runIf(!unsupportedHost)(
+  "classifies selected carrier path-resolution errnos as invalid input",
+  async () => {
+    const { root } = await fixture();
+    const loop = join(root, "loop");
+    await symlink("loop", loop);
+    const cases = [
+      { code: "ELOOP", path: join(loop, "carrier.bin") },
+      { code: "ENAMETOOLONG", path: join(root, "x".repeat(256)) },
+    ] as const;
+    const service = new EvmInterfaceService(new EvmoleInterfaceProvider({}));
+    try {
+      for (const { code, path } of cases) {
+        const result = await service.inspect({ path, encoding: "raw" });
+        if (result.ok) throw new Error(`Expected ${code} path failure`);
+        expect(result.error._tag).toBe("AnalysisInputError");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(code),
+              },
+            ],
+          },
+        });
+      }
+    } finally {
+      await service.close();
+    }
+  },
+);
+
 it.runIf(unsupportedHost)(
   "reports unverified host coverage before acquiring a provider",
   async () => {
@@ -754,7 +795,10 @@ it
     const output = { stdout: "", stderr: "upstream warning", truncated: false };
     expect(projectAnalysisError(result.error)).toMatchObject({
       category:
-        scenario === "late-cancellation" ? "cancelled" : "execution_failure",
+        scenario === "late-cancellation" ||
+        scenario === "cancelled-cleanup-failure"
+          ? "cancelled"
+          : "execution_failure",
       details:
         scenario === "late-cancellation"
           ? { captured_output: output }

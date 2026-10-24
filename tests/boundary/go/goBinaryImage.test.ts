@@ -12,6 +12,7 @@ import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
+  createGoPeHeaderPointerFixture,
   createGoSplitElfFixture,
   createGoOverlappingElfFixture,
   GO_MODULE_TEXT,
@@ -191,6 +192,24 @@ it.each([
   },
 );
 
+it("reads inline build strings past the ELF build-info discovery section", () => {
+  const fixture = createGoBinaryFixture();
+  const buildInfoSection = 256 + 64 * 2;
+  fixture.bytes.writeBigUInt64LE(32n, buildInfoSection + 32);
+
+  expect(readGoBinaryImage(fixture.bytes).build_info).toMatchObject({
+    header_offset: fixture.headerOffset,
+    encoding: "inline",
+    go_version: "go1.26.0",
+    module_text: GO_MODULE_TEXT,
+    version_location: { offset: fixture.versionOffset, bytes: 8 },
+    module_location: {
+      offset: fixture.moduleOffset,
+      bytes: fixture.moduleBytes.length,
+    },
+  });
+});
+
 it.each(["elf", "pe", "macho"] as const)(
   "follows mapped pointers in legacy %s metadata",
   (format) => {
@@ -245,6 +264,23 @@ it("refuses mapped pointer lengths outside the file instead of rounding 64-bit a
   length.bytes.writeBigUInt64LE(0xffffffffffffffffn, 1544);
   expect(() => readGoBinaryImage(length.bytes)).toThrowError(/limit|length/i);
 });
+
+it.each(["file bytes", "zero-fill"])(
+  "refuses a header-backed PE module descriptor contradicted by %s",
+  (alias) => {
+    const { bytes } = createGoPeHeaderPointerFixture(64, "descriptors");
+    const section = 152 + bytes.readUInt16LE(148) + 40;
+    bytes.writeUInt16LE(2, 134);
+    bytes.write(".alias", section, "ascii");
+    bytes.writeUInt32LE(16, section + 8);
+    bytes.writeUInt32LE(528, section + 12);
+    if (alias === "file bytes") {
+      bytes.writeUInt32LE(16, section + 16);
+      bytes.writeUInt32LE(1536, section + 20);
+    }
+    expect(() => readGoBinaryImage(bytes)).toThrowError(/ambiguous/i);
+  },
+);
 
 it("refuses overlong or truncated varints before decoding or allocating strings", () => {
   const fixture = createGoBinaryFixture();
