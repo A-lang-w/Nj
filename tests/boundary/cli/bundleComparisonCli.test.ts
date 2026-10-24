@@ -188,8 +188,14 @@ cliTest(
       right_evidence_id: rightRecord.evidence_id,
     };
     await Promise.all([
-      writeFile(leftPath, serializeEvidenceBundle(createEvidenceBundle([leftRecord]))),
-      writeFile(rightPath, serializeEvidenceBundle(createEvidenceBundle([rightRecord]))),
+      writeFile(
+        leftPath,
+        serializeEvidenceBundle(createEvidenceBundle([leftRecord])),
+      ),
+      writeFile(
+        rightPath,
+        serializeEvidenceBundle(createEvidenceBundle([rightRecord])),
+      ),
       writeFile(pairFile, JSON.stringify([pair])),
     ]);
     const args = ["compare", leftPath, rightPath, "--record_pairs"];
