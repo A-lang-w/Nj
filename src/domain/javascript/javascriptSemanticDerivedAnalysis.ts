@@ -16,7 +16,7 @@ import { collectJavaScriptSemanticResources } from "./javascriptSemanticResource
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 
@@ -92,6 +92,10 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     callables,
   );
   yield;
+  const assignmentFlows = yield* collectAssignmentFlowsSteps(
+    program,
+    callables,
+  );
   const functionFingerprints =
     yield* collectJavaScriptSemanticFingerprintsSteps({
       state,
@@ -107,7 +111,7 @@ export function* collectJavaScriptDerivedSemanticsSteps(
       parserPartial,
     });
   return {
-    assignmentFlows: collectAssignmentFlows(program, callables),
+    assignmentFlows,
     ...calls,
     promiseOperations,
     ...asyncEffects,
@@ -120,15 +124,15 @@ export function* collectJavaScriptDerivedSemanticsSteps(
 }
 
 /** Keep assignment syntax in the IR so graph consumers never reparse source. */
-const collectAssignmentFlows = (
+function* collectAssignmentFlowsSteps(
   program: t.Program,
   callables: readonly JavaScriptSemanticCallable[],
-): JavaScriptSemanticIr["assignmentFlows"] => {
+): Generator<void, JavaScriptSemanticIr["assignmentFlows"]> {
   const flows: JavaScriptSemanticIr["assignmentFlows"][number][] = [];
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       stack.enter(node, parent);
       if (!t.isAssignmentExpression(node)) return;
@@ -148,4 +152,4 @@ const collectAssignmentFlows = (
     exit: (node) => stack.exit(node),
   });
   return flows;
-};
+}

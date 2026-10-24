@@ -40,7 +40,13 @@ it("does not attribute deferred callback reads to an enclosing assignment", () =
   const trace = queryJavaScriptSemanticGraph(graph, {
     seed: { kind: "literal", value: 0.001 },
     direction: "forward-influence",
+    include_ambiguous_dynamic_edges: true,
   });
+  expect(
+    graph.relations.filter(
+      (edge) => edge.properties.assignment_operator !== undefined,
+    ),
+  ).toEqual([]);
   expect(
     trace.nodes
       .filter((node) => node.kind === "binding")
@@ -93,4 +99,68 @@ it("reaches a property write by default and keeps uncertain later reads opt-in",
   ).toBe(true);
   expect(trace.nodes.map((node) => node.label)).not.toContain("read:/speed");
   expect(trace.unknowns.length).toBeGreaterThan(0);
+});
+
+it.each([
+  [
+    "object",
+    "const obj = { [speed = accel]() {} }; export function current() { return speed; }",
+  ],
+  [
+    "class",
+    "class Widget { [speed = accel]() {} } export function current() { return speed; }",
+  ],
+  [
+    "enclosing function",
+    "export function update() { const obj = { [speed = accel]() {} }; return speed; }",
+  ],
+])(
+  "retains assignments in a computed method key in its %s owner",
+  (_kind, body) => {
+    const graph = graphForJavaScript(
+      `const accel = 0.001; let speed = 6; ${body}`,
+    );
+    const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+    const assignment = graph.relations.find(
+      (edge) =>
+        edge.properties.assignment_operator === "=" &&
+        nodes.get(edge.source_node_id)?.label === "accel" &&
+        nodes.get(edge.target_node_id)?.label === "speed",
+    );
+    expect(assignment).toBeDefined();
+    const trace = queryJavaScriptSemanticGraph(graph, {
+      seed: { kind: "literal", value: 0.001 },
+      direction: "forward-influence",
+      include_ambiguous_dynamic_edges: true,
+    });
+    expect(trace.nodes.map((node) => node.label)).toContain("return");
+  },
+);
+
+it("keeps assignments in computed methods' parameter defaults in the method", () => {
+  const graph = graphForJavaScript(`
+    const accel = 0.001; let speed = 6;
+    const obj = { ["tick"](value = (speed = accel)) { return speed; } };
+  `);
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const assignment = graph.relations.find(
+    (edge) => edge.properties.assignment_operator === "=",
+  );
+  expect(assignment).toBeDefined();
+  const source = nodes.get(assignment!.source_node_id);
+  const target = nodes.get(assignment!.target_node_id);
+  expect(source?.function_node_id).toBeTypeOf("string");
+  expect(source?.function_node_id).toBe(target?.function_node_id);
+});
+
+it("does not treat a callback body nested in a computed key as a key-time assignment input", () => {
+  const graph = graphForJavaScript(`
+    const accel = 0.001; let callback;
+    const obj = { [(callback = () => accel)]() {} };
+  `);
+  expect(
+    graph.relations.filter(
+      (edge) => edge.properties.assignment_operator !== undefined,
+    ),
+  ).toEqual([]);
 });

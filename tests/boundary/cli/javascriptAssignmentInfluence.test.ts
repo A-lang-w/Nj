@@ -15,6 +15,11 @@ cliTest(
       ["variable", "speed = accel; return speed;", "speed"],
       ["property", "state.speed = accel; return state.speed;", "speed"],
       ["compound", "state.speed += accel; return state.speed;", "speed"],
+      [
+        "computed-key",
+        "const obj = { [speed = accel]() {} }; return speed;",
+        "speed",
+      ],
     ] as const) {
       const directory = join(root, name);
       await mkdir(directory);

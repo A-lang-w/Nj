@@ -100,6 +100,8 @@ export interface JavaScriptSemanticCallable {
   readonly containerScopeId: string;
   readonly bodyScopeId: string | null;
   readonly location: JavaScriptSourceRange;
+  /** Evaluated by the enclosing callable, before this method is invoked. */
+  readonly computedKeyLocation: JavaScriptSourceRange | null;
   readonly returnSites: readonly JavaScriptSemanticReturnSite[];
   readonly returnCoverage: JavaScriptSemanticReturnCoverage;
 }
