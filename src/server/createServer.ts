@@ -1023,6 +1023,7 @@ const registerConfiguredAnalysisTools = (
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
+    evidenceById,
   );
   registerWasmTools(
     server,
