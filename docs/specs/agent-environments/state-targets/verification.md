@@ -71,6 +71,11 @@ write tool is lost.
   matching).
 - **Tenth round** (on main `a2235b09`): no verdict, read view, recorded read or session replay changes on the restored
   captures.
+- **Eleventh round** (on main `2968d1e9`, performance review): variant lines compare only lines that share an entity,
+  read-only decisions parse each body once and keep its digest, and the creation cut skips reads that cannot count.
+  Every census, serving-check and session-replay row equals the previous head's. On a synthetic capture of a list and
+  1,000 items read plainly and with `?expand=`, the variant pass falls from 401 ms to 2 ms and the state build from 659
+  ms to 216 ms (Node v22.23.1).
 
 Of the 40 views variant lines make state-backed, 146 of 151 recorded reads before the first write match; the other five
 (Sentry projects) are replayed, and replay returns the first of several differing recordings, as before. A paged

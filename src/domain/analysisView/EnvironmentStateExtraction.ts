@@ -157,14 +157,18 @@ export class EnvironmentStateExtraction {
 
   /** The timeline's state writes, less the calls of tools that only read. */
   #findWrites(): void {
+    // The body digests the decision keeps are dropped with it, so what they were charged is released.
+    const release = this.#budget.checkpoint();
     ({ readOnly: this.#readOnly, writes: this.#writes } = stateWritesOf(
       this.#tools,
       this.#records,
       {
-        response: (ordinal) => this.#withBody(ordinal, (body) => body),
+        withBody: (ordinal, use) => this.#withBody(ordinal, use),
         request: (ordinal) => this.#requestBody(ordinal),
+        retain: (bytes) => this.#retain(bytes),
       },
     ));
+    release();
     this.#writeWithin = writeSpanCheck(this.#writes);
   }
 
@@ -236,6 +240,7 @@ export class EnvironmentStateExtraction {
         queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
         position: (ordinal) => this.#position.get(ordinal)!,
         retain: (bytes) => this.#retain(bytes),
+        checkpoint: () => this.#budget.checkpoint(),
       });
       if (split === undefined) continue;
       this.#retain(ENTRY_BYTES * (split.dropped.size + 2));
@@ -341,7 +346,7 @@ export class EnvironmentStateExtraction {
           tools: this.#tools,
           records: this.#byOrdinal,
           position: (record) => this.#position.get(record.ordinal)!,
-          body: (ordinal) => this.#withBody(ordinal, (body) => body),
+          withBody: (ordinal, use) => this.#withBody(ordinal, use),
           retain: (bytes) => this.#retain(bytes),
         },
         first,

@@ -68,7 +68,9 @@ export class UnseenEntities {
   ): StateEntity | undefined {
     const { record, index } = read;
     const { state, lastCheck } = this.facts;
-    if (!succeeded(record)) return undefined;
+    // Only an unplanned write before the read can have made what it shows, so its target is found only then.
+    if (!succeeded(record) || !this.#unplannedAt.some((write) => write < index))
+      return undefined;
     const { collection, id } = itemTarget(state, view.type, record);
     const key = entityTarget(view.type, collection, id);
     if (this.#held.has(key) || state.entity(view.type, collection, id))

@@ -1,3 +1,4 @@
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -6,13 +7,13 @@ import {
   isParam,
   isStateWrite,
   QUERY_SEGMENTS,
-  same,
   segmentsOf,
   type StateRecordFacts,
   type StateToolFacts,
 } from "./environmentStateRules.js";
 import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
+import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** The words of a segment or operation name. */
 const words = identifierWords;
@@ -85,9 +86,32 @@ const OPERATION_PARAMETERS = ["operation", "op", "action"];
 
 /** What deciding read-only calls reads besides the tools and the timeline. */
 export interface QueryCallIo {
-  readonly response: (ordinal: number) => JsonValue | undefined;
+  /** Parse one response body and hand it to `use` while its parse is charged; unusable bodies arrive undefined. */
+  readonly withBody: <T>(
+    ordinal: number,
+    use: (body: JsonValue | undefined) => T,
+  ) => T;
   readonly request: (ordinal: number) => JsonValue | undefined;
+  readonly retain: (bytes: number) => void;
 }
+
+/** Each response body's canonical digest, taken once while its parse is charged and charged itself once kept; undefined when unusable. */
+const responseDigests = (
+  io: QueryCallIo,
+): ((ordinal: number) => string | undefined) => {
+  const digests = new Map<number, string | undefined>();
+  return (ordinal) => {
+    if (digests.has(ordinal)) return digests.get(ordinal);
+    const digest = io.withBody(ordinal, (body) =>
+      body === undefined
+        ? undefined
+        : digestCanonicalValue(body, "Environment state"),
+    );
+    io.retain(ENTRY_BYTES + textBytes(digest?.length ?? 0));
+    digests.set(ordinal, digest);
+    return digest;
+  };
+};
 
 const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
@@ -156,6 +180,7 @@ export const readOnlyTools = (
   const position = new Map(
     records.map((record, index) => [record.ordinal, index]),
   );
+  const response = responseDigests(io);
   /** The timeline indexes of the nearest state writes either side of an index, the skipped calls aside: -1 and the length when none, found in one pass each way. */
   const nearestWrites = (
     skip: ReadonlySet<number>,
@@ -196,7 +221,7 @@ export const readOnlyTools = (
     const timeline = {
       position,
       ...nearestWrites(new Set(tool.record_ordinals)),
-      io,
+      response,
     };
     if (
       repeatsRead(calls, records, timeline) ||
@@ -212,7 +237,7 @@ export const readOnlyTools = (
       ...nearestWrites(
         new Set([...candidates.values()].flat().map((call) => call.ordinal)),
       ),
-      io,
+      response,
     };
     vetoed = false;
     for (const [name, calls] of candidates)
@@ -233,7 +258,8 @@ interface Timeline {
   };
   /** Whether the record at a timeline index is another write. */
   readonly isWrite: (index: number) => boolean;
-  readonly io: QueryCallIo;
+  /** A response body's canonical digest; undefined when unusable. */
+  readonly response: (ordinal: number) => string | undefined;
 }
 
 /** Of these reads, the one that finished last before `call` began, a later one on a tie; records come in start order. */
@@ -255,15 +281,15 @@ const lastFinishedBefore = (
 const repeatsRead = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, isWrite, io }: Timeline,
+  { position, isWrite, response }: Timeline,
 ): boolean => {
   const answering = calls.filter(succeeded);
   const reads = lastReads(answering, records, position, isWrite);
   return answering.every((call) => {
     const read = reads.get(call.ordinal);
     if (read === undefined) return false;
-    const answered = io.response(call.ordinal);
-    return answered !== undefined && same(answered, io.response(read.ordinal));
+    const answered = response(call.ordinal);
+    return answered !== undefined && answered === response(read.ordinal);
   });
 };
 
@@ -405,7 +431,7 @@ const lastMeaningfulWord = (segment: string): string | undefined =>
 const changesReadsAcross = (
   calls: readonly StateRecordFacts[],
   records: readonly StateRecordFacts[],
-  { position, writes, io }: Timeline,
+  { position, writes, response }: Timeline,
 ): boolean => {
   const stretches = new Map<
     string,
@@ -425,7 +451,7 @@ const changesReadsAcross = (
     else stretch.calls.push(call);
   }
   for (const stretch of stretches.values())
-    if (changesInStretch(stretch, records, { position, io })) return true;
+    if (changesInStretch(stretch, records, { position, response })) return true;
   return false;
 };
 
@@ -438,13 +464,10 @@ const changesInStretch = (
     readonly calls: readonly StateRecordFacts[];
   },
   records: readonly StateRecordFacts[],
-  { position, io }: Pick<Timeline, "position" | "io">,
+  { position, response }: Pick<Timeline, "position" | "response">,
 ): boolean => {
-  const shown = (record: StateRecordFacts): JsonValue | symbol => {
-    if (!succeeded(record)) return ABSENT;
-    const body = io.response(record.ordinal);
-    return body === undefined ? UNKNOWN : body;
-  };
+  const shown = (record: StateRecordFacts): string | symbol =>
+    succeeded(record) ? (response(record.ordinal) ?? UNKNOWN) : ABSENT;
   const lines = new Map<string, StateRecordFacts[]>();
   for (let index = stretch.from + 1; index < stretch.to; index += 1) {
     const record = records[index]!;
@@ -462,7 +485,7 @@ const changesInStretch = (
   // A line whose reads all show one thing cannot change across any call.
   const changing = [...lines.values()].filter((reads) => {
     const first = shown(reads[0]!);
-    return reads.some((read) => !sameShown(first, shown(read)));
+    return reads.some((read) => shown(read) !== first);
   });
   return stretch.calls.some((call) => {
     const at = position.get(call.ordinal)!;
@@ -478,7 +501,7 @@ const changesInStretch = (
       const [was, now] = [shown(earlier), shown(later)];
       // Presence on one side only is a change even when a body is unusable.
       if ((was === ABSENT) !== (now === ABSENT)) return true;
-      return was !== UNKNOWN && now !== UNKNOWN && !sameShown(was, now);
+      return was !== UNKNOWN && now !== UNKNOWN && was !== now;
     });
   });
 };
@@ -486,14 +509,6 @@ const changesInStretch = (
 /** A read that found its entity gone, and one whose body is unusable. */
 const ABSENT = Symbol("absent");
 const UNKNOWN = Symbol("unknown");
-
-const sameShown = (
-  left: JsonValue | symbol,
-  right: JsonValue | symbol,
-): boolean =>
-  typeof left === "symbol" || typeof right === "symbol"
-    ? left === right
-    : same(left, right);
 
 /** The timeline's state writes, less the calls of tools whose calls only read, and those tools. */
 export const stateWritesOf = (

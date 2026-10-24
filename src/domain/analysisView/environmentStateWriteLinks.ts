@@ -113,11 +113,11 @@ const showsItem = (body: JsonValue | undefined, id: string): boolean =>
 const shownIds = (
   record: StateRecordFacts,
   item: boolean,
-  body: () => JsonValue | undefined,
+  body: JsonValue | undefined,
 ): Set<string> => {
-  if (!item) return listedIds(body());
+  if (!item) return listedIds(body);
   const id = lastSegmentValue(record.path);
-  return showsItem(body(), id) ? new Set([id]) : new Set();
+  return showsItem(body, id) ? new Set([id]) : new Set();
 };
 
 /** The shown ids a creation returned, each charged before it is kept. */
@@ -217,7 +217,10 @@ export const creationLimit = (
     readonly tools: readonly StateToolFacts[];
     readonly records: ReadonlyMap<number, StateRecordFacts>;
     readonly position: (record: StateRecordFacts) => number;
-    readonly body: (ordinal: number) => JsonValue | undefined;
+    readonly withBody: <T>(
+      ordinal: number,
+      use: (body: JsonValue | undefined) => T,
+    ) => T;
     readonly retain: (bytes: number) => void;
   },
   until: StateRecordFacts | undefined,
@@ -232,23 +235,24 @@ export const creationLimit = (
       ? [{ tool, item: read.item }]
       : [];
   });
+  // A read at or after `end` is no counted creation's read before or after it, so it is not parsed.
   const shown: ShownRead[] = readers.flatMap(({ tool, item }) =>
     tool.record_ordinals.flatMap((ordinal) => {
       const record = reads.records.get(ordinal);
-      return record === undefined || !succeeded(record)
-        ? []
-        : [
-            {
-              at: reads.position(record),
-              end: record.end,
-              item,
-              ids: keptIds(
-                shownIds(record, item, () => reads.body(ordinal)),
-                returned,
-                reads.retain,
-              ),
-            },
-          ];
+      if (record === undefined || !succeeded(record)) return [];
+      const at = reads.position(record);
+      if (at >= end) return [];
+      const ids = reads.withBody(ordinal, (body) =>
+        shownIds(record, item, body),
+      );
+      return [
+        {
+          at,
+          end: record.end,
+          item,
+          ids: keptIds(ids, returned, reads.retain),
+        },
+      ];
     }),
   );
   for (const creation of [...creations].sort(
