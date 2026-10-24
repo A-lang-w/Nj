@@ -138,3 +138,17 @@ no speedup is claimed. The largest case's median increases about 0.10 s elapsed,
 short/unobserved processes missed. CPU accounts for waited children. No resource
 stop occurred. The mapping index was already in the baseline, so these numbers
 do not isolate its speedup or qualify a 65,535-section worst case.
+
+## Main integration verification
+
+Integration `a5a1f919e896488d0651e621f334efec84e9132f` includes main
+`044c9705eadf62f7c47ddd42a0b2dc065b26b228`. The PE refinement is a type
+intersection with main's new container union; runtime PE interpretation is
+unchanged. The newly added Roman Urdu README receives the same PE imports link
+as the canonical table. The full static gate passes; documentation/license
+validation and test discovery pass after this link correction. The complete
+selected parser/mapping/image/service/filesystem/CLI/MCP/lifecycle selection
+passes **201** checks in 54.062 s (60.363 s waited-child CPU). Sets above overlap.
+Later main-integration performance was not remeasured; the cost table remains
+pinned to its recorded revisions. These tests use built-in static parsing, not
+a simulated claim of deep-engine behavior.
