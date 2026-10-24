@@ -56,8 +56,9 @@ relation rows), and six need only a better recording. This change addresses the 
   that value, so a toggle is never served. An action never takes a read another write to the entity still needs.
 - **Per-response members.** A top-level member whose value is a UUID or a clock is minted per response on a path when
   it differs on every repeat of that path's successful GET lines with no write between, and across the capture it
-  differed on at least two repeats and never stayed the same. Only views of that path, or item views whose collection
-  is that path, leave it out: item envelopes, and the write gate's item, list and document reads, compare without it.
+  differed on at least two repeats and never stayed the same. A shared view leaves it out only when every concrete
+  path it answers independently proves it minted; a collection's proof never transfers to its item paths. Item
+  envelopes and the write gate's item, list and document reads compare without these common proved members.
   The view names it in `per_response_members`, and serving keeps the recorded value.
 - **Nested counters.** An item total in a top-level object beside the list is a counter on the same evidence as a
   top-level one, rendered from the state through its pointer. A top-level member whose name starts with `/` is named by

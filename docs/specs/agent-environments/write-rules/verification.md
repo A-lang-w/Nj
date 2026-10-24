@@ -77,3 +77,63 @@ Agent tokens were not measured; the views' results grow by 0.3%.
   targets came from unserved writes, so serving them answered their own recorded calls wrongly.
 - Completing a created entity from a later read: it served Bookstack's page create wrongly.
 - Soft deletes, appended relation rows, rendered markup, reverse embeds, identity aliases and resource names.
+
+## Linux integration and review corrections, 2026-10-24
+
+The following is separate from the historical 50-capture measurements above.
+Node 24.22.1, baseline `3ce311757`, reviewed implementation `352c0278d`:
+
+- 1,236 selected source tests passed. Typecheck, built lint/module boundaries,
+  format, knip, metadata, architecture guards and documentation checks passed.
+- Seven review regression checks failed before correction and passed after it.
+  Earlier structured update values now retain canonical equality digests within
+  the history budget. A shared envelope masks only members independently proved
+  minted on every concrete path. Empty advertised literals are widened while
+  execution enforces their values, and pinned queries are optional so their
+  execution defaults can run. Numeric and string bulk id arrays stay distinct.
+- Nineteen compiled SDK/schema checks passed, including real HTTP MCP discovery,
+  empty fixed values, omitted empty and nonempty queries, and unchanged state
+  after refused writes. Live Gemini API execution was not performed.
+- Four public datasets were downloaded at immutable Hugging Face revisions:
+  NocoDB `d0f7e040`, Ghost `6d5b2d1c`, Metabase `fa2aa0fd`, and Mailpit
+  `416b29be`, under `earakely-scale/*Env-REA`. Capture hashes, full calls,
+  independent recorded JSON comparisons, runtime identities and resource
+  receipts were retained locally. These were recorded real applications;
+  the original applications were not re-recorded in this verification.
+
+| Capture  | Eligible write tools before / after | Initial reads matching | Session reads matching |
+| -------- | ----------------------------------- | ---------------------- | ---------------------- |
+| NocoDB   | 0 / 3                               | 20 / 20                | 80 / 92                |
+| Ghost    | 1 / 1                               | 19 / 20                | 72 / 88                |
+| Metabase | 1 / 2                               | 19 / 22                | 99 / 122               |
+| Mailpit  | 0 / 1                               | 51 / 52                | 51 / 56                |
+
+Every previously matching read remains matching, record by record. Real CLI
+listeners and the MCP SDK reproduce the shared application's outcomes. The
+feature session applies six NocoDB mutations, one Ghost deletion and one
+Metabase update; the baseline applies only the Ghost deletion. A `state`
+answer with view `missing` is not counted as an applied write. Mailpit exchange
+65 is refused because its target was introduced only by an unserved create.
+Eligibility does not establish that every recorded write can run on the initial
+state, and the remaining read mismatches are preserved coverage gaps.
+
+Three alternating fresh producer sweeps over all four captures had median
+wall/CPU/cgroup peak of 5.360 s / 4.263 s / 327.3 MiB before and
+4.960 s / 4.357 s / 323.1 MiB after. Ranges overlap. One complete SDK session
+per app/revision, 403 versus 413 calls, took 20.905 s / 19.039 s / 508.7 MiB
+before and 23.426 s / 19.396 s / 462.8 MiB after; these are single observations
+with different write coverage, not a speed or memory improvement claim.
+
+Catalog estimates (`cl100k_base`) were 8,630 / 9,408 tokens for NocoDB,
+11,355 / 11,355 for Ghost, 12,162 / 12,648 for Metabase and 2,955 / 3,138
+for Mailpit. Arguments, instructions and text replies were also counted in
+retained receipts; actual model usage, prompts and client rendering were not
+measured. No token saving is claimed.
+
+Processes were fresh, OS caches warm or uncontrolled, on a shared Linux host.
+Each task used one CPU, a 3 GiB early stop / 4 GiB hard limit and zero swap.
+All eight recorded-data task groups exited zero, verified payload cleanup,
+and observed no OOM or limit events. Payload-exit counters were verified;
+final whole-scope counters were unavailable. Downloads, builds and runtime
+identity preparation are excluded from task measurements. The current
+four-capture verification does not requalify the earlier 50-capture totals.
