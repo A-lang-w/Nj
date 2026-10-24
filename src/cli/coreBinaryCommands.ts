@@ -2,7 +2,12 @@ import { z } from "incur";
 import { realpath, stat } from "node:fs/promises";
 import { findAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 
-import { resolveCliAnalysisSelector } from "./analysisSelector.js";
+import {
+  addressOrProcedureGuidance,
+  equalSelectorGuidance,
+  requiredSelectorGuidance,
+  resolveCliAnalysisSelector,
+} from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -13,12 +18,33 @@ import {
   snapshotSelectionOption,
 } from "./options.js";
 import type { CliInstance } from "./types.js";
-import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import {
+  cliJavaScriptSourcePaths,
+  runCliJavaScriptApplicationAnalysis,
+} from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import {
+  analysisEvidenceDeliveryOptions,
+  cliEvidenceDeliveryInputError,
+  publishCliAnalysisEvidence,
+} from "./analysisEvidenceDelivery.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
+
+const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
+const namedAddressGuidance = requiredSelectorGuidance(
+  "the positional address or --address",
+);
+const querySelectorGuidance = requiredSelectorGuidance(
+  "the positional query or --query",
+);
+const patternSelectorGuidance = requiredSelectorGuidance(
+  "the positional pattern or --pattern",
+);
 
 /** Register provider-neutral binary overview and procedure CLI commands. */
 export const registerCoreBinaryCommands = (
@@ -68,14 +94,14 @@ const registerOverviewCommands = (
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
-      path: z
-        .string()
-        .min(1)
-        .describe("App, program, or analysis database path"),
+      path: localPathStringSchema.describe(
+        "App, program, or analysis database path",
+      ),
     }),
     options: overviewOptions.extend({
       integrityPolicy: laneIntegrityPolicy,
       sourcePath: javascriptApplicationOptions.shape.sourcePath,
+      sourcePathsJson: javascriptApplicationOptions.shape.sourcePathsJson,
     }),
     run: async ({ args, options }) => {
       // Route JavaScript targets exactly like analyze-javascript-application,
@@ -83,23 +109,32 @@ const registerOverviewCommands = (
       // code is not replaced by the logged failure status.
       if (await routesToJavaScriptAnalysis(args.path, options))
         return withCommandCancellation((signal) =>
-          logCliCommand(logger, "analyze", () =>
-            runCliJavaScriptApplicationAnalysis(
+          logCliCommand(logger, "analyze", async () => {
+            const sourcePaths = await cliJavaScriptSourcePaths(
+              options.sourcePath,
+              options.sourcePathsJson,
+              signal,
+            );
+            if (!sourcePaths.ok) return sourcePaths.error;
+            return runCliJavaScriptApplicationAnalysis(
               {
                 input_path: absoluteCallerPath(args.path),
                 integrity_policy:
                   options.integrityPolicy ?? defaultIntegrityPolicy,
-                ...(options.sourcePath === undefined
+                ...(sourcePaths.value === undefined
                   ? {}
-                  : { source_paths: options.sourcePath }),
+                  : { source_paths: sourcePaths.value }),
               },
               environment,
               signal,
-            ),
-          ),
+            );
+          }),
         );
       return logCliCommand(logger, "analyze", () => {
-        if (options.sourcePath !== undefined)
+        if (
+          options.sourcePath !== undefined ||
+          options.sourcePathsJson !== undefined
+        )
           throw new AnalysisInputError(
             "analyze_javascript_application",
             undefined,
@@ -158,15 +193,14 @@ const registerDecompileCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decompile, {
-    description:
-      "Read one part of an app as code; requires a positional selector, --procedure, or --file-offset",
+    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail.`,
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
         .string()
         .min(1)
         .optional()
-        .describe("Procedure name or address"),
+        .describe(`Procedure name or address. ${decompileSelectorGuidance}`),
     }),
     options: z.object({
       procedure: z
@@ -174,14 +208,14 @@ const registerDecompileCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
+          `Procedure name or address; use --procedure=<value> for leading dashes. ${decompileSelectorGuidance}`,
         ),
       "file-offset": z
         .string()
         .regex(/^0x[0-9a-fA-F]+$/u)
         .optional()
         .describe(
-          "Ghidra source-file byte offset; mapped internally to an analysis address",
+          `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -252,11 +286,14 @@ const registerXrefsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.xrefs, {
-    description:
-      "List bounded references to an analyzed address; requires a positional selector or --address",
+    description: `List bounded references to an analyzed address. ${namedAddressGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: z.string().describe("App or program path"),
-      address: z.string().min(1).optional().describe("Address or symbol name"),
+      address: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(`Address or symbol name. ${namedAddressGuidance}`),
     }),
     options: z.object({
       address: z
@@ -264,7 +301,7 @@ const registerXrefsCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector; use --address=<value> for leading dashes",
+          `Address or symbol name; use --address=<value> for leading dashes. ${namedAddressGuidance}`,
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -294,11 +331,14 @@ const registerTraceCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.trace, {
-    description:
-      "Trace a literal feature through analyzed references; requires a positional selector or --query",
+    description: `Trace a literal feature through analyzed references. ${querySelectorGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: z.string().describe("App or program path"),
-      query: z.string().min(1).optional().describe("Literal feature query"),
+      query: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(`Literal feature query. ${querySelectorGuidance}`),
     }),
     options: z.object({
       query: z
@@ -306,7 +346,7 @@ const registerTraceCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector; use --query=<value> for leading dashes",
+          `Complete literal feature query; use --query=<value> for leading dashes. ${querySelectorGuidance}`,
         ),
       caseSensitive: z
         .boolean()
@@ -341,15 +381,14 @@ const registerFunctionCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.function, {
-    description:
-      "Analyze one complete function with evidence; requires a positional selector or --procedure",
+    description: `Analyze one complete function with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
         .string()
         .min(1)
         .optional()
-        .describe("Procedure name or address"),
+        .describe(`Procedure name or address. ${addressOrProcedureGuidance}`),
     }),
     options: z.object({
       procedure: z
@@ -357,26 +396,40 @@ const registerFunctionCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
+          `Procedure name or address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
         ),
       snapshot: snapshotSelectionOption,
+      ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "function", () =>
-        runDirectAnalysis(
-          args.path,
-          "analyze_function",
-          {
-            procedure: resolveCliAnalysisSelector(
-              args.address,
-              options.procedure,
-              "procedure",
-              "analyze_function",
-            ),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "function", async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "analyze_function",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          // Fail before analysis when summary delivery lacks its Evidence bundle sink.
+          const inputError = cliEvidenceDeliveryInputError(delivery);
+          if (inputError !== undefined) return projectAnalysisError(inputError);
+          const complete = await runDirectAnalysis(
+            args.path,
+            "analyze_function",
+            {
+              procedure: resolveCliAnalysisSelector(
+                args.address,
+                options.procedure,
+                "procedure",
+                "analyze_function",
+              ),
+            },
+            { ...directAnalysisOptionsFromCli(logger, options), signal },
+          );
+          return publishCliAnalysisEvidence(complete, delivery);
+        }),
       ),
   });
 };
@@ -387,15 +440,14 @@ const registerInstructionsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.instructions, {
-    description:
-      "Read every raw instruction without decompiling; requires a positional selector or --procedure",
+    description: `Read every raw instruction without decompiling. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: z.string().describe("App or program path"),
       address: z
         .string()
         .min(1)
         .optional()
-        .describe("Procedure name or address"),
+        .describe(`Procedure name or address. ${addressOrProcedureGuidance}`),
     }),
     options: z.object({
       procedure: z
@@ -403,7 +455,7 @@ const registerInstructionsCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector (decompile also accepts --file-offset); use --procedure=<value> for leading dashes",
+          `Procedure name or address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
         ),
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
@@ -433,15 +485,14 @@ const registerSearchCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.search, {
-    description:
-      "Search every analyzed string or procedure name; requires a positional selector or --pattern",
+    description: `Search every analyzed string or procedure name. ${patternSelectorGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: z.string().describe("App or program path"),
       pattern: z
         .string()
         .min(1)
         .optional()
-        .describe("Literal text or regex pattern"),
+        .describe(`Literal text or regex pattern. ${patternSelectorGuidance}`),
     }),
     options: z.object({
       pattern: z
@@ -449,7 +500,7 @@ const registerSearchCommand = (
         .min(1)
         .optional()
         .describe(
-          "Required selector: supply this option or the positional selector; use --pattern=<value> for leading dashes",
+          `Complete literal text or regex pattern; use --pattern=<value> for leading dashes. ${patternSelectorGuidance}`,
         ),
       kind: z
         .enum(["strings", "procedures"])

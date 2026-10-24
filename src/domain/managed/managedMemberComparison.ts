@@ -11,7 +11,7 @@ import {
 import {
   buildComparisonCoverage,
   hasCompleteMethodRows,
-  selectedDeclaringTypes,
+  managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -259,7 +259,8 @@ export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
   right: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult => {
-  const { methodMatches, fieldMatches } = keyMembers(left, right);
+  const scope = managedComparisonScope(left.result, right.result);
+  const { methodMatches, fieldMatches } = keyMembers(left, right, scope);
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
@@ -271,8 +272,7 @@ export const compareManagedMembers = (
     rightMethodsComplete:
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
-    leftSelection: selectedDeclaringTypes(left.result),
-    rightSelection: selectedDeclaringTypes(right.result),
+    scope,
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
@@ -288,11 +288,17 @@ export const compareManagedMembers = (
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
+  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
+    selectionAgreement,
   });
-  const limitations = comparisonLimitations(left.result, right.result);
+  const limitations = comparisonLimitations(
+    left.result,
+    right.result,
+    selectionAgreement,
+  );
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

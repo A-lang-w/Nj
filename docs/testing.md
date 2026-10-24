@@ -144,8 +144,11 @@ without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
 tests avoid process-global state and keep resource cleanup test-scoped. Each
 MCP session still owns its resources, and CLI cases retain fresh command
-instances or subprocesses. CLI and MCP module mocks belong in `tests/process-global/`
-so they keep per-file isolation. Product catalog verification stays with the
+instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
+isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.
+When a path must stay, assign it explicitly in `scripts/lib/test-projects.mjs`,
+exclude it from its shared owner, and preserve its source/built group.
+Product catalog verification stays with the
 isolated filesystem boundary tests because it loads both source and compiled
 module graphs. Adapter, other boundary, acceptance, and process-global projects
 retain per-file isolation. See `vitest.config.ts` for current settings.
@@ -156,20 +159,25 @@ with the consumer preloaded as well as alone. For simulated protocol traces,
 use an acknowledged event barrier before asserting complete observations;
 a zero-duration capture does not guarantee queued events have arrived.
 
+Focused contract tests should import the named contract family they exercise;
+reserve the full tool catalog for catalog-wide assertions. Resolve contracts by
+operation name rather than array position.
+
 Check advertised schemas after SDK conversion for every supported schema
 profile. Meta-schema validity does not establish client acceptance or useful
 rendered declarations. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
-The reused CLI boundary workers cap V8 old space at 384 MiB for ordinary runs
-and 512 MiB with coverage enabled. Covered ADB fixtures exhaust the ordinary
-384 MiB budget; those fixtures also complete with the shared CLI graph preloaded
-at 512 MiB. This is a measured capacity control, not a suite-wide speedup claim.
-Both profiles keep the
-same bounded worker count, and spawned REA processes retain their own heap
-settings. Explicitly disabling coverage retains the ordinary profile; coverage
-provider options alone do not enable instrumentation.
+The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
+coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
+files loaded the shared source/contract graph, while later command registration
+and schema/help rendering still needed transient allocation space. This is a
+measured capacity control, not a suite-wide speedup claim. The worker count
+remains bounded at two, and spawned REA processes retain their own heap settings.
+Coverage enablement still controls instrumentation, test deadlines and coverage
+thresholds; explicitly disabling it or selecting only a provider does not enable
+instrumentation.
 
 Vitest worker limits do not bound subprocesses launched within a test. Bound
 those batches separately so repeated CLI validation cannot oversubscribe the
@@ -226,13 +234,16 @@ the next command starts.
 IL2CPP metadata, and dylib-resolution commands use that session. File teardown
 stops the shared CLI process, including startup still in flight, and does not
 open another after close.
-`exportedFunctionBindingsCli.test.ts` keeps its own compiled CLI parity
-process for the file and still compares that process's JSON command results
-with the MCP session. A command that does not respond is rejected. That
-process stays owned until it exits, and another process does not start while
-it remains. A process that stays running after SIGKILL remains owned so a
-later close can retry. Closing the session reports a failure when the process
-does not exit after stdin closes, once the child has been stopped.
+`exportedFunctionBindingsCli.test.ts` uses the shared compiled CLI session for
+its file and compares its JSON command results with the MCP session. It selects
+20-second startup and command deadlines; other callers retain their existing
+deadline behavior. Retired processes stay owned until exit, block replacement,
+and remain available for a later close to retry after failed termination.
+Shared session cleanup closes stdin so the worker can release JavaScript
+resources, waits the bounded grace, then escalates to SIGTERM and SIGKILL only
+if needed. Confirmed exit succeeds; an unconfirmed exit reports cleanup failure.
+When startup or a command fails and cleanup also fails, the reported aggregate
+retains both failures and the original failure as its cause.
 `applicationWorkflowCli.test.ts` keeps one compiled CLI process for its JSON
 commands, including a non-zero status whose stdout is still a JSON document,
 and closes that process after the file.
@@ -538,12 +549,16 @@ uses the same ownership rule to find retained fixtures under a private temporary
 root. Third-party caches remain outside that ownership rule.
 
 Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
-explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
-checks deterministic rerun, tamper, and stale-input handling; those checks do
-not execute extracted JavaScript modules. When application runtime behavior is
-needed, exercise the actual target through browser, Electron, or process
-capture. Real model trials are manual; Vitest covers deterministic evaluator
-logic.
+explicit `npm run verify:*` lanes. The reconstruction-readiness lane separates
+observed native CLI inspection and JavaScript/Electron static CLI/MCP analysis
+from synthetic report-evaluator conformance. Its determinism, tamper, and
+stale-source checks concern the synthetic evaluator; they do not execute fixture
+applications or verify runtime authority, cleanup, comparison, or reconstruction
+closure. The evaluator and its semantic tests belong to
+`tests/conformance/readiness/report/`, outside the shipped runtime. When
+application runtime behavior is needed, exercise the actual target through
+browser, Electron, or process capture. Real model trials are manual; Vitest
+covers deterministic evaluator logic.
 
 `verify:managed` runs the portable PE byte-fixture conformance entrypoint under
 `scripts/verify/managed/`, with its byte builder under
@@ -1687,6 +1702,15 @@ engine behavior remains unverified; process fixtures do not establish it.
 See [Packet capture analysis](pcap-analysis.md) for contracts and budgets.
 
 ## Apple native metadata and UI
+
+`tests/boundary/mcp/nativeDispatchBoundTarget.test.ts` uses the production
+stdio MCP server on macOS to bind an inert, self-authored Mach-O, then replace
+its path with missing, directory and symlink-loop states. Each refusal must
+report `artifact_changed`; restoring the same bytes must succeed in the same
+session. A separate non-root case checks real read permission denial as
+`access_denied`. These tests read the target without executing it. Controlled
+provider tests retain the physical acquisition failure through descriptor close
+denial and confirm cleanup retry releases the original owner.
 
 `npm run verify:apple-dispatch` compiles the Objective-C fixture (classes,
 protocols, a property and an `NSString` category) and the Swift
