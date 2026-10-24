@@ -2,6 +2,7 @@ import { crc32 } from "node:zlib";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   startFakeCdpBrowser,
   type FakeOptions,
@@ -39,6 +40,25 @@ const withCssViewport = (metrics: Readonly<Record<string, unknown>>) => ({
 });
 
 describe("screenshot authorization during metrics reads", () => {
+  it("explains current-document origin refusal without suggesting host installation repair", async () => {
+    const { browser, result } = await captureWithFake({
+      attachedFrameUrl: "https://outside.example.test/",
+    });
+    if (result.ok) throw new Error("Expected a scope refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringContaining(
+        "outside the permitted HTTP(S) origin scope",
+      ),
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: { reason: "target_not_allowed" },
+    });
+    expect(
+      browser.commands.some(
+        ({ method }) => method === "Page.captureScreenshot",
+      ),
+    ).toBe(false);
+  });
   it.each([
     { stage: 1, expectedCaptures: 0 },
     { stage: 2, expectedCaptures: 1 },
@@ -553,6 +573,42 @@ describe("screenshot viewport protocol validation", () => {
 });
 
 describe("screenshot committed document identity", () => {
+  it.each(["requested-only", "same-url-history"])(
+    "accepts unchanged identity after %s",
+    async (kind) => {
+      const browser = await startFakeCdpBrowser({
+        commandEvents: ({ method, sessionId }, origin) =>
+          method !== "Page.captureScreenshot"
+            ? undefined
+            : [
+                {
+                  method:
+                    kind === "requested-only"
+                      ? "Page.frameRequestedNavigation"
+                      : "Page.navigatedWithinDocument",
+                  ...(sessionId === undefined ? {} : { sessionId }),
+                  params: {
+                    frameId: "frame-main",
+                    url: `${origin}${kind === "requested-only" ? "/pending" : "/app?token=frame-secret"}`,
+                    reason: "scriptInitiated",
+                    disposition: "currentTab",
+                    navigationType: "historyApi",
+                  },
+                },
+              ],
+      });
+      onTestFinished(async () => browser.close());
+      const result = await new CdpBrowserProvider().captureScreenshot(
+        captureWebScreenshotInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+        }),
+      );
+      expect(result.ok).toBe(true);
+    },
+  );
+
   it.each([
     ["missing screenshot data", {}],
     ["invalid base64 screenshot data", { data: "not base64%%%" }],
@@ -577,6 +633,7 @@ describe("screenshot committed document identity", () => {
       "base64",
     );
     bytes.writeUInt32BE(value, offset);
+    bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
     const { result } = await captureWithFake({
       commandResult: ({ method }) =>
         method === "Page.captureScreenshot"
@@ -791,6 +848,117 @@ describe("screenshot navigation event applicability", () => {
           : undefined,
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+it.each(
+  [7, "missing-hash"].flatMap((fragment) =>
+    ["initial", "event", "final"].flatMap((phase) =>
+      ["allowed", "foreign", "missing"].map((scope) => ({
+        fragment,
+        phase,
+        scope,
+      })),
+    ),
+  ),
+)(
+  "keeps malformed screenshot fragments distinct from scope exits: $phase/$scope/$fragment",
+  async ({ fragment, phase, scope }) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin, reads) =>
+        method === "Page.getFrameTree" &&
+        (phase === "initial" || (phase === "final" && reads > 1))
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  ...(scope === "missing"
+                    ? {}
+                    : {
+                        url:
+                          scope === "foreign"
+                            ? "https://foreign.test/"
+                            : `${origin}/app?token=frame-secret`,
+                      }),
+                  urlFragment: fragment,
+                },
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }, origin) =>
+        phase === "event" && method === "Page.captureScreenshot"
+          ? [
+              {
+                method: "Page.frameNavigated",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-main",
+                    ...(scope === "missing"
+                      ? {}
+                      : {
+                          url:
+                            scope === "foreign"
+                              ? "https://foreign.test/"
+                              : `${origin}/app?token=frame-secret`,
+                        }),
+                    urlFragment: fragment,
+                  },
+                },
+              },
+            ]
+          : undefined,
+    });
+    onTestFinished(async () => browser.close());
+    const result = await new CdpBrowserProvider().captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: scope === "foreign" ? "target_not_allowed" : "protocol_error",
+      },
+    });
+  },
+);
+
+it("retains a foreign base scope even when its fragment is malformed", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandEvents: ({ method, sessionId }) =>
+      method === "Page.captureScreenshot"
+        ? [
+            {
+              method: "Page.frameNavigated",
+              ...(sessionId === undefined ? {} : { sessionId }),
+              params: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "foreign",
+                  url: "https://foreign.test/",
+                  urlFragment: 7,
+                },
+              },
+            },
+          ]
+        : undefined,
+  });
+  onTestFinished(async () => browser.close());
+  const result = await new CdpBrowserProvider().captureScreenshot(
+    captureWebScreenshotInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+    }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { reason: "target_not_allowed" },
   });
 });
 

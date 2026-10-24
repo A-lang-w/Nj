@@ -1,3 +1,4 @@
+import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -279,6 +280,7 @@ const installSessionToolAvailability = (
   // Each provider owns its verified host; discovery and execution share it.
   const verifiedHost = {
     packetCapture: tsharkHostSupported(platform),
+    pcapCapture: pcapCaptureHostSupported(platform),
     signalRecording: sigrokHostSupported(platform),
     evmInterface: evmHostSupported(platform, arch),
     pwntools: pwntoolsHostSupported(platform, arch),
@@ -294,6 +296,10 @@ const installSessionToolAvailability = (
   const basePolicy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     hostUnsupported: {
+      pcapCapture: outsideVerifiedHost(
+        options.pcapAnalysis,
+        verifiedHost.pcapCapture,
+      ),
       packetCapture: outsideVerifiedHost(
         options.packetCapture,
         verifiedHost.packetCapture,
@@ -899,7 +905,7 @@ const registerConfiguredAnalysisTools = (
 ): void => {
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(android),
+    new AndroidAnalysisService(android, recordEvidence),
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -941,6 +947,7 @@ const registerConfiguredAnalysisTools = (
     nativeExports,
     toolLogger,
     recordEvidence,
+    evidenceById,
     withAdmittedAnalysis,
   );
   registerElfNotesTool(

@@ -4,7 +4,7 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
-  fileMappingLookup,
+  createFileMappingIndex,
 } from "../metadata/BinaryContainer.js";
 import { readPeImage } from "../metadata/PeImage.js";
 import {
@@ -146,14 +146,14 @@ export const parsePeImports = async (
   const bits = image.bits;
   const base = image.image_base ?? 0n;
   const reader = new BinaryReader(bytes, true);
-  const lookup = fileMappingLookup(
+  const lookup = createFileMappingIndex(
     image.pe_header_mapping === undefined
       ? image.mappings
       : [image.pe_header_mapping, ...image.mappings],
     image.zero_fills,
   );
   const map = (rva: number, size: number): number =>
-    lookup(base + BigInt(rva), size);
+    lookup.offset(base + BigInt(rva), size);
   const format = bits === 64 ? ("pe32-plus" as const) : ("pe32" as const);
   const result = {
     artifact,
@@ -175,17 +175,17 @@ export const parsePeImports = async (
   };
 
   const cString = (rva: number): string => {
-    const start = map(rva, 1);
-    const end = bytes
-      .subarray(start, start + MAXIMUM_NAME_BYTES + 1)
-      .indexOf(0);
-    if (end <= 0)
+    const raw = lookup.readCString(
+      bytes,
+      base + BigInt(rva),
+      MAXIMUM_NAME_BYTES,
+    );
+    if (raw.length === 0)
       throw new BinaryFormatFailure(
         "malformed",
-        `Import name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+        `Import name at RVA ${hex(rva)} is empty`,
       );
-    map(rva, end + 1);
-    return bytes.toString("latin1", start, start + end);
+    return raw.toString("latin1");
   };
 
   const readName = (rva: number, label: string): string | null => {

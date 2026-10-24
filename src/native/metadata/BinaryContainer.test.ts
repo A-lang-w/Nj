@@ -1,8 +1,11 @@
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
-  fileMappingLookup,
+  BinaryMappingFailure,
+  createFileMappingIndex,
   mappedFileOffset,
+  readMappedCString,
+  type BinaryContainer,
   type FileMapping,
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
@@ -11,10 +14,8 @@ const outcome = (translate: () => number): number | string => {
   try {
     return translate();
   } catch (cause) {
-    // Both scans refuse the same spans; when a span is both an ambiguous file
-    // alias and zero-fill overlap, they may name either ambiguity first.
-    if (cause instanceof BinaryFormatFailure)
-      return /ambiguous/u.test(cause.message) ? "ambiguous" : cause.message;
+    if (cause instanceof BinaryMappingFailure) return cause.reason;
+    if (cause instanceof BinaryFormatFailure) return cause.message;
     throw cause;
   }
 };
@@ -53,7 +54,7 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
         size: BigInt(next(16)),
       }),
     );
-    const lookup = fileMappingLookup(mappings, zeroFills);
+    const lookup = createFileMappingIndex(mappings, zeroFills).offset;
     const indexed: (number | string)[] = [];
     const scanned: (number | string)[] = [];
     for (let address = 0xff8n; address < 0x10a8n; address++) {
@@ -68,27 +69,106 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
     for (const value of scanned)
       seen.add(typeof value === "number" ? "translated" : value);
   }
-  expect([...seen].sort()).toEqual([
-    "Virtual address or string range is not file mapped",
-    "ambiguous",
-    "translated",
-  ]);
+  expect([...seen].sort()).toEqual(["ambiguous", "translated", "unmapped"]);
 });
 
-it("rejects spans that only adjacent mappings cover together", () => {
-  const lookup = fileMappingLookup([
+it("maps adjacent ranges sharing one file translation", () => {
+  const lookup = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x10 },
     { address: 0x1010n, offset: 0x410, size: 0x10 },
-  ]);
+  ]).offset;
   expect(lookup(0x1008n, 8)).toBe(0x408);
-  expect(() => lookup(0x100cn, 8)).toThrow(/not file mapped/u);
+  expect(lookup(0x100cn, 8)).toBe(0x40c);
 });
 
 it("rejects partially overlapping mappings with different file translations", () => {
-  const lookup = fileMappingLookup([
+  const lookup = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x20 },
     { address: 0x1018n, offset: 0x900, size: 0x10 },
-  ]);
+  ]).offset;
   expect(lookup(0x1000n, 0x10)).toBe(0x400);
-  expect(() => lookup(0x1010n, 0x10)).toThrow(/ambiguous file mappings/u);
+  expect(() => lookup(0x1010n, 0x10)).toThrow(/ambiguous/u);
 });
+
+const mappings = [
+  { address: 100n, offset: 0, size: 4 },
+  { address: 104n, offset: 4, size: 4 },
+];
+it("maps a span crossing adjacent ranges with one consistent file translation", () => {
+  expect(mappedFileOffset(mappings, 102n, 4)).toBe(2);
+  expect(mappedFileOffset(mappings, 108n, 0)).toBe(8);
+});
+it.each(
+  [
+    [{ address: 105n, offset: 5, size: 3 }],
+    [{ address: 104n, offset: 7, size: 4 }],
+    [...mappings, { address: 103n, offset: 7, size: 2 }],
+  ].map((ranges) => [ranges] as const),
+)(
+  "refuses gaps or inconsistent translations across the selected span",
+  (ranges) => {
+    expect(() =>
+      mappedFileOffset([mappings[0]!, ...ranges], 102n, 4),
+    ).toThrow();
+  },
+);
+it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
+  expect(() =>
+    mappedFileOffset(mappings, 102n, 4, [{ address: 104n, size: 1n }]),
+  ).toThrow(/zero-fill/);
+});
+it.each(["scan", "index"] as const)(
+  "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
+  (mode) => {
+    const image: BinaryContainer = {
+      format: "pe",
+      architecture: "amd64",
+      bits: 64,
+      byte_order: "little",
+      pe_header_mapping: mappings[0]!,
+      mappings: [{ address: 104n, offset: 8, size: 4 }],
+      zero_fills: [{ address: 106n, size: 2n }],
+      sections: [],
+    };
+    const bytes = Buffer.from("ABCDxxxxE\0xx");
+    const result =
+      mode === "scan"
+        ? readMappedCString(bytes, image, 102n, 8)
+        : createFileMappingIndex(
+            [mappings[0]!, ...image.mappings],
+            image.zero_fills,
+          ).readCString(bytes, 102n, 8);
+    expect(result.toString()).toBe("CDE");
+    expect(() =>
+      mappedFileOffset([...mappings.slice(0, 1), ...image.mappings], 102n, 4),
+    ).toThrow(/ambiguous/);
+  },
+);
+
+it.each([0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+  "preserves zero-span and invalid-size semantics for %s",
+  (size) => {
+    const index = createFileMappingIndex(mappings);
+    expect(outcome(() => index.offset(104n, size))).toEqual(
+      outcome(() => mappedFileOffset(mappings, 104n, size)),
+    );
+  },
+);
+
+it.each([false, true])(
+  "keeps conflict classification before gap and zero-fill checks (%s)",
+  (conflicting) => {
+    const ranges = [
+      { address: 100n, offset: 0, size: 2 },
+      { address: 104n, offset: conflicting ? 8 : 4, size: 2 },
+    ];
+    const zeroFills = [{ address: 102n, size: 1n }];
+    const index = createFileMappingIndex(ranges, zeroFills);
+    expect(outcome(() => index.offset(101n, 4))).toBe(
+      conflicting ? "ambiguous" : "unmapped",
+    );
+    expect(outcome(() => index.offset(101n, 4))).toEqual(
+      outcome(() => mappedFileOffset(ranges, 101n, 4, zeroFills)),
+    );
+  },
+);
