@@ -212,7 +212,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     containingProcedureResolutionSchema,
   ),
   search_procedures: analysisDetailOutputSchemaOf(
-    z.array(z.object({ address: z.string(), value: z.string() })),
+    nativeInventoryRowsSchemas.names,
     nativeInventorySummaryViewResultSchema.extend({
       parent_operation: z.literal("search_procedures"),
     }),
