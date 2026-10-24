@@ -227,14 +227,19 @@ const secretNeedles = (
 
 /** Resolved secret values kept only for one in-memory scenario session. */
 export class BrowserScenarioSecrets {
-  private readonly urlPatterns: readonly SecretPattern[];
-  private readonly textPatterns: readonly SecretPattern[];
-  private readonly urlReplacements: readonly SecretReplacement[];
-  private readonly textReplacements: readonly SecretReplacement[];
-  private readonly textNeedles: readonly SecretNeedle[];
-  private readonly redactionCostPerCharacter: number;
+  private urlPatterns: readonly SecretPattern[] = [];
+  private textPatterns: readonly SecretPattern[] = [];
+  private urlReplacements: readonly SecretReplacement[] = [];
+  private textReplacements: readonly SecretReplacement[] = [];
+  private textNeedles: readonly SecretNeedle[] = [];
+  private redactionCostPerCharacter = 8;
 
-  private constructor(private readonly values: ReadonlyMap<string, string>) {
+  private constructor(private readonly values: Map<string, string>) {
+    this.compile();
+  }
+
+  private compile(): void {
+    const values = this.values;
     this.urlPatterns = declaredPatterns(values, "url");
     this.textPatterns = declaredPatterns(values, "text");
     this.urlReplacements = secretReplacements(values, "url");
@@ -253,6 +258,18 @@ export class BrowserScenarioSecrets {
               128) /
               replacement.text.length,
         );
+  }
+
+  /**
+   * Redact a value a request step read from the page, such as a CSRF cookie
+   * or a stored bearer token, from everything recorded after it, as a
+   * declared secret is. The label names it in redaction markers.
+   */
+  admitPageValue(label: string, value: string): void {
+    const id = `page:${label}`;
+    if (value === "" || this.values.get(id) === value) return;
+    this.values.set(id, value);
+    this.compile();
   }
 
   static resolve(
