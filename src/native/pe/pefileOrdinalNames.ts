@@ -1,4 +1,6 @@
 /**
+ * Derived from pefile (c) 2004-2024 Ero Carrera, MIT.
+ * Retain licenses/pefile-2024.8.26-LICENSE.txt when redistributing these tables.
  * Ordinal-to-name tables pefile 2024.8.26 consults in `ordlookup.ords` for
  * its import hash. Ordinals missing here hash as `ord<decimal>`, matching
  * `ordlookup.formatOrdString`. Regenerate from pefile when it changes.

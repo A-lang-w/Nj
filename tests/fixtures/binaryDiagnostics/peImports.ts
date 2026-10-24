@@ -173,3 +173,74 @@ export const peImportImage = (
 /** PE image whose optional header admits no import data directory. */
 export const peWithoutImportTableFixture = (bits: 32 | 64 = 64): Buffer =>
   peImportImage({ bits, importDirectory: false, delayDlls: [] });
+
+/** Later import section behind an empty or suspicious first section header. */
+export const peImportLeadingSectionImage = (suspicious: boolean): Buffer => {
+  const bytes = peImportImage();
+  const section = 152 + 240;
+  bytes.copy(bytes, section + 40, section, section + 40);
+  bytes.fill(0, section, section + 40);
+  bytes.writeUInt16LE(2, 134);
+  if (suspicious) {
+    bytes.writeUInt32LE(0x20000000, section + 8);
+    bytes.writeUInt32LE(0x20000000, section + 12);
+    bytes.writeUInt32LE(0xfffffe00, section + 20);
+  }
+  return bytes;
+};
+
+/** Independent PE32+ mappings with imports in the last section, for capacity checks. */
+export const peImportManySectionsImage = (
+  sectionCount: number,
+  functionCount: number,
+): Buffer => {
+  const rawSize = 0x20000;
+  const original = peImportImage({
+    sectionBytes: rawSize,
+    dlls: [
+      {
+        name: "KERNEL32.dll",
+        functions: Array.from({ length: functionCount }, (_, i) => ({
+          name: `Function${String(i).padStart(4, "0")}`,
+        })),
+      },
+    ],
+  });
+  const optional = 152;
+  const sectionStart = optional + 240;
+  const headerBytes = Math.ceil((sectionStart + sectionCount * 40) / 512) * 512;
+  const finalRaw = headerBytes + (sectionCount - 1) * 512;
+  const firstRva = Math.ceil(headerBytes / 0x1000) * 0x1000;
+  const finalRva = firstRva + (sectionCount - 1) * 0x1000;
+  const delta = finalRva - SECTION_RVA;
+  const bytes = Buffer.alloc(finalRaw + rawSize);
+  original.copy(bytes, 0, 0, sectionStart);
+  bytes.writeUInt16LE(sectionCount, 134);
+  bytes.writeUInt32LE(0x1000, optional + 32);
+  bytes.writeUInt32LE(512, optional + 36);
+  bytes.writeUInt32LE(headerBytes, optional + 60);
+  bytes.writeUInt32LE(finalRva, optional + 112 + 8);
+  bytes.writeUInt32LE(finalRva + rawSize, optional + 56);
+  for (let i = 0; i < sectionCount; i++) {
+    const at = sectionStart + i * 40;
+    const size = i === sectionCount - 1 ? rawSize : 512;
+    bytes.write(i === sectionCount - 1 ? ".idata" : ".dummy", at, "ascii");
+    bytes.writeUInt32LE(size, at + 8);
+    bytes.writeUInt32LE(firstRva + i * 0x1000, at + 12);
+    bytes.writeUInt32LE(size, at + 16);
+    bytes.writeUInt32LE(headerBytes + i * 512, at + 20);
+    bytes.writeUInt32LE(0x40000040, at + 36);
+  }
+  const data = Buffer.from(original.subarray(SECTION_OFFSET));
+  const ilt = data.readUInt32LE(0);
+  const iat = data.readUInt32LE(16);
+  for (const field of [0, 12, 16])
+    data.writeUInt32LE(data.readUInt32LE(field) + delta, field);
+  for (const table of [ilt, iat])
+    for (let i = 0; i < functionCount; i++) {
+      const at = table - SECTION_RVA + i * 8;
+      data.writeBigUInt64LE(data.readBigUInt64LE(at) + BigInt(delta), at);
+    }
+  data.copy(bytes, finalRaw);
+  return bytes;
+};

@@ -1,3 +1,4 @@
+import { createPefileReadCompatibility } from "./PefileReadCompatibility.js";
 import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
@@ -5,6 +6,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
+  imageFileMappings,
 } from "../metadata/BinaryContainer.js";
 import { readPeImage } from "../metadata/PeImage.js";
 import {
@@ -138,27 +140,25 @@ export const parsePeImports = async (
 ): Promise<PeImports> => {
   assertArtifactReadActive(signal);
   const image = readPeImage(bytes);
-  if (image.bits !== 32 && image.bits !== 64)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "Only PE32 and PE32+ image optional headers are supported",
-    );
   const bits = image.bits;
-  const base = image.image_base ?? 0n;
+  const base = image.image_base;
   const reader = new BinaryReader(bytes, true);
   const lookup = createFileMappingIndex(
-    image.pe_header_mapping === undefined
-      ? image.mappings
-      : [image.pe_header_mapping, ...image.mappings],
+    imageFileMappings(image),
     image.zero_fills,
   );
-  const map = (rva: number, size: number): number =>
-    lookup.offset(base + BigInt(rva), size);
+  const compatibleRead = createPefileReadCompatibility(image, bytes.length);
+  let mappingCompatibility = true;
+  const map = (rva: number, size: number): number => {
+    const offset = lookup.offset(base + BigInt(rva), size);
+    mappingCompatibility &&= compatibleRead(rva, size, offset);
+    return offset;
+  };
   const format = bits === 64 ? ("pe32-plus" as const) : ("pe32" as const);
   const result = {
     artifact,
     format,
-    machine: reader.u16(peHeaderOffset(bytes)),
+    machine: image.pe_machine,
     bits,
     architecture: image.architecture,
   };
@@ -185,6 +185,18 @@ export const parsePeImports = async (
         "malformed",
         `Import name at RVA ${hex(rva)} is empty`,
       );
+    // CString decoding may span physically discontiguous sections. A pefile
+    // hash is only justified when its single-section read sees the whole name.
+    if (mappingCompatibility) {
+      try {
+        const size = raw.length + 1;
+        const offset = lookup.offset(base + BigInt(rva), size);
+        mappingCompatibility = compatibleRead(rva, size, offset);
+      } catch (cause) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        mappingCompatibility = false;
+      }
+    }
     return raw.toString("latin1");
   };
 
@@ -214,6 +226,15 @@ export const parsePeImports = async (
       await checkpoint();
       const nameRva = nameTableRva + index * thunkWidth;
       const iatRva = addressTableRva + index * thunkWidth;
+      if (nameRva > 0x100000000 - thunkWidth) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(nameRva),
+          message:
+            "Import lookup table slot extends beyond the 32-bit RVA space",
+        });
+        break;
+      }
       let thunk: bigint;
       try {
         thunk = reader.word(map(nameRva, thunkWidth), bits);
@@ -226,6 +247,15 @@ export const parsePeImports = async (
         break;
       }
       if (thunk === 0n) break;
+      if (iatRva > 0x100000000 - thunkWidth) {
+        issues.push({
+          code: "malformed_entry",
+          location: hex(iatRva),
+          message:
+            "Import address table slot extends beyond the 32-bit RVA space",
+        });
+        break;
+      }
       examinedFunctions += 1;
       functionBudget(examinedFunctions, input.max_functions);
       const thunkHex = thunk.toString(16);
@@ -237,6 +267,15 @@ export const parsePeImports = async (
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
           thunk_hex: thunkHex,
+        });
+        continue;
+      }
+      if (thunk > 0x7fffffffn) {
+        issues.push({
+          code: "malformed_entry",
+          location: `0x${thunkHex}`,
+          message:
+            "A named import thunk uses bits outside its 31-bit hint/name RVA",
         });
         continue;
       }
@@ -282,7 +321,8 @@ export const parsePeImports = async (
         let word: bigint;
         try {
           word = reader.word(map(rva + index * width, width), bits);
-        } catch {
+        } catch (cause) {
+          if (!(cause instanceof BinaryFormatFailure)) throw cause;
           break;
         }
         if (word === 0n) break;
@@ -383,6 +423,7 @@ export const parsePeImports = async (
     };
   }
   const standardIssues = issues.length;
+  const standardMappingCompatibility = mappingCompatibility;
 
   const delayImports: PeDelayImportDll[] = [];
   let delayDirectoryResult: PeImports["delay_import_directory"] = null;
@@ -474,6 +515,7 @@ export const parsePeImports = async (
     delay_imports: delayImports,
     imphash: pefileImphash(imports, {
       standardIssues,
+      mappingCompatibility: standardMappingCompatibility,
       truncatedDescriptor: pefileTruncatedDescriptor,
       bits,
       directoryRva: importDirectory?.virtual_address ?? 0,
@@ -488,9 +530,4 @@ export const parsePeImports = async (
     issues,
     limitations,
   };
-};
-
-const peHeaderOffset = (bytes: Buffer): number => {
-  const pe = bytes.readUInt32LE(60);
-  return pe + 4;
 };

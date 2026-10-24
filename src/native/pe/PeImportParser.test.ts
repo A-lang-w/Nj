@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { inspectPeImportsInputSchema } from "../../domain/native/peImports.js";
+import {
+  inspectPeImportsInputSchema,
+  peImportsSchema,
+} from "../../domain/native/peImports.js";
 import {
   peImportFixtureOffset,
   peImportImage,
+  peImportLeadingSectionImage,
+  peImportManySectionsImage,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
 import { parsePeImports, PeImportLimitFailure } from "./PeImportParser.js";
@@ -36,16 +41,39 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
 
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
 
+it("withholds the hash beyond pefile's section parser capacity", async () => {
+  const report = await parse(peImportManySectionsImage(2049, 2));
+  expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+    "Function0000",
+    "Function0001",
+  ]);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+});
+
+it.each([false, true])(
+  "withholds the hash when pefile stops at an earlier section (suspicious: %s)",
+  async (suspicious) => {
+    const report = await parse(peImportLeadingSectionImage(suspicious));
+    expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+      "GetProcAddress",
+      "ExitProcess",
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.imphash.md5).toBeNull();
+    expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+  },
+);
+
 /** Default PE32+ KERNEL32 image with one descriptor field rewritten. */
-const withDescriptorField = async (
+const withDescriptorField = (
   field: number,
   value: number,
   options: Parameters<typeof peImportImage>[0] = {},
 ) => {
   const bytes = peImportImage(options);
-  const location = (await parse(bytes)).imports[0]?.location;
-  if (location === undefined) throw new Error("Expected an import descriptor");
-  bytes.writeUInt32LE(value, location.offset + field);
+  bytes.writeUInt32LE(value, peImportFixtureOffset(0x1000) + field);
   return bytes;
 };
 
@@ -124,7 +152,7 @@ it("withholds the import hash when a standard import name is unreadable", async 
 });
 
 it("withholds the import hash when a standard thunk is unreadable", async () => {
-  const bytes = await withDescriptorField(0, 0x7fff0000);
+  const bytes = withDescriptorField(0, 0x7fff0000);
   const report = await parse(bytes);
   expect(report.imports[0]?.functions).toEqual([]);
   expect(report.issues[0]?.code).toBe("thunk_unreadable");
@@ -133,7 +161,7 @@ it("withholds the import hash when a standard thunk is unreadable", async () => 
 });
 
 it("reports a zero FirstThunk beside a populated lookup table as malformed", async () => {
-  const report = await parse(await withDescriptorField(16, 0));
+  const report = await parse(withDescriptorField(16, 0));
   expect(report.imports[0]).toMatchObject({
     name: "KERNEL32.dll",
     first_thunk_rva: 0,
@@ -447,3 +475,67 @@ it("withholds the import hash once pefile would discard a repetitive lookup tabl
   expect(discarded.imphash.md5).toBeNull();
   expect(discarded.imphash.reason).toMatch(/repeats hint\/name addresses 15/u);
 });
+
+it.each([32, 64] as const)(
+  "retains valid rows before a PE%s IAT RVA overflows",
+  async (bits) => {
+    const width = bits / 8;
+    const bytes = withDescriptorField(16, 0x100000000 - width, { bits });
+    const report = await parse(bytes);
+    expect(peImportsSchema.safeParse(report).success).toBe(true);
+    expect(report.imports[0]?.functions).toHaveLength(1);
+    expect(report.imports[0]?.functions[0]?.iat_rva).toBe(0x100000000 - width);
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "malformed_entry",
+          location: "0x100000000",
+        }),
+      ]),
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imphash.md5).toBeNull();
+  },
+);
+
+it("preserves an invalid wide named thunk without rounding its source value", async () => {
+  const bytes = peImportImage();
+  bytes.writeBigUInt64LE(0x20000000000001n, peImportFixtureOffset(0x1028));
+  const report = await parse(bytes);
+  expect(report.issues).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "malformed_entry",
+        location: "0x20000000000001",
+      }),
+    ]),
+  );
+  expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+    "ExitProcess",
+  ]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imphash.md5).toBeNull();
+});
+
+it.each(["function", "DLL"])(
+  "retains a cross-section %s name but withholds an unproven pefile hash",
+  async (kind) => {
+    const count = kind === "function" ? 140 : 134;
+    const functions = Array.from({ length: count }, (_, i) => ({
+      name: `Function${String(i).padStart(3, "0")}${kind === "DLL" && i === 0 ? "A".repeat(10) : ""}`,
+    }));
+    const bytes = peImportImage({
+      sectionBytes: 0x4000,
+      splitAt: 0x1000,
+      dlls: [{ name: "KERNEL32.dll", functions }],
+    });
+    const report = await parse(bytes);
+    expect(report.imports[0]?.name).toBe("KERNEL32.dll");
+    expect(report.imports[0]?.functions.map((row) => row.name)).toEqual(
+      functions.map((row) => row.name),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.imphash.md5).toBeNull();
+    expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+  },
+);

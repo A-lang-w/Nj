@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
-import { PE_IMPORTS_PROVIDER } from "../InvestigationProviders.js";
+import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { PeImports } from "../../domain/native/peImports.js";
 import { ok } from "../../domain/result.js";
 import {

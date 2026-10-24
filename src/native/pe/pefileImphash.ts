@@ -133,6 +133,7 @@ const addressDivergence = (named: readonly bigint[]): string | null => {
 
 /** Parser facts pefile's row selection depends on beyond the reported rows. */
 export interface PefileImphashFacts {
+  readonly mappingCompatibility: boolean;
   /** Issues recorded while reading the standard import table. */
   readonly standardIssues: number;
   /** First descriptor pefile's import symbol cap truncates, if any. */
@@ -150,6 +151,7 @@ export const pefileImphash = (
   imports: readonly PeImportDll[],
   {
     standardIssues,
+    mappingCompatibility,
     truncatedDescriptor,
     bits,
     directoryRva,
@@ -165,6 +167,10 @@ export const pefileImphash = (
   if (truncatedDescriptor !== null)
     return withheld(
       `Standard import descriptor ${String(truncatedDescriptor)} lies past pefile's ${String(PEFILE_MAX_IMPORT_SYMBOLS)}-thunk import symbol cap, so pefile hashes only a prefix of the table.`,
+    );
+  if (!mappingCompatibility)
+    return withheld(
+      "Byte mapping compatibility with pefile is not established for the standard import table or its names.",
     );
   const parts: string[] = [];
   for (const dll of imports) {
