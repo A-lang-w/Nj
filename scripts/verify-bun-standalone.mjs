@@ -1,17 +1,24 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
-const execute = promisify(execFile);
 const root = await PrivateRuntimeRoot.create({ prefix: "rea-bun-verifier-" });
-const run = (command, args) =>
-  execute(command, args, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
-try {
+const commands = await createVerifierCommands();
+const run = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    timeout: 120_000,
+    maxBuffer: 16 * 1024 * 1024,
+    ...options,
+  });
+// The root holds the compiled target and child temporary files. Release it
+// only after every owned command family has settled.
+let commandsClosed = false;
+await withVerifierCleanup(async () => {
   const source = join(root.path, "hello.ts");
   await writeFile(source, 'console.log("REA_BUN_VERIFICATION");\n');
   const docker = process.argv.includes("--docker");
@@ -41,12 +48,10 @@ try {
   const cli = async (command) =>
     JSON.parse(
       (
-        await execute(
+        await run(
           process.execPath,
           ["scripts/rea.mjs", command, binary, "--json"],
           {
-            timeout: 120_000,
-            maxBuffer: 16 * 1024 * 1024,
             env: {
               ...process.env,
               TMPDIR: root.path,
@@ -95,6 +100,12 @@ try {
       2,
     ),
   );
-} finally {
-  await root.close();
-}
+}, [
+  async () => {
+    await commands.close();
+    commandsClosed = true;
+  },
+  async () => {
+    if (commandsClosed) await root.close();
+  },
+]);

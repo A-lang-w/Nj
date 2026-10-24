@@ -72,6 +72,21 @@ export interface LocatedBunGraph {
   readonly flags: number;
 }
 
+/** A graph whose extent and suffix were validated without reading its data. */
+export interface BunGraphClaim {
+  readonly carrier: BunCarrier;
+  readonly payloadOffset: number;
+  readonly payloadLength: number;
+}
+
+export type BunStandaloneProbe =
+  | { readonly status: "absent" }
+  | {
+      readonly status: "present";
+      readonly claim?: BunGraphClaim;
+      readonly failure?: ArtifactReaderFailure;
+    };
+
 export type BunStandaloneRecognition =
   | { readonly status: "absent" }
   | {
@@ -85,6 +100,8 @@ interface SectionWindow {
   readonly fileOffset: number;
   readonly declaredSize: number;
   readonly available: number;
+  /** The declared section extent ends past EOF. */
+  readonly truncated: boolean;
 }
 
 /**
@@ -98,22 +115,37 @@ export const containsBunStandaloneArchive = async (
   fileSize: number,
   signal?: AbortSignal,
 ): Promise<boolean> =>
-  (await locateBunStandaloneGraph(handle, fileSize, signal)).status ===
+  (await probeBunStandaloneGraph(handle, fileSize, signal)).status ===
   "present";
 
-/** Locate at most one graph. Multiple real claims are an unsupported ambiguity. */
+/** Probe, then read the one claimed payload. */
 export const locateBunStandaloneGraph = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
 ): Promise<BunStandaloneRecognition> => {
+  const probed = await probeBunStandaloneGraph(handle, fileSize, signal);
+  if (probed.status === "absent" || probed.claim === undefined) return probed;
+  return loadBunStandaloneGraph(handle, probed.claim, signal);
+};
+
+/**
+ * Locate at most one graph claim with bounded reads of headers, length
+ * prefixes, and suffixes. Payload data is not read. Multiple real claims are
+ * an unsupported ambiguity.
+ */
+export const probeBunStandaloneGraph = async (
+  handle: FileHandle,
+  fileSize: number,
+  signal?: AbortSignal,
+): Promise<BunStandaloneProbe> => {
   abortIfNeeded(signal);
   const claims = [
     ...(await machOClaims(handle, fileSize, 0, fileSize, signal)),
     ...(await peClaims(handle, fileSize, signal)),
     ...(await elfClaims(handle, fileSize, signal)),
   ];
-  const real: BunStandaloneRecognition[] = [];
+  const real: BunStandaloneProbe[] = [];
   for (const claim of claims) {
     abortIfNeeded(signal);
     const evaluated = await evaluateSection(handle, fileSize, claim, signal);
@@ -131,6 +163,40 @@ export const locateBunStandaloneGraph = async (
   const only = real[0];
   if (only !== undefined) return only;
   return evaluateAppendedTrailer(handle, fileSize, signal);
+};
+
+/** Read a probed payload once and validate its suffix against the claim. */
+export const loadBunStandaloneGraph = async (
+  handle: FileHandle,
+  claim: BunGraphClaim,
+  signal?: AbortSignal,
+): Promise<BunStandaloneRecognition> => {
+  const payload = await readExact(
+    handle,
+    claim.payloadOffset,
+    claim.payloadLength,
+    signal,
+  );
+  const failure = suffixFailure(
+    payload.subarray(payload.length - BUN_GRAPH_SUFFIX_BYTES),
+    payload.length,
+  );
+  if (failure !== undefined) return { status: "present", failure };
+  const offsets = payload.subarray(
+    payload.length - BUN_GRAPH_SUFFIX_BYTES,
+    payload.length - BUN_TRAILER_BYTES,
+  );
+  return {
+    status: "present",
+    graph: {
+      ...claim,
+      data: payload.subarray(0, payload.length - BUN_GRAPH_SUFFIX_BYTES),
+      modules: readPointer(offsets, 8),
+      entryPointId: offsets.readUInt32LE(16),
+      compileExecArgv: readPointer(offsets, 20),
+      flags: offsets.readUInt32LE(28),
+    },
+  };
 };
 
 export const bunRetainedBytesLimit = (
@@ -157,19 +223,18 @@ export const bunFormatFailure = (detail: string): ArtifactReaderFailure =>
 
 const presentFailure = (
   failure: ArtifactReaderFailure,
-): BunStandaloneRecognition => ({ status: "present", failure });
-
-const presentGraph = (graph: LocatedBunGraph): BunStandaloneRecognition => ({
-  status: "present",
-  graph,
-});
+): BunStandaloneProbe => ({ status: "present", failure });
 
 const evaluateSection = async (
   handle: FileHandle,
   fileSize: number,
   claim: SectionWindow,
   signal?: AbortSignal,
-): Promise<BunStandaloneRecognition | { readonly status: "placeholder" }> => {
+): Promise<BunStandaloneProbe | { readonly status: "placeholder" }> => {
+  if (claim.truncated)
+    return presentFailure(
+      bunFormatFailure("section extends past the end of the file"),
+    );
   if (claim.available < BUN_LENGTH_PREFIX_BYTES)
     return presentFailure(bunFormatFailure("trailer is truncated"));
   const prefix = await readExact(
@@ -212,18 +277,19 @@ const evaluateSection = async (
   const length = Number(payloadLength);
   if (claim.available < prefixBytes + length)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const payload = await readExact(
+  const payloadOffset = claim.fileOffset + prefixBytes;
+  const suffix = await readExact(
     handle,
-    claim.fileOffset + prefixBytes,
-    length,
+    payloadOffset + length - BUN_GRAPH_SUFFIX_BYTES,
+    BUN_GRAPH_SUFFIX_BYTES,
     signal,
   );
-  const parsed = parsePayload(
-    payload,
-    claim.fileOffset + prefixBytes,
-    claim.carrier,
-  );
-  return parsed;
+  const failure = suffixFailure(suffix, length);
+  if (failure !== undefined) return presentFailure(failure);
+  return {
+    status: "present",
+    claim: { carrier: claim.carrier, payloadOffset, payloadLength: length },
+  };
 };
 
 /**
@@ -234,7 +300,7 @@ const evaluateAppendedTrailer = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
-): Promise<BunStandaloneRecognition> => {
+): Promise<BunStandaloneProbe> => {
   if (fileSize < BUN_GRAPH_SUFFIX_BYTES) return { status: "absent" };
   let graphEnd = fileSize;
   let trailer = await readExact(
@@ -277,43 +343,31 @@ const evaluateAppendedTrailer = async (
   if (payloadLength > BigInt(graphEnd))
     return presentFailure(bunFormatFailure("trailer is truncated"));
   const length = Number(payloadLength);
-  const payloadOffset = graphEnd - length;
-  const payload = await readExact(handle, payloadOffset, length, signal);
-  return parsePayload(payload, payloadOffset, "appended-trailer");
+  return {
+    status: "present",
+    claim: {
+      carrier: "appended-trailer",
+      payloadOffset: graphEnd - length,
+      payloadLength: length,
+    },
+  };
 };
 
-const parsePayload = (
-  payload: Buffer,
-  payloadOffset: number,
-  carrier: BunCarrier,
-): BunStandaloneRecognition => {
-  if (payload.length < BUN_GRAPH_SUFFIX_BYTES)
-    return presentFailure(bunFormatFailure("trailer is truncated"));
-  if (!payload.subarray(payload.length - BUN_TRAILER_BYTES).equals(BUN_TRAILER))
-    return presentFailure(
-      bunFormatFailure("trailer does not match the Bun sentinel"),
-    );
-  const offsets = payload.subarray(
-    payload.length - BUN_GRAPH_SUFFIX_BYTES,
-    payload.length - BUN_TRAILER_BYTES,
-  );
-  const byteCount = offsets.readBigUInt64LE(0);
+/** Validate the Offsets and trailer that end a payload of `payloadLength` bytes. */
+const suffixFailure = (
+  suffix: Buffer,
+  payloadLength: number,
+): ArtifactReaderFailure | undefined => {
+  if (suffix.length < BUN_GRAPH_SUFFIX_BYTES)
+    return bunFormatFailure("trailer is truncated");
+  if (!suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER))
+    return bunFormatFailure("trailer does not match the Bun sentinel");
+  const byteCount = suffix.readBigUInt64LE(0);
   if (byteCount > BigInt(MAX_BUN_RETAINED_BYTES))
-    return presentFailure(bunRetainedBytesLimit(byteCount));
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) !== BigInt(payload.length))
-    return presentFailure(
-      bunFormatFailure("byte_count does not match the located payload"),
-    );
-  return presentGraph({
-    carrier,
-    payloadOffset,
-    payloadLength: payload.length,
-    data: payload.subarray(0, Number(byteCount)),
-    modules: readPointer(offsets, 8),
-    entryPointId: offsets.readUInt32LE(16),
-    compileExecArgv: readPointer(offsets, 20),
-    flags: offsets.readUInt32LE(28),
-  });
+    return bunRetainedBytesLimit(byteCount);
+  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) !== BigInt(payloadLength))
+    return bunFormatFailure("byte_count does not match the located payload");
+  return undefined;
 };
 
 export const readPointer = (
@@ -411,6 +465,7 @@ const segmentClaims = (
         fileOffset: imageOffset + offset,
         declaredSize: MAX_BUN_RETAINED_BYTES + 1,
         available: 0,
+        truncated: false,
       });
       continue;
     }
@@ -558,7 +613,7 @@ const elfClaims = async (
     const bounds = elfSectionBounds(table, index, wide, littleEndian);
     if (bounds === null) continue;
     const nameOffset = readU32(table, index * shentsize, littleEndian);
-    if (elfString(stringTable, nameOffset) !== ".bun") continue;
+    if (!elfNameIsBun(stringTable, nameOffset)) continue;
     claims.push(windowFor("elf-section", bounds.offset, bounds.size, fileSize));
   }
   return claims;
@@ -583,12 +638,17 @@ const elfSectionBounds = (
   return { offset, size };
 };
 
-const elfString = (table: Buffer, offset: number): string | null => {
-  if (offset >= table.length) return null;
-  const end = table.indexOf(0, offset);
-  const bytes = table.subarray(offset, end === -1 ? table.length : end);
-  const text = bytes.toString("utf8");
-  return Buffer.from(text, "utf8").equals(bytes) ? text : null;
+const ELF_BUN_NAME = Buffer.from(".bun");
+
+/**
+ * Compare only `.bun` and its terminator. Many headers may share one long
+ * name, so scanning each name to its NUL would repeat unbounded work.
+ */
+const elfNameIsBun = (table: Buffer, offset: number): boolean => {
+  const end = offset + ELF_BUN_NAME.length;
+  if (end > table.length) return false;
+  if (end < table.length && table[end] !== 0) return false;
+  return table.subarray(offset, end).equals(ELF_BUN_NAME);
 };
 
 const windowFor = (
@@ -602,13 +662,20 @@ const windowFor = (
     fileOffset < 0 ||
     fileOffset >= fileSize
   )
-    return { carrier, fileOffset, declaredSize, available: 0 };
+    return {
+      carrier,
+      fileOffset,
+      declaredSize,
+      available: 0,
+      truncated: false,
+    };
   const room = fileSize - fileOffset;
   return {
     carrier,
     fileOffset,
     declaredSize,
     available: Math.min(declaredSize, room),
+    truncated: declaredSize > room,
   };
 };
 

@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   locateBunStandaloneGraph,
+  probeBunStandaloneGraph,
   MAX_BUN_MODULE_COUNT,
   BUN_GRAPH_SUFFIX_BYTES,
 } from "./BunModuleGraphLayout.js";
@@ -19,6 +20,7 @@ import {
   peBunSection,
   elfBunSection,
   elfAppendedBunPayload,
+  elfPrefix,
 } from "./BunStandalone.fixture.js";
 
 async function locate(bytes: Buffer) {
@@ -27,6 +29,33 @@ async function locate(bytes: Buffer) {
   const handle = await open(path, "r");
   try {
     return await locateBunStandaloneGraph(handle, bytes.length);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Probe while counting bytes read through the handle. */
+async function probe(bytes: Buffer) {
+  const path = join(await createTestTempDirectory("rea-bun-parser-"), "app");
+  await writeFile(path, bytes);
+  const handle = await open(path, "r");
+  let bytesRead = 0;
+  const read = handle.read.bind(handle);
+  const counted = new Proxy(handle, {
+    get: (target, key) =>
+      key === "read"
+        ? async (...args: Parameters<typeof read>) => {
+            const result = await read(...args);
+            bytesRead += result.bytesRead;
+            return result;
+          }
+        : Reflect.get(target, key),
+  });
+  try {
+    return {
+      result: await probeBunStandaloneGraph(counted, bytes.length),
+      bytesRead,
+    };
   } finally {
     await handle.close();
   }
@@ -210,4 +239,77 @@ it("refuses multiple embedded graphs instead of selecting one", async () => {
     status: "present",
     failure: { reason: "unavailable" },
   });
+});
+
+it("probes a section graph without reading its payload data", async () => {
+  const contents = Buffer.alloc(1024 * 1024, 0x61);
+  const bytes = machoBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{ name: "main.js", contents }] }),
+    ),
+  );
+  const { result, bytesRead } = await probe(bytes);
+  expect(result).toMatchObject({
+    status: "present",
+    claim: { carrier: "mach-o-section" },
+  });
+  expect(bytesRead).toBeLessThan(4096);
+});
+
+it.each([
+  [
+    "Mach-O",
+    (section: Buffer) => {
+      const bytes = machoBunSection(Buffer.concat([section, Buffer.alloc(16)]));
+      return bytes.subarray(0, bytes.length - 8);
+    },
+  ],
+  [
+    "ELF",
+    (section: Buffer) => {
+      const bytes = elfBunSection(section);
+      const sectionOffset = 64 + "\0.shstrtab\0.bun\0".length;
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length - sectionOffset + 1),
+        bytes.length - 64 + 32,
+      );
+      return bytes;
+    },
+  ],
+] as const)(
+  "rejects %s sections whose declared tail is missing",
+  async (_name, carrier) => {
+    const section = bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{ name: "main.js" }] }),
+    );
+    expect(await locate(carrier(section))).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("past the end of the file"),
+      },
+    });
+  },
+);
+
+it("matches ELF section names in bounded time when headers share one long name", async () => {
+  const shnum = 16_383;
+  const stringOffset = 64;
+  const strings = Buffer.alloc(1024 * 1024, 0x61);
+  const tableOffset = stringOffset + strings.length;
+  const bytes = Buffer.alloc(tableOffset + shnum * 64);
+  elfPrefix().copy(bytes, 0);
+  bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(shnum, 60);
+  bytes.writeUInt16LE(0, 62);
+  strings.copy(bytes, stringOffset);
+  for (let index = 0; index < shnum; index += 1) {
+    const header = tableOffset + index * 64;
+    bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
+    bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
+  }
+  const started = performance.now();
+  expect((await probe(bytes)).result).toEqual({ status: "absent" });
+  expect(performance.now() - started).toBeLessThan(2_000);
 });
