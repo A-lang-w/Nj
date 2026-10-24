@@ -12,7 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import {
   parsePspReadelfMips,
   assertPspLoadedImage,
@@ -32,7 +32,7 @@ if (process.platform !== "linux" || process.argv.length !== 2)
 if (!process.env.GHIDRA_INSTALL_DIR || !process.env.PSPDEV)
   throw new Error("Caller must supply a compatible Ghidra/Allegrex and PSPDEV");
 
-const ghidra = inspectGhidraInstallation({
+const ghidra = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
