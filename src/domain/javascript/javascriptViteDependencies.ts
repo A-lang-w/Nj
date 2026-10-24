@@ -8,6 +8,8 @@ import {
   hasJavaScriptViteInheritedProperty,
   isJavaScriptViteDefaultUndefined,
   readJavaScriptViteHelper,
+  readJavaScriptViteTableSlotsSteps,
+  javaScriptViteTableHasOwnSlot,
   type JavaScriptViteHelperCandidate,
   type JavaScriptViteCacheTable,
 } from "./javascriptViteHelper.js";
@@ -18,7 +20,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
-import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+import { semanticBindingMayHaveOpaqueEffect } from "./javascriptSemanticOpaqueEffects.js";
 import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
 type ViteDependencyTable = readonly (string | undefined)[];
@@ -114,39 +116,21 @@ function* viteBindingTablesSteps(
     const initializer = semanticStableInitializer(binding, state);
     const unchanged =
       !uncertain &&
+      !semanticBindingMayHaveOpaqueEffect(
+        binding,
+        state,
+        undefined,
+        "reference",
+      ) &&
       initializer !== undefined &&
       unwrapJavaScriptExpression(initializer.node).node === helper &&
       initializer.projection.length === 0;
     tables.set(
       binding.bindingId,
-      unchanged ? yield* exactTableSlotsSteps(table) : null,
+      unchanged ? yield* readJavaScriptViteTableSlotsSteps(table) : null,
     );
   }
   return { tables, cacheHelpers };
-}
-
-function* exactTableSlotsSteps(
-  table: t.ArrayExpression,
-): Generator<void, JavaScriptViteCacheTable> {
-  const slots: (string | null | undefined)[] = [];
-  for (const [index, element] of table.elements.entries()) {
-    if (index > 0 && index % 1024 === 0) yield;
-    if (t.isSpreadElement(element)) {
-      // the known prefix cannot prove that the remaining cache is dense.
-      slots.push(undefined);
-      break;
-    }
-    const literal =
-      element === null ? undefined : readExactJavaScriptLiteral(element);
-    slots.push(
-      literal?.found && typeof literal.value === "string"
-        ? literal.value
-        : element === null
-          ? undefined
-          : null,
-    );
-  }
-  return slots;
 }
 
 /** An inert unary index cannot execute code; unsupported slots stay unknown. */
@@ -214,10 +198,7 @@ function* selectedDependencySpecifiersSteps(
       : inert === undefined
         ? undefined
         : String(inert.numeric);
-    const propertyIndex = key === undefined ? null : semanticArrayIndex(key);
-    const own =
-      key === "length" ||
-      (propertyIndex !== null && table[propertyIndex] !== undefined);
+    const own = javaScriptViteTableHasOwnSlot(key ?? null, table);
     // key coercion and inherited getters can change every subsequent read.
     // unknown owned values remain inert, preserving unrelated exact slots.
     if (

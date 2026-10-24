@@ -14,6 +14,8 @@ import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWr
 import {
   hasJavaScriptViteInheritedProperty,
   isJavaScriptViteDefaultUndefined,
+  readJavaScriptViteTableSlotsSteps,
+  javaScriptViteTableHasOwnSlot,
   type JavaScriptViteHelperCandidate,
 } from "./javascriptViteHelper.js";
 
@@ -120,6 +122,7 @@ export class ViteCacheIdentities {
   >();
 
   private readonly properties: ViteCacheProperties;
+  private unknownInheritedRead: boolean | undefined;
   constructor(
     private readonly state: JavaScriptSemanticAnalysisState,
     private readonly invocation: (
@@ -140,6 +143,13 @@ export class ViteCacheIdentities {
 
   read(node: ViteCacheValue): ViteCacheIdentity | undefined {
     return ("inputs" in node ? node : this.vertices.get(node))?.fact;
+  }
+
+  /** awaiting iterated values exposes contained references, not the array itself. */
+  containedValues(node: t.Node): ViteCacheValue {
+    const values = this.vertex({});
+    this.connect(values, { kind: "copy-family", source: this.normalize(node) });
+    return values;
   }
 
   /** module projection owns runtime exports and default-expression captures. */
@@ -192,20 +202,62 @@ export class ViteCacheIdentities {
     return reads;
   }
 
-  /** Expose the selected table when arbitrary keys can reach inherited accessors. */
-  helperMappedTableEscape(
+  /** mapped getters expose their selected receiver across every helper call. */
+  *helperMappedTableEscapeSteps(
     call: t.CallExpression | t.OptionalCallExpression,
-  ): Vertex | undefined {
+  ): Generator<void, Vertex | undefined> {
     const proof = this.helperArgumentReads.get(call);
     if (
       proof === undefined ||
-      proof.freshIndexes ||
       this.read(call.callee)?.allocation?.kind !== "helper"
     )
       return undefined;
-    // Inherited getters can return their receiver, exposing the table itself.
-    // Keep its default-choice joins and allocation identity, not only children.
-    return this.helperResults.get(call)?.seed?.allocation?.helperResult?.table;
+    const mapped = this.helperResults.get(call)?.seed?.allocation?.helperResult;
+    if (mapped === undefined) return undefined;
+    if (!proof.freshIndexes) return mapped.table;
+    const node = mapped.table.fact?.allocation?.node;
+    const slots = t.isArrayExpression(node)
+      ? yield* readJavaScriptViteTableSlotsSteps(node)
+      : undefined;
+    for (const [index, key] of mapped.keys.entries()) {
+      if (index > 0 && index % 1024 === 0) yield;
+      if (key === undefined || javaScriptViteTableHasOwnSlot(key, slots))
+        continue;
+      if (
+        key === null
+          ? yield* this.unknownInheritedReadSteps()
+          : hasJavaScriptViteInheritedProperty(key, this.state)
+      )
+        return mapped.table;
+    }
+    if (
+      mapped.unknownFrom !== undefined &&
+      (yield* this.unknownInheritedReadSteps())
+    )
+      return mapped.table;
+    return undefined;
+  }
+
+  private *unknownInheritedReadSteps(): Generator<void, boolean> {
+    if (this.unknownInheritedRead !== undefined)
+      return this.unknownInheritedRead;
+    let examined = 0;
+    for (const { path } of this.state.ambientWriteEffects) {
+      if (examined++ % 1024 === 0) yield;
+      const [root, namespace, property] = path;
+      if (
+        (root === "global" || root === null) &&
+        (namespace == null ||
+          namespace === "Array" ||
+          namespace === "Object") &&
+        (property == null || property === "prototype")
+      ) {
+        this.unknownInheritedRead = true;
+        return true;
+      }
+    }
+    this.unknownInheritedRead = false;
+    return false;
   }
 
   /** Only array or plain data object literals keep mapped reads free of getters. */

@@ -9,6 +9,7 @@ import {
   isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 type ViteHelper =
   | t.ArrowFunctionExpression
@@ -17,6 +18,45 @@ type ViteHelper =
 
 /** null is an owned unknown value; undefined leaves property ownership unproven. */
 export type JavaScriptViteCacheTable = readonly (string | null | undefined)[];
+
+const tableSlots = new WeakMap<t.ArrayExpression, JavaScriptViteCacheTable>();
+
+/** normalize table ownership and decoded values once for all read consumers. */
+export function* readJavaScriptViteTableSlotsSteps(
+  table: t.ArrayExpression,
+): Generator<void, JavaScriptViteCacheTable> {
+  const retained = tableSlots.get(table);
+  if (retained !== undefined) return retained;
+  const slots: (string | null | undefined)[] = [];
+  for (const [index, element] of table.elements.entries()) {
+    if (index > 0 && index % 1024 === 0) yield;
+    if (t.isSpreadElement(element)) {
+      slots.push(undefined);
+      break;
+    }
+    const literal =
+      element === null ? undefined : readExactJavaScriptLiteral(element);
+    slots.push(
+      literal?.found && typeof literal.value === "string"
+        ? literal.value
+        : element === null
+          ? undefined
+          : null,
+    );
+  }
+  tableSlots.set(table, slots);
+  return slots;
+}
+
+/** an owned data slot cannot invoke a prototype getter, even if its value is unknown. */
+export const javaScriptViteTableHasOwnSlot = (
+  key: string | null,
+  table: JavaScriptViteCacheTable | undefined,
+): boolean => {
+  if (table === undefined || key === null) return false;
+  const index = semanticArrayIndex(key);
+  return key === "length" || (index !== null && table[index] !== undefined);
+};
 
 /** a missing property is inert only when visible writes cannot supply an accessor. */
 export const hasJavaScriptViteInheritedProperty = (

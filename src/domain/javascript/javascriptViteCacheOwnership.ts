@@ -249,9 +249,10 @@ function* indexCallExposuresSteps(
     const readOnly = new Set(
       yield* context.identities.readOnlyHelperArgumentsSteps(call),
     );
-    // An unproven indexes protocol runs the mapped reads through arbitrary
-    // code. Expose the selected table, including possible inherited accessors.
-    const mappedTable = context.identities.helperMappedTableEscape(call);
+    // unproven mapped reads can dispatch getters on the selected table.
+    // retain that receiver so its effects also invalidate other helper calls.
+    const mappedTable =
+      yield* context.identities.helperMappedTableEscapeSteps(call);
     if (mappedTable !== undefined)
       exposures.push({ node: call, value: mappedTable });
     for (let index = 0; index < values.length; index++) {
@@ -577,7 +578,7 @@ function* indexCacheEffectsSteps(
       };
   const deferred: DeferredEffect[] = [];
   let admittedDepth = 0;
-  const expose = (node: t.Node, value: t.Node): void => {
+  const expose = (node: t.Node, value: ViteCacheValue): void => {
     if (admittedDepth === 0) exposures.push({ node, value });
   };
   yield* traverseJavaScriptAstSteps(program, {
@@ -607,6 +608,19 @@ function* indexCacheEffectsSteps(
       }
       // These operations can invoke user-defined coercion or thenable hooks.
       if (t.isAwaitExpression(node)) expose(node, node.argument);
+      if (t.isForOfStatement(node) && node.await)
+        expose(node, identities.containedValues(node.right));
+      if (
+        t.isVariableDeclarator(node) &&
+        node.init != null &&
+        t.isVariableDeclaration(parent) &&
+        (parent.kind === "using" || parent.kind === "await using")
+      )
+        expose(node, node.init);
+      if (t.isImportExpression(node)) {
+        expose(node, node.source);
+        if (node.options != null) expose(node, node.options);
+      }
       if (t.isThrowStatement(node) && node.argument != null)
         expose(node, node.argument);
       if (t.isUnaryExpression(node) && ["+", "-", "~"].includes(node.operator))

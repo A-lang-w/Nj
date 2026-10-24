@@ -79,6 +79,25 @@ const mapDependencies = (table: string, indexes: string): string =>
   indexes +
   ");";
 
+const expectUnknownImportExpression = (
+  scenario: ViteScenario,
+  properties: Readonly<Record<string, unknown>>,
+): void => {
+  expect.soft(properties, scenario.file).toMatchObject({
+    specifier: null,
+    expression: expect.any(String),
+  });
+  const expression = properties.expression;
+  expect
+    .soft(
+      (scenario.callSources ?? [scenario.callSource ?? defaultCall]).some(
+        (call) => typeof expression === "string" && expression.includes(call),
+      ),
+      scenario.file,
+    )
+    .toBe(true);
+};
+
 // captured with Babel core 8.0.7 and transform-arrow-functions 8.0.1.
 const babelArrows = String.raw`const __vite__mapDeps = function (i, m = __vite__mapDeps, d = m.f || (m.f = ["./caf\u00e9.js", './nested\/dep.js', "./bracket].js"])) {
   return i.map(function (i) {
@@ -133,6 +152,8 @@ const mapDependenciesWithEffects = (
   body: string,
   table = '["./first.js"]',
 ): string => mapDependencies(table, "[0]").replace(defaultCall + ";", body);
+
+const initializeCache = "const initialize = __vite__mapDeps; initialize([]); ";
 
 const allScenarios: readonly ViteScenario[] = [
   {
@@ -2515,13 +2536,13 @@ const allScenarios: readonly ViteScenario[] = [
     unknown: true,
   },
   {
-    file: "known-prefix-before-effectful-table-read.js",
+    file: "inherited-table-read-widens-the-shared-cache.js",
     callSource: "__vite__mapDeps([2,1,0])",
     source: mapDependenciesWithEffects(
       'Object.defineProperty(Array.prototype, "1", {get() { return 1; }, configurable: true}); __vite__mapDeps([2,1,0]);',
       '["./first.js", , "./last.js"]',
     ),
-    resolved: ["last.js"],
+    resolved: [],
     unknown: true,
   },
   {
@@ -2529,6 +2550,132 @@ const allScenarios: readonly ViteScenario[] = [
     callSource: "__vite__mapDeps([0,key,external()])",
     source: mapDependenciesWithEffects(
       "const key = runtimeKey; __vite__mapDeps([0,key,external()]);",
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  ...(
+    [
+      ["numeric", "1", "1"],
+      ["named", '"named"', "named"],
+      ["unknown", "runtimeIndex", "1"],
+    ] as const
+  ).map(([name, index, property]) => ({
+    file: `inherited-${name}-read-invalidates-later-calls.js`,
+    callSources: [`__vite__mapDeps([${index}])`, defaultCall],
+    callOccurrences: [0, 1],
+    source: mapDependenciesWithEffects(
+      `Object.defineProperty(Array.prototype, ${JSON.stringify(property)}, {get() { this[0] = "./last.js"; return 1; }, configurable: true}); __vite__mapDeps([${index}]); __vite__mapDeps([0]);`,
+      '["./first.js", , "./last.js"]',
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "independent-supplied-table-inherited-read.js",
+    callSources: ["__vite__mapDeps([1], void 0, [])", defaultCall],
+    callOccurrences: [0, 1],
+    unknownCallOccurrences: [0],
+    source: mapDependenciesWithEffects(
+      'Object.defineProperty(Array.prototype, "1", {get() { this[0] = "./last.js"; return 1; }, configurable: true}); __vite__mapDeps([1], void 0, []); __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js"],
+    unknown: true,
+  },
+  ...(
+    [
+      ["direct-eval-cache", "eval(\"__vite__mapDeps.f[0] = './last.js'\");"],
+      [
+        "eval-shadowed-cache-alias",
+        "const cache = __vite__mapDeps.f; { const __vite__mapDeps = null; eval(\"cache[0] = './last.js'\"); }",
+      ],
+    ] as const
+  ).map(([name, effect]) => ({
+    file: `${name}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache + effect + " __vite__mapDeps([0]);",
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "eval-in-independent-activation.js",
+    source:
+      `function isolated() { ${mapDependencies('["./first.js"]', "[0]")} }` +
+      'function unrelated() { const value = {}; eval("value.x = 1"); }',
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  ...([false, true] as const).map((awaited) => ({
+    file: `${awaited ? "async" : "sync"}-iteration-thenable-cache.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        `const values = [{cache: __vite__mapDeps.f, then(resolve) { this.cache[0] = "./last.js"; resolve(); }}]; for ${awaited ? "await " : ""}(const value of values) {} __vite__mapDeps([0]);`,
+    ),
+    resolved: awaited ? [] : ["first.js"],
+    unknown: awaited,
+  })),
+  ...(
+    [
+      ["cache-strings", "__vite__mapDeps.f"],
+      [
+        "independent-thenable",
+        '[{values: [], then(resolve) { this.values.push("x"); resolve(); }}]',
+      ],
+    ] as const
+  ).map(([name, values]) => ({
+    file: `async-iteration-${name}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        `for await (const value of ${values}) {} __vite__mapDeps([0]);`,
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  })),
+  ...([false, true] as const).map((awaited) => ({
+    file: `${awaited ? "async" : "sync"}-disposable-cache.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        `{ ${awaited ? "await " : ""}using box = {cache: __vite__mapDeps.f, [Symbol.${awaited ? "asyncDispose" : "dispose"}]() { this.cache[0] = "./last.js"; }}; } __vite__mapDeps([0]);`,
+    ),
+    resolved: [],
+    unknown: true,
+  })),
+  {
+    file: "independent-disposable-resource.js",
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        '{ using box = {values: [], [Symbol.dispose]() { this.values.push("x"); }}; } __vite__mapDeps([0]);',
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  },
+  ...([false, true] as const).map((shared) => {
+    const imported = shared
+      ? 'import("./other.js", {cache: __vite__mapDeps.f, get with() { this.cache[0] = "./last.js"; return {}; }})'
+      : 'import("./other.js", {values: [], get with() { this.values.push("x"); return {}; }})';
+    return {
+      file: `${shared ? "shared" : "independent"}-dynamic-import-options.js`,
+      callSources: [imported, defaultCall],
+      callOccurrences: [0, 1],
+      ...(shared ? { unknownCallOccurrences: [1] } : {}),
+      source: mapDependenciesWithEffects(
+        initializeCache + imported + "; __vite__mapDeps([0]);",
+      ),
+      resolved: shared ? ["other.js"] : ["other.js", "first.js"],
+      unknown: shared,
+    };
+  }),
+  {
+    file: "dynamic-import-source-coercion.js",
+    callSources: [
+      'import({cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return "./other.js"; }})',
+      defaultCall,
+    ],
+    callOccurrences: [0, 1],
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        'import({cache: __vite__mapDeps.f, toString() { this.cache[0] = "./last.js"; return "./other.js"; }}); __vite__mapDeps([0]);',
     ),
     resolved: [],
     unknown: true,
@@ -2567,6 +2714,7 @@ cliTest.for(
           "left.js",
           "right.js",
           "decoy.js",
+          "other.js",
         ].map((path) => [path, "export const dependency = true;\n"]),
       ),
     });
@@ -2651,10 +2799,7 @@ cliTest.for(
             resolved_path: resolved,
           });
         else {
-          expect.soft(edge.properties, scenario.file).toMatchObject({
-            specifier: null,
-            expression: expect.stringContaining("__vite__mapDeps("),
-          });
+          expectUnknownImportExpression(scenario, edge.properties);
           expect
             .soft(edge.evidence.coverage.status, scenario.file)
             .toBe("partial");
