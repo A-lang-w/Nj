@@ -5,12 +5,16 @@ import {
   nativeCalleesSchema,
   nativeXrefsSchema,
   nativeLiteralSearchPattern,
-  nativeStringsSchema,
 } from "./IdaNativeProtocol.js";
 import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
+  type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
+import {
+  matchRegexValues,
+  REGEX_MATCHING_LIMITATION,
+} from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
   AnalysisCancelledError,
@@ -35,6 +39,7 @@ import {
   disassemblySchema,
   idaAddressSchema,
   idaFunctionSchema,
+  idaStringsPageSchema,
   legacyCalleesSchema,
   legacyPageSchema,
   legacyStringSchema,
@@ -45,7 +50,6 @@ import {
   modernLookupSchema,
   modernLookupBatchSchema,
   modernPageSchema,
-  modernStringsSchema,
   modernXrefsSchema,
   nextOffset,
   surveySegmentsSchema,
@@ -67,6 +71,7 @@ const unknownBody = {
 const identity = (fn: IdaFunction) => ({
   address: fn.address,
   name: fn.name,
+  symbol: null,
   classification: null,
   body: unknownBody,
 });
@@ -116,12 +121,20 @@ export class IdaOperationRunner {
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
-    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
+    if (this.options.signal?.aborted)
+      throw new AnalysisCancelledError(tool, {
+        cause: this.options.signal.reason,
+      });
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
-    const result = await this.connection.call(tool, scoped);
+    const result = await this.connection.call(tool, scoped, {
+      signal: this.options.signal,
+    });
     this.raw.push({ tool, arguments: scoped, result });
-    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
+    if (this.options.signal?.aborted)
+      throw new AnalysisCancelledError(tool, {
+        cause: this.options.signal.reason,
+      });
     return result;
   }
 
@@ -162,6 +175,19 @@ export class IdaOperationRunner {
    * addresses were reported by IDA itself.
    */
   async resolve(query: string, requestedBy?: string): Promise<IdaFunction> {
+    if (query.startsWith("file-offset:"))
+      throw new AnalysisInputError(
+        requestedBy ?? "procedure_address",
+        undefined,
+        [
+          {
+            path: ["procedure"],
+            reason: "invalid_value",
+            message:
+              "IDA does not support file-offset: procedure selectors. Select Ghidra for source-file coordinates or supply an IDA analysis address or exact procedure name.",
+          },
+        ],
+      );
     if (this.protocol !== "legacy") {
       const item = modernLookupSchema.parse(
         await this.call("lookup_funcs", { queries: [query] }),
@@ -321,9 +347,7 @@ export class IdaOperationRunner {
         }
         offset = page.next_offset;
       } else {
-        const page = (
-          this.protocol === "native" ? nativeStringsSchema : modernStringsSchema
-        ).parse(
+        const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
             pattern:
               this.protocol === "native"
@@ -333,6 +357,10 @@ export class IdaOperationRunner {
             limit: 100,
           }),
         );
+        if (page.error !== undefined && page.error !== null)
+          throw new AnalysisProtocolError(
+            `${this.protocol === "native" ? "Native IDA" : "IDA"} string search failed: ${page.error}`,
+          );
         result.push(
           ...page.matches.map((s) => ({ address: s.addr, value: s.string })),
         );
@@ -534,7 +562,13 @@ export class IdaOperationRunner {
                 "Upstream callees capped results at 500; additional callees remain unknown.",
               ],
             }
-          : { status: "complete" };
+          : page.more === false
+            ? { status: "complete" }
+            : {
+                status: "unknown",
+                reason:
+                  "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+              };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(
@@ -545,7 +579,7 @@ export class IdaOperationRunner {
       }
     }
     const querySet = new Set(queries);
-    if (this.protocol === "native" && querySet.size > 0) {
+    if (this.protocol !== "legacy" && querySet.size > 0) {
       const rows = modernLookupBatchSchema.parse(
         await this.call("lookup_funcs", { queries: [...querySet] }),
       );
@@ -556,7 +590,7 @@ export class IdaOperationRunner {
         rows.some((row) => !querySet.has(row.query))
       )
         throw new AnalysisProtocolError(
-          "Native IDA returned an inconsistent callee lookup batch.",
+          "IDA returned an inconsistent callee lookup batch.",
         );
       for (const query of querySet) {
         const resolved = identity(
@@ -577,6 +611,29 @@ export class IdaOperationRunner {
     };
   }
 
+  private async searchItems<T extends { readonly value: string }>(
+    operation: IdaOperation,
+    items: T[],
+    query: AnalysisSearchQuery | undefined,
+  ): Promise<T[]> {
+    if (query === undefined) return items;
+    if (query.mode === "literal") {
+      const matches = analysisSearchPredicate(query);
+      return items.filter(({ value }) => matches(value));
+    }
+    this.limitations.push(REGEX_MATCHING_LIMITATION);
+    const matched = await matchRegexValues({
+      operation,
+      pattern: query.pattern,
+      caseSensitive: query.case_sensitive,
+      values: items.map(({ value }) => value),
+      signal: this.options.signal,
+    });
+    if (!matched.ok) throw matched.error;
+    const indices = new Set(matched.value);
+    return items.filter((_, index) => indices.has(index));
+  }
+
   async run(
     operation: IdaOperation,
     parameters: Readonly<Record<string, JsonValue>>,
@@ -585,16 +642,12 @@ export class IdaOperationRunner {
       operation === "search_procedures" || operation === "search_strings"
         ? analysisSearchQuerySchema.parse(parameters)
         : undefined;
-    const matches =
-      query === undefined ? undefined : analysisSearchPredicate(query);
     if (operation === "list_procedures" || operation === "search_procedures") {
       const items = (await this.functions()).map((fn) => ({
         address: fn.address,
         value: fn.name,
       }));
-      return matches === undefined
-        ? items
-        : items.filter(({ value }) => matches(value));
+      return this.searchItems(operation, items, query);
     }
     if (operation === "list_strings" || operation === "search_strings") {
       const nativePattern =
@@ -602,8 +655,8 @@ export class IdaOperationRunner {
           ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
           : undefined;
       const items = await this.strings(nativePattern);
-      return matches !== undefined
-        ? items.filter(({ value }) => matches(value))
+      return query !== undefined
+        ? this.searchItems(operation, items, query)
         : parameters.address === undefined
           ? items
           : items.filter(
