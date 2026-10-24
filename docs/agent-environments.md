@@ -719,7 +719,7 @@ every MCP session and `data/get` then see:
 | Effect                    | Call                                                                                                                                                                                                                                                                                                                 |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                 |
-| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, unique and renewed changes the plan models.                                                                                         |
+| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, unique and renewed changes the plan models.                                                                               |
 | `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), with any sent members; it is served only when a recorded call found those fields already set, so a toggle never is. |
 | `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                   |
 | bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).             |
@@ -921,6 +921,9 @@ Known limits of served writes:
   updates require `updated_at` to match the entity (a `held-clock`).
 - A slug derived from a title can repeat across served creates with the same
   title, where the application would make it unique.
+- A `composed` string copies sent text as sent: an application that escapes or
+  renders it (HTML entities, Markdown) differs for text that needs it, as
+  BookStack's `description_html` would for a description holding `&`.
 - A served create's sequence id is the state's next value, not the gaps an
   application's own sequence would leave.
 - Nested clocks are served in the spelling of the write's own response, which

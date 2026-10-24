@@ -8,6 +8,10 @@ import {
   type JsonObject,
 } from "./environmentStateRules.js";
 import type { ClockFormat } from "./environmentStateWriteValues.js";
+import {
+  trimmedLike,
+  type ClockPattern,
+} from "./environmentStateWriteClockFormats.js";
 
 /** What a write tool does to the state, by method and the target its path names. */
 export type WriteEffect = "create" | "update" | "delete" | "document" | "none";
@@ -70,6 +74,12 @@ export type FieldRule =
   | { readonly field: string; readonly rule: "path"; readonly from: string }
   | { readonly field: string; readonly rule: "slug"; readonly from: string }
   | { readonly field: string; readonly rule: "template"; readonly from: string }
+  /** A string rebuilt from literal text and other written fields, in order. */
+  | {
+      readonly field: string;
+      readonly rule: "composed";
+      readonly parts: ComposedPart[];
+    }
   | { readonly field: string; readonly rule: "increment" }
   /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
   | {
@@ -96,6 +106,39 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "set";
       readonly value: JsonValue;
+    };
+
+/** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values` show no fixed width. */
+export const siblingTrimmedClocks = (
+  rules: readonly FieldRule[],
+  values: Readonly<Record<string, JsonValue>> | undefined,
+): FieldRule[] => {
+  const trimmed = rules.find(
+    (rule) =>
+      rule.rule === "clock" &&
+      rule.format.kind === "iso" &&
+      rule.format.trimmed === true,
+  );
+  if (trimmed?.rule !== "clock") return [...rules];
+  return rules.map((rule) => {
+    if (rule.rule !== "clock") return rule;
+    const format = trimmedLike(
+      rule.format,
+      trimmed.format,
+      values?.[rule.field],
+    );
+    return format === rule.format ? rule : { ...rule, format };
+  });
+};
+
+/** One part of a composed string: literal text, or another written field as written, slugged, or as a clock's calendar digits. */
+export type ComposedPart =
+  | { readonly text: string }
+  | { readonly from: string; readonly as: "value" | "slug" }
+  | {
+      readonly from: string;
+      readonly as: "clock";
+      readonly pattern: ClockPattern;
     };
 
 /** Where a create places its entity in its collection's order. */

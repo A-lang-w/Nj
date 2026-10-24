@@ -24,6 +24,7 @@ import {
   stampProblem,
   nestedClockValue,
 } from "./environmentStateWriteStamps.js";
+import { composedValue } from "./environmentStateWriteComposed.js";
 import {
   integerOf,
   readClock,
@@ -260,7 +261,7 @@ const templated = (
     : undefined;
 };
 
-/** Apply the rules that derive from fields already written or the call: slugs, templates and stamps. */
+/** Apply the rules that derive from fields already written or the call: slugs, templates, stamps and composed strings. */
 const derive = (
   rules: readonly FieldRule[],
   observed: JsonObject,
@@ -278,6 +279,12 @@ const derive = (
     else if (rule.rule === "derived" && Object.hasOwn(sent, rule.member))
       written[rule.field] = rule.value;
   }
+  // Composed strings read the fields the rules above wrote.
+  for (const rule of rules)
+    if (rule.rule === "composed") {
+      const value = composedValue(rule.parts, written);
+      if (value !== undefined) written[rule.field] = value;
+    }
 };
 
 /** Members stored only under another name, with the value of the field each is copied whole into, for type checks. */

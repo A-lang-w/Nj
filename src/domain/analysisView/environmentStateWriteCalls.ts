@@ -15,6 +15,7 @@ import { integerOf, slugOf } from "./environmentStateWriteValues.js";
 export const unsentChange = (rule: FieldRule): boolean =>
   rule.rule === "increment" ||
   rule.rule === "slug" ||
+  rule.rule === "composed" ||
   rule.rule === "stamp" ||
   rule.rule === "derived" ||
   rule.rule === "set";

@@ -9,6 +9,8 @@ export type ClockFormat =
       readonly separator: "T" | " ";
       readonly fraction: number;
       readonly zone: string;
+      /** Fraction digits end at the last non-zero one, and the point goes with them, as Go spells nanoseconds; `fraction` is the most shown. */
+      readonly trimmed?: true;
     }
   | { readonly kind: "epoch"; readonly unit: "s" | "ms" };
 
@@ -17,6 +19,8 @@ interface ClockReading {
   /** Nanoseconds after the floored millisecond, so distinct recorded instants stay distinct. */
   readonly subMillisecond: number;
   readonly format: ClockFormat;
+  /** The fraction ends in a zero, which a trimmed spelling never shows, so its width is fixed. */
+  readonly fixedWidth: boolean;
 }
 
 const MINUTE_MS = 60_000;
@@ -37,7 +41,8 @@ const zoneMinutes = (zone: string): number | undefined => {
 export const isClockZone = (zone: string): boolean =>
   zoneMinutes(zone) !== undefined;
 
-const zoneMinutesForFormat = (zone: string): number => {
+/** Minutes east of UTC a stored format's zone names. */
+export const zoneMinutesForFormat = (zone: string): number => {
   const minutes = zoneMinutes(zone);
   if (minutes === undefined)
     throw new TypeError(`Invalid clock zone in a derived format: ${zone}`);
@@ -64,6 +69,8 @@ const readIsoClock = (value: string): ClockReading | undefined => {
       fraction: spelling.fractionDigits,
       zone: spelling.zone,
     },
+    // The instant's fraction drops trailing zeros, so a longer spelling ended in one.
+    fixedWidth: spelling.fractionDigits > instant.fraction.length,
   };
 };
 
@@ -79,12 +86,14 @@ export const readClock = (
       ms: value * 1000,
       subMillisecond: 0,
       format: { kind: "epoch", unit: "s" },
+      fixedWidth: true,
     };
   if (value >= 1e12 && value < 1e13)
     return {
       ms: value,
       subMillisecond: 0,
       format: { kind: "epoch", unit: "ms" },
+      fixedWidth: true,
     };
   return undefined;
 };
@@ -116,7 +125,12 @@ export const formatClock = (
     0,
     format.fraction,
   );
-  return isoText(at, format.separator, digits, format.zone);
+  return isoText(
+    at,
+    format.separator,
+    format.trimmed === true ? digits.replace(/0+$/u, "") : digits,
+    format.zone,
+  );
 };
 
 /**
@@ -147,7 +161,9 @@ export const respellClock = (
     isoText(
       at,
       format.separator,
-      digits.padEnd(format.fraction, "0"),
+      format.trimmed === true
+        ? digits.replace(/0+$/u, "")
+        : digits.padEnd(format.fraction, "0"),
       format.zone,
     ) ?? value
   );
@@ -157,6 +173,26 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 export const isUuid = (value: JsonValue | undefined): value is string =>
   typeof value === "string" && UUID.test(value);
+
+/** Digits a generated integer shows at least, as a time-based id does; counts and codes are shorter. */
+const GENERATED_INTEGER_DIGITS = 10;
+
+/** A large integer's digits, from a safe JSON number or a string of digits without a leading zero. */
+export const generatedIntegerDigits = (
+  value: JsonValue | undefined,
+): string | undefined => {
+  const digits =
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0
+      ? String(value)
+      : typeof value === "string" && /^[1-9]\d*$/u.test(value)
+        ? value
+        : undefined;
+  return digits !== undefined &&
+    digits.length >= GENERATED_INTEGER_DIGITS &&
+    digits.length <= 20
+    ? digits
+    : undefined;
+};
 
 /** An integer value as a number, from a JSON number or a string of digits. */
 export const integerOf = (value: JsonValue | undefined): number | undefined =>
@@ -358,6 +394,20 @@ export const seededLike = (
   uuid || isUuid(exemplar)
     ? seededUuid(seed, String(exemplar))
     : seededToken(seed, String(exemplar));
+
+/** A seeded integer with as many digits as the recorded one and none leading zero, as a number when it is one and stays safe. */
+export const seededInteger = (seed: string, exemplar: JsonValue): JsonValue => {
+  const length = String(exemplar).length;
+  const bytes = seededBytes(seed, length);
+  // A number keeps under the largest safe integer, which a sixteen-digit one starting with 9 can pass.
+  const leading = typeof exemplar === "number" && length >= 16 ? 8 : 9;
+  const digits = [...bytes]
+    .map((byte, index) =>
+      String(index === 0 ? 1 + (byte % leading) : byte % 10),
+    )
+    .join("");
+  return typeof exemplar === "number" ? Number(digits) : digits;
+};
 
 /** A token as long as the recorded one, from its alphabet, keeping its other characters in place. */
 export const seededToken = (seed: string, exemplar: string): string => {
