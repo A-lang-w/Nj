@@ -1057,7 +1057,7 @@ msgstr ""
 "Örneğin, TH08 bize birleştirilmiş programa erken dikkat etmeyi öğretmişti. "
 "Kurtarılan birkaç işlev aynı duruma bağlıysa, yalıtılmış karşılaştırmaları "
 "önemli bir soruyu açık bırakır. Birlikte çalıştıklarını görmeliyiz. Bu ders, "
-"TH095’in tüm program derlemesina nasıl yaklaştığımızı şekillendirmeye "
+"TH095’in tüm program derlemesine nasıl yaklaştığımızı şekillendirmeye "
 "yardımcı oldu."
 
 #: website/public/blog/touhou-reconstruction/index.html:653
@@ -1116,7 +1116,7 @@ msgstr ""
 #: website/public/blog/touhou-reconstruction/index.html:681
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "TH04: the workflow survives a different architecture"
-msgstr "TH04: iş akışı farklı bir farklı mimaride de işliyor"
+msgstr "TH04: iş akışı farklı bir mimaride de işliyor"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/th04">
 #. {ph1}: </a>
@@ -1148,7 +1148,7 @@ msgid ""
 msgstr ""
 "DOS yeniden yapılandırması şimdi çalışıyor. Manuel testimde, sonları boyunca "
 "Normal rotaları tamamladım ve kayıtları kontrol ettim. Mevcut çalışma yerel "
-"bir 64 bit portudur. Çalışan bir DOS sürümü oluşturmak, önce bu portuna bir "
+"bir 64 bit portudur. Çalışan bir DOS sürümü oluşturmak, önce bu porta bir "
 "başvuru verir."
 
 #: website/public/blog/touhou-reconstruction/index.html:697
@@ -2196,7 +2196,7 @@ msgid ""
 "Ask a follow-up: {ph0}“Where is jump height calculated? Add a jump-height "
 "control to the new version.”{ph1}"
 msgstr ""
-"Takip sorusu sorun: {ph0}›Atlama yüksekliği nerede hesaplanır? Yeni sürüme "
+"Takip sorusu sorun: {ph0}“Atlama yüksekliği nerede hesaplanır? Yeni sürüme "
 "bir atlama yüksekliği kontrolü ekleyin.”{ph1}"
 
 #. {ph0}: <a href="https://github.com/wayou/t-rex-
@@ -2528,7 +2528,7 @@ msgid ""
 "Deep native analysis uses one of them. Static JavaScript and .NET inspection"
 " work with the supplied files and do not need a native analysis engine."
 msgstr ""
-"Yerel ikili dosyalarnın derinlemesine analizi bunlardan birini kullanır. "
+"Yerel ikili dosyaların derinlemesine analizi bunlardan birini kullanır. "
 "Statik JavaScript ve .NET denetimi, sağlanan dosyalarla çalışır ve yerel "
 "analiz motoruna ihtiyaç duymaz."
 
@@ -2544,7 +2544,7 @@ msgid ""
 msgstr ""
 "Mevcut Ghidra veya IDA kurulumunuzu bağlayın veya kurulumun Hopper’ı "
 "algılamasına izin verin ve bir kurulum önerin. Ev sahibiniz ve hedefiniz "
-"hangi sağlayıcının kullanılabileceğini belirler. {ph0}Yerel ikili dosyalarnın "
+"hangi sağlayıcının kullanılabileceğini belirler. {ph0}Yerel ikili dosyaların "
 "analizini ayarlayın{ph1}."
 
 #: website/public/faq/index.html:366
@@ -4419,7 +4419,7 @@ msgstr ""
 #: website/public/guides/index.html:229
 msgctxt "page:guides/index.html"
 msgid "Native analysis guide"
-msgstr "Yerel ikili dosyalarnın analizi kılavuzu"
+msgstr "Yerel ikili dosyaların analizi kılavuzu"
 
 #: website/public/guides/index.html:233
 msgctxt "page:guides/index.html"
@@ -4965,7 +4965,7 @@ msgstr "İçeriğe geç"
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / Native analysis"
 msgstr ""
-"{ph0}Ana{ph1} Sayfa / {ph2}Kılavuzlar{ph3} / Yerel ikili dosyalarnın analizi"
+"{ph0}Ana{ph1} Sayfa / {ph2}Kılavuzlar{ph3} / Yerel ikili dosyaların analizi"
 
 #. {ph0}: <br />
 #: website/public/guides/native/index.html:202
@@ -5262,7 +5262,7 @@ msgstr ""
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
 msgstr ""
-"Adımlar için {ph0}Yerel ikili dosyalarnın analizini ayarlama{ph1} konusuna "
+"Adımlar için {ph0}Yerel ikili dosyaların analizini ayarlama{ph1} konusuna "
 "bakın."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
@@ -5526,7 +5526,7 @@ msgstr "Bu sayfada"
 #: website/public/guides/native/index.html:219
 msgctxt "page:guides/native/index.html"
 msgid "Native analysis"
-msgstr "Yerel ikili dosyalarnın analizi"
+msgstr "Yerel ikili dosyaların analizi"
 
 #: website/public/guides/native/index.html:342
 msgctxt "page:guides/native/index.html"
@@ -6235,7 +6235,7 @@ msgstr ""
 #: website/public/index.html:1106
 msgctxt "page:index.html"
 msgid "Native analysis guide"
-msgstr "Yerel ikili dosyalarnın analizi kılavuzu"
+msgstr "Yerel ikili dosyaların analizi kılavuzu"
 
 #: website/public/index.html:1109
 msgctxt "page:index.html"
@@ -6394,7 +6394,7 @@ msgstr "Aegis’i GitHub’da görüntüleyin"
 #: website/public/showcase/aegis/index.html:219
 msgctxt "page:showcase/aegis/index.html"
 msgid "From an APK to a code you can reproduce"
-msgstr "Bir APK’daN yeniden oluşturabileceğiniz bir koda"
+msgstr "Bir APK’dan yeniden oluşturabileceğiniz bir koda"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -8464,7 +8464,7 @@ msgstr "{ph0}Derleyici tekrar ayrıntılarını okuyun{ph1}"
 #: website/public/showcase/dx-ball/index.html:717
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Continue the investigation"
-msgstr "İncelemeya devam et"
+msgstr "İncelemeye devam et"
 
 #: website/public/showcase/dx-ball/index.html:718
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8671,7 +8671,7 @@ msgstr "Android vaka çalışmasını okuyun"
 #: website/public/showcase/index.html:226
 msgctxt "page:showcase/index.html"
 msgid "CTF · Native analysis"
-msgstr "CTF * Yerel ikili dosyalarnın analizi"
+msgstr "CTF * Yerel ikili dosyaların analizi"
 
 #: website/public/showcase/index.html:228
 msgctxt "page:showcase/index.html"
@@ -9100,7 +9100,7 @@ msgid ""
 "Simplified from the packaged JavaScript, with readable variable names. "
 "Unrelated members are omitted."
 msgstr ""
-"Okunabilir değişken adlarıyla paketlenmiş JavaScript’den basitleştirilmiştir. "
+"Okunabilir değişken adlarıyla paketlenmiş JavaScript’ten basitleştirilmiştir. "
 "İlgisiz üyeler atlanır."
 
 #: website/public/showcase/notion/index.html:344
@@ -12413,7 +12413,7 @@ msgid ""
 "candidate fails, the model must decide what the result means for its next "
 "attempt. Knowing the relevant pattern is only the beginning of that process."
 msgstr ""
-"{ph0}›Model, derleyici tuhaflığını bilmiyordu\" ve \"model bunu kullanamadı\" "
+"{ph0}\"Model, derleyici tuhaflığını bilmiyordu\" ve \"model bunu kullanamadı\" "
 "farklı sorunlardır.{ph1} Geri getirme ilk sorunu çözebilir, ancak bu gerçeği "
 "yararlı bir adaya dönüştürmek yine de çalışma gerektirir. Aday kaynak kodu "
 "başarısız olursa modelin bir sonraki denemesinde sonucun ne anlama geldiğine "
@@ -12461,7 +12461,7 @@ msgid ""
 "information. Each of the following experiments helped identify what still "
 "needed to change."
 msgstr ""
-"Geçici sonuçlar örneğini tekrar düşünün. Son kaynağı işe yçağıran düzenlemeyi "
+"Geçici sonuçlar örneğini tekrar düşünün. Son kaynağı işe yarayan düzenlemeyi "
 "gösteriyor ancak bu kaynağa giden yol daha fazla bilgi içeriyor. Aşağıdaki "
 "deneylerin her biri, hâlâ neyin değişmesi gerektiğinin belirlenmesine "
 "yardımcı oldu."
@@ -13355,7 +13355,7 @@ msgid ""
 "If PowerShell later says {ph0}\"running scripts is disabled on this "
 "system\"{ph1} when you run {ph2}, use {ph3} instead. For npm, use {ph4}:"
 msgstr ""
-"Daha sonra {ph2} çalıştırırken PowerShell {ph0}›running scripts is disabled "
+"Daha sonra {ph2} çalıştırırken PowerShell {ph0}\"running scripts is disabled "
 "on this system\"{ph1} derse bunun yerine {ph3} kullanın. npm için {ph4} "
 "kullanın:"
 
