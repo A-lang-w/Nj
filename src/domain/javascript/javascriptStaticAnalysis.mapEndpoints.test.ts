@@ -551,3 +551,41 @@ it.each([
     }),
   );
 });
+
+it.each([
+  ["const box={p:0};box.p=Map.prototype;", false],
+  ["const box={p(){}};box.p=Map.prototype;", false],
+  ["const box={get p(){return 0}};box.p=Map.prototype;", false],
+  ["const box={set p(value){value.get=fetch}};box.p=Map.prototype;", true],
+  ["const box={};box.hook=0;box.p=Map.prototype;", true],
+  ["const box={hook:0};box.hook=0;box.p=Map.prototype;", false],
+  [
+    "const box={set hook(value){this.__proto__={set p(value){value.get=fetch}}}};box.hook=0;box.p=Map.prototype;",
+    true,
+  ],
+  [
+    "let box={};const old=box;box.hook=(box={p:0},0);old.p=Map.prototype;",
+    true,
+  ],
+  ["let box={};box.hook=(box={p:0},0);box.p=Map.prototype;", false],
+])(
+  "preserves own descriptor shadowing and captured setter receivers: %s",
+  (stores, invoked) => {
+    const setter = stores.includes("hook")
+      ? 'Object.defineProperty(Object.prototype,"hook",{set(){this.__proto__={set p(value){value.get=fetch}}}});'
+      : 'Object.defineProperty(Object.prototype,"p",{set(value){value.get=fetch}});';
+    const source = `${setter}${stores}new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);

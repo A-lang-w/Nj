@@ -650,24 +650,47 @@ export const semanticObjectPropertyReferences = (
   );
 };
 
-/** Select accessor descriptors without invoking them or following their return values. */
-export const semanticObjectAccessorReferences = (
+export type JavaScriptOwnDescriptorPresence = "present" | "absent" | "unknown";
+
+/** Select descriptors and their own-slot presence without invoking accessors. */
+export const semanticObjectAccessorSelection = (
   node: t.ObjectExpression,
   key: PropertyPath[number],
   state: JavaScriptSemanticAnalysisState,
   accessor: "get" | "set",
   lookup: "prototype" | "own" = "prototype",
-): readonly JavaScriptSemanticObjectReference[] =>
-  new ObjectReferenceWalk(
+): {
+  readonly references: readonly JavaScriptSemanticObjectReference[];
+  readonly ownDescriptor: JavaScriptOwnDescriptorPresence;
+} => {
+  const walk = new ObjectReferenceWalk(
     node,
     [key],
     new SemanticGetterQuery(state),
     accessor,
     lookup,
-  ).run();
+  );
+  const references = walk.run();
+  return { references, ownDescriptor: walk.ownDescriptor };
+};
+
+/** Array literal elements and length are data slots; holes retain inherited lookup. */
+export const semanticArrayOwnDescriptorPresence = (
+  node: t.ArrayExpression,
+  key: PropertyPath[number],
+): JavaScriptOwnDescriptorPresence => {
+  if (key === null || typeof key === "object") return "unknown";
+  if (String(key) === "length") return "present";
+  const index = semanticArrayIndex(key);
+  if (index === null) return "absent";
+  const spread = node.elements.findIndex(t.isSpreadElement);
+  if (spread >= 0 && index >= spread) return "unknown";
+  return node.elements[index] == null ? "absent" : "present";
+};
 
 class ObjectReferenceWalk {
   readonly #references: JavaScriptSemanticObjectReference[] = [];
+  #ownDescriptorUnknown = false;
   readonly #overwritten = new Set<string>();
   readonly #data = new Set<string>();
   readonly #accessors = new Set<string>();
@@ -705,6 +728,13 @@ class ObjectReferenceWalk {
     const selected = this.#key ?? null;
     if (typeof selected !== "object" && this.#overwritten.has(String(selected)))
       return;
+    if (
+      this.accessor !== undefined &&
+      (!t.isObjectExpression(property.argument) ||
+        objectExpressionOwnKeyPresence(property.argument, String(selected)) ===
+          "unknown")
+    )
+      this.#ownDescriptorUnknown = true;
     // Spread creates data properties; the source descriptor is not installed.
     if (this.accessor === undefined)
       this.#references.push({
@@ -820,6 +850,13 @@ class ObjectReferenceWalk {
     )
       return;
     const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (
+      name === null &&
+      this.#key != null &&
+      typeof this.#key !== "object" &&
+      !this.#overwritten.has(String(this.#key))
+    )
+      this.#ownDescriptorUnknown = true;
     if (this.#prototype(property, name)) return;
     const kind =
       t.isObjectMethod(property) && property.kind !== "method"
@@ -837,6 +874,13 @@ class ObjectReferenceWalk {
     if (name !== null) this.#record(name, kind);
   }
 
+  get ownDescriptor(): JavaScriptOwnDescriptorPresence {
+    if (this.#key == null || typeof this.#key === "object") return "unknown";
+    const key = String(this.#key);
+    if (this.#data.has(key) || this.#accessors.has(key)) return "present";
+    return this.#ownDescriptorUnknown ? "unknown" : "absent";
+  }
+
   run(): readonly JavaScriptSemanticObjectReference[] {
     for (const property of relevantPropertiesInReverse(this.node, this.#key))
       this.#visit(property);
@@ -851,12 +895,13 @@ const objectPropertyReferences = (
 ): readonly JavaScriptSemanticObjectReference[] =>
   new ObjectReferenceWalk(node, path, query).run();
 
-const objectExpressionDefinesKey = (
+const objectExpressionOwnKeyPresence = (
   root: t.ObjectExpression,
   key: string,
-): boolean => {
+): JavaScriptOwnDescriptorPresence => {
   const pending: t.ObjectExpression[] = [root];
   const seen = new Set<t.ObjectExpression>();
+  let unknown = false;
   for (let cursor = 0; cursor < pending.length; cursor++) {
     const object = pending[cursor];
     if (object === undefined || seen.has(object)) continue;
@@ -865,9 +910,11 @@ const objectExpressionDefinesKey = (
       if (t.isSpreadElement(property)) {
         if (t.isObjectExpression(property.argument))
           pending.push(property.argument);
+        else unknown = true;
         continue;
       }
       const name = semanticStaticPropertyKey(property.key, property.computed);
+      if (name === null) unknown = true;
       if (
         name === key &&
         !(
@@ -877,11 +924,16 @@ const objectExpressionDefinesKey = (
           name === "__proto__"
         )
       )
-        return true;
+        return "present";
     }
   }
-  return false;
+  return unknown ? "unknown" : "absent";
 };
+
+const objectExpressionDefinesKey = (
+  root: t.ObjectExpression,
+  key: string,
+): boolean => objectExpressionOwnKeyPresence(root, key) === "present";
 
 export const semanticArrayPropertyReferences = (
   node: t.ArrayExpression,

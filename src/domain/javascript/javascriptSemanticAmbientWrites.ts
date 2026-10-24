@@ -159,7 +159,8 @@ export const semanticStoreMayReachAmbientSetter = (
   )
     return false;
   const prototypeFacts = state.ambientStorePrototypeFacts?.(store);
-  if (key === "__proto__") return prototypeFacts?.directNullPrototype !== true;
+  if (key === "__proto__" && prototypeFacts?.directNullPrototype === true)
+    return false;
   const applicable =
     prototypeFacts === undefined
       ? candidates

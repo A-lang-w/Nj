@@ -50,7 +50,9 @@ import {
   semanticClassPropertyReferences,
   semanticClassAccessorReferences,
   semanticObjectPropertyReferences,
-  semanticObjectAccessorReferences,
+  semanticObjectAccessorSelection,
+  semanticArrayOwnDescriptorPresence,
+  type JavaScriptOwnDescriptorPresence,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
 import {
@@ -141,6 +143,7 @@ const localAccessorMethods = (
     readonly requireLocalProof?: boolean;
     readonly beforeStore?: SemanticBeforeStore;
     readonly lookup?: "prototype" | "own";
+    readonly ownDescriptors?: JavaScriptOwnDescriptorPresence[];
   },
 ): readonly (t.ObjectMethod | t.ClassMethod)[] | undefined => {
   if (!selection.keyMayExist(path.at(-1), accessor)) return [];
@@ -297,21 +300,30 @@ const localAccessorMethods = (
       (t.isObjectExpression(node) || t.isArrayExpression(node))
     ) {
       const [selected, ...remaining] = current.path;
-      // Array literal slots are data properties. Selecting the slot itself
-      // cannot invoke an accessor on the value stored in that slot.
-      const references = t.isArrayExpression(node)
-        ? remaining.length === 0
-          ? []
-          : semanticArrayPropertyReferences(node, [selected!])
-        : remaining.length === 0
-          ? semanticObjectAccessorReferences(
+      const descriptor =
+        remaining.length === 0 && t.isObjectExpression(node)
+          ? semanticObjectAccessorSelection(
               node,
               selected!,
               state,
               accessor,
               lookup,
             )
-          : semanticObjectPropertyReferences(node, [selected!], state);
+          : undefined;
+      if (remaining.length === 0)
+        selection.ownDescriptors?.push(
+          t.isArrayExpression(node)
+            ? semanticArrayOwnDescriptorPresence(node, selected!)
+            : descriptor!.ownDescriptor,
+        );
+      // Array literal slots are data properties; descriptor selection must not
+      // invoke an accessor on the value stored in the selected element.
+      const references = t.isArrayExpression(node)
+        ? remaining.length === 0
+          ? []
+          : semanticArrayPropertyReferences(node, [selected!])
+        : (descriptor?.references ??
+          semanticObjectPropertyReferences(node, [selected!], state));
       // An unresolved intermediate receiver cannot prove absence of a setter.
       if (
         selection.requireLocalProof &&
@@ -329,6 +341,7 @@ const localAccessorMethods = (
           ),
         });
     } else if (t.isNullLiteral(node)) {
+      selection.ownDescriptors?.push("absent");
       // A null prototype terminates inherited descriptor selection.
       continue;
     } else if (
@@ -338,6 +351,7 @@ const localAccessorMethods = (
       const creation = state.nativeObjectCreationAt(node)!;
       if (!creation.ownPropertiesEmpty || current.path.length > 1)
         return undefined;
+      selection.ownDescriptors?.push("absent");
       if (lookup === "prototype")
         pending.push({
           node: creation.prototype,
@@ -1671,13 +1685,27 @@ export function* collectSemanticMemberMutationsSteps(
     const target = source.target;
     if (target === undefined) return true;
     const key = semanticStaticPropertyKey(target.property, target.computed);
+    const ambientSetter = semanticStoreMayReachAmbientSetter(state, key, {
+      mutation: source.mutation,
+      target,
+    });
+    const ownDescriptors: JavaScriptOwnDescriptorPresence[] = [];
+    const ownSetters =
+      ambientSetter || accessorKeyMayExist(key, "set")
+        ? localAccessorMethods(target.object, [key], "set", state, {
+            ...completeSetterSelection,
+            beforeStore: { mutation: source.mutation, target },
+            lookup: "own",
+            ownDescriptors,
+          })
+        : undefined;
     if (
-      semanticStoreMayReachAmbientSetter(state, key, {
-        mutation: source.mutation,
-        target,
-      })
+      ownSetters !== undefined &&
+      ownDescriptors.length > 0 &&
+      ownDescriptors.every((presence) => presence === "present")
     )
-      return true;
+      return ownSetters.length > 0;
+    if (ambientSetter) return true;
     const prototypeFacts = state.ambientStorePrototypeFacts?.({
       mutation: source.mutation,
       target,
@@ -1690,11 +1718,36 @@ export function* collectSemanticMemberMutationsSteps(
       });
       if (accessors === undefined || accessors.length > 0) return true;
     }
+    if (prototypeFacts !== undefined && ownDescriptors.length > 0)
+      return ownSetters === undefined || ownSetters.length > 0;
     const setters = localAccessorMethods(target.object, [key], "set", state, {
       ...completeSetterSelection,
       beforeStore: { mutation: source.mutation, target },
     });
     return setters === undefined || setters.length > 0;
+  };
+  const exposeStoreReceiver = (source: SemanticIterationSource): void => {
+    if (source.target === undefined) return;
+    const key = semanticStaticPropertyKey(
+      source.target.property,
+      source.target.computed,
+    );
+    if (
+      !accessorKeyMayExist(key, "set") &&
+      !semanticStoreMayReachAmbientSetter(state, key, {
+        mutation: source.mutation,
+        target: source.target,
+      })
+    )
+      return;
+    markValue(
+      source.target.object,
+      [],
+      new Set(),
+      "escape",
+      source.mutation,
+      source.target.object,
+    );
   };
   const writeOnlyMembers = new WeakSet<t.Node>();
   yield* traverseJavaScriptAstSteps(program, {
@@ -1706,15 +1759,35 @@ export function* collectSemanticMemberMutationsSteps(
       for (const source of semanticIterationSources(node, parent)) {
         // Local stores retain their sources on member writes. Only the ambient
         // identity owner can establish that storing itself exposes a reference.
+        const target = source.target;
+        const setterCandidate =
+          source.kind === "reference-store" &&
+          target !== undefined &&
+          (accessorKeyMayExist(
+            semanticStaticPropertyKey(target.property, target.computed),
+            "set",
+          ) ||
+            semanticStoreMayReachAmbientSetter(
+              state,
+              semanticStaticPropertyKey(target.property, target.computed),
+              { mutation: source.mutation, target },
+            ));
+        const invokesSetter =
+          source.kind === "reference-store" &&
+          (target === undefined ||
+            !state.escapingReferenceStores.has(target) ||
+            setterCandidate) &&
+          storeMayInvokeSetter(source);
         if (
           source.kind === "reference-store" &&
           source.target !== undefined &&
           !state.escapingReferenceStores.has(source.target) &&
-          !storeMayInvokeSetter(source)
+          !invokesSetter
         ) {
           deferredLocalStores.add(source);
           continue;
         }
+        if (invokesSetter) exposeStoreReceiver(source);
         deferIterable({
           ...source,
           path: source.projection,
@@ -1904,6 +1977,7 @@ export function* collectSemanticMemberMutationsSteps(
     for (const source of deferredLocalStores) {
       if (!storeMayInvokeSetter(source)) continue;
       deferredLocalStores.delete(source);
+      exposeStoreReceiver(source);
       deferIterable({
         ...source,
         path: source.projection,
