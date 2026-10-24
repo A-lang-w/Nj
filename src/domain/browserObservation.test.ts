@@ -263,7 +263,9 @@ describe("browser observation CSS variables contracts", () => {
       }).success,
     ).toBe(false);
   });
+});
 
+describe("browser CSS variables item and summary schemas", () => {
   it("validates bounded CSS variables schema against token limits", () => {
     const valid = {
       status: "included" as const,
@@ -377,12 +379,19 @@ describe("browser observation CSS variables contracts", () => {
     ).toBe(true);
 
     // Preserves whitespace verbatim without trimming producer values
+    // Preserves whitespace verbatim in values and rejects untrimmed property names without mutation
     const itemWithWhitespace = { name: "--spaced-val", value: " 16px " };
     const parsedWithWhitespace = browserCssVariablesSchema.parse({
       ...valid,
       items: [itemWithWhitespace],
     });
     expect(parsedWithWhitespace.items[0]?.value).toBe(" 16px ");
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...valid,
+        items: [{ name: " --spaced-name ", value: "16px" }],
+      }).success,
+    ).toBe(false);
 
     // Accepts Unicode and non-ASCII custom property names
     const unicodeItem = { name: "--顏色", value: "#ffffff" };
@@ -406,5 +415,18 @@ describe("browser observation CSS variables contracts", () => {
     };
     const result = analyzeWebBundleInputSchema.safeParse(bundleInput);
     expect(result.success).toBe(false);
+
+    // Preserves shared storage option validation in analyzeWebBundleInputSchema
+    const conflictingStorageInput = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "PAGE_1",
+      include_script_sources: true,
+      include_storage_fingerprints: true,
+      include_storage_keys: false,
+    };
+    const storageResult = analyzeWebBundleInputSchema.safeParse(
+      conflictingStorageInput,
+    );
+    expect(storageResult.success).toBe(false);
   });
 });

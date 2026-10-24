@@ -245,8 +245,11 @@ type InspectWebPageShape =
   | z.output<typeof inspectWebPageWithoutSourceSchema>
   | z.output<typeof inspectWebPageWithSourceShapeSchema>;
 
-const refineInspectWebPageInput = (
-  input: InspectWebPageShape,
+export const refineBrowserStorageInput = (
+  input: {
+    readonly include_storage_fingerprints?: boolean;
+    readonly include_storage_keys?: boolean;
+  },
   context: z.RefinementCtx,
 ): void => {
   if (input.include_storage_fingerprints && !input.include_storage_keys)
@@ -255,6 +258,13 @@ const refineInspectWebPageInput = (
       path: ["include_storage_fingerprints"],
       message: "Storage fingerprints require storage key capture",
     });
+};
+
+const refineInspectWebPageInput = (
+  input: InspectWebPageShape,
+  context: z.RefinementCtx,
+): void => {
+  refineBrowserStorageInput(input, context);
 };
 
 /** Caller schema for source-capturing inspection and bundle analysis. */

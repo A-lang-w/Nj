@@ -13,6 +13,7 @@ import { emptyArraySchema } from "./emptyArraySchema.js";
 import {
   analyzeWebBundleBaseShapeSchema,
   recordedBrowserOriginSchema,
+  refineBrowserStorageInput,
 } from "./browserObservation.js";
 import {
   webTextArtifactMetadataSchema,
@@ -58,6 +59,7 @@ export const analyzeWebBundleInputSchema = analyzeWebBundleBaseShapeSchema
     ),
   })
   .superRefine((input, context) => {
+    refineBrowserStorageInput(input, context);
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =
