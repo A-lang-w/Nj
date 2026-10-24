@@ -94,6 +94,14 @@ content. Actual JSON properties with those names remain content. Reference-only
 objects, unsupported values, and opaque cookie partition identities remain
 incomplete. Previously exported fingerprints are not recomputed; recapture both
 sides when comparing captures produced across this decoder change.
+IndexedDB schema fingerprints with `projection_version: 2` include the observed
+database version and object-store definitions. A missing, malformed, or imprecise
+version leaves the schema fingerprint incomplete while retaining observed store
+facts. Historical fingerprints without this marker covered object stores only:
+matching historical hashes cannot establish unchanged database versions, and a
+historical hash is not compared with a version-bearing hash. Recapture both
+sides for a complete IndexedDB version comparison; other proven storage changes
+remain reportable.
 
 Script comparison groups observations by reported URL and compares unordered
 content samples. Producer inventory keys include optional metadata, so a changed
@@ -371,9 +379,17 @@ REA establishes a main-frame origin boundary before enabling Runtime, Debugger, 
 An observed navigation also takes precedence over failures from stale
 document reads, such as a script ID invalidated by reload; cancellation remains
 cancellation. Retry after navigation settles, or refresh target discovery if
-the selected page was replaced. Screenshot origin refusals identify the
-current document's permitted-origin scope and direct the caller to select a
-permitted document or explicitly revise `allowed_origins`.
+the selected page was replaced. Origin-scope refusals from page inspection,
+runtime observation, screenshots, and WebMCP discovery explain the permitted
+HTTP(S) origin scope and direct the caller to select a permitted document or
+explicitly revise `allowed_origins`. Page capture also preserves an observed
+main-frame scope violation when a later document read fails. An unresolved
+initial main frame does not establish an origin violation; its bounded startup
+retries retain a distinct refusal.
+
+Screenshot capture requires a valid main-frame identity. Malformed identity
+produces a protocol failure; a readable child frame cannot substitute for the
+main frame.
 
 The web-session timeline uses CDP monotonic seconds where the event producer
 provides a comparable timestamp; absent or invalid timestamps are `null` rather
@@ -396,8 +412,12 @@ allowance; exhaustion fails the observation explicitly instead of guessing scope
 
 ## Data minimization
 
-The Link projection parses repeated CDP header field lines independently and
-retains their declarations in order. Each link keeps its target in `href` and
+Response metadata parses repeated CDP header field lines independently. The
+Link projection retains their declarations in order. `csp.directives` lists the
+directives of every CSP policy in order, across field lines and comma-separated
+policies, without recording policy boundaries, so a directive name can repeat.
+Single-valued policy fields combine their lines as one comma-separated value,
+as RFC 9110 specifies. Each link keeps its target in `href` and
 its relationship context in `context_url` with a separate `context_scope`;
 absent `anchor` uses the response URL, while a relative `anchor` resolves
 against that URL. Anchored links remain in the projection, but a `link_rel`
@@ -421,7 +441,7 @@ REA retains local observation data and removes only URL userinfo credentials, ex
 - Supported DOM URL attributes are projected separately as resolved destinations. Empty `action` on HTML or XHTML forms and empty `formaction` on HTML or XHTML submit controls resolve to the document URL; other relative URL attributes resolve against the captured document base.
 - Accessibility structure and reported roles are retained by default, while names and descriptions require `include_accessibility_text: true`. The browser protocol may omit an individual role; that role remains unknown for comparison. Other observed accessibility differences can still establish a change.
 - Network observations retain method, status, MIME type, size, type, initiator stack location, and complete URLs with userinfo credentials removed. Redirects reported by CDP are attached as ordered `redirects` on the one request ID, with the prior request URL, CDP response URL, method/type, response status/MIME/encoded length, request timestamp, and the next `requestWillBeSent` event timestamp. CDP delivers `redirectResponse` with that next request event, so the latter is an event boundary rather than an exact response timestamp. Redirect response headers and bodies are discarded; hops outside the selected origins are discarded with the request chain. Headers are discarded after an allowlisted projection of length/encoding, structured CSP/Link/policy fields, and untrusted agent hints. Cookies and authorization headers are never retained.
-- Request/response bodies are not requested or parsed by default. When selected, only allowed-origin JSON media types are read, converted immediately to complete value-free typed paths, types and observation counts, and discarded. Each path segment is either `{ "kind": "property", "name": "raw property name" }` or `{ "kind": "array-element" }`; array-element types include primitives and nested arrays. Literal `*` properties remain distinct from array elements. `Network.getResponseBody` is never sent unless JSON body shape capture is selected. A JSON-typed request body that CDP reports through `hasPostData` but omits from `postData`, or that cannot be parsed as JSON, makes `json_body_shapes` unavailable. That request's `body_shapes.status` is `partial`, not `included`, when only its response shape was captured. Comparison uses body shapes only when both captures selected them, and compares request/response shapes only where both observations provide those facts. Unavailable or truncated selected coverage makes equivalence unknown; observed differences still report changed.
+- Request/response bodies are not requested or parsed by default. When selected, only allowed-origin JSON media types are read, converted immediately to complete value-free typed paths, types and observation counts, and discarded. Each path segment is either `{ "kind": "property", "name": "raw property name" }` or `{ "kind": "array-element" }`; array-element types include primitives and nested arrays. Literal `*` properties remain distinct from array elements. `Network.getResponseBody` is never sent unless JSON body shape capture is selected. A JSON-typed request body that CDP reports through `hasPostData` but omits from `postData`, or that cannot be parsed as JSON, makes `json_body_shapes` unavailable. That request's `body_shapes.status` is `partial`, not `included`, when only its response shape was captured. Base64 response bytes must be valid UTF-8 before JSON interpretation; invalid bytes leave the response shape unavailable and preserve any observed request shape and network metadata. Producer-decoded strings and genuine U+FFFD characters retain their reported meaning. Comparison uses body shapes only when both captures selected them, and compares request/response shapes only where both observations provide those facts. Unavailable or truncated selected coverage makes equivalence unknown; observed differences still report changed.
   For normalized passive inputs with complete request inventories on both sides,
   request additions and removals remain observable even when selected body shapes,
   response metadata, or WebSocket coverage are unavailable. HTTP request and

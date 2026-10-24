@@ -88,11 +88,11 @@ Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
 `REA_MCP_MAX_RESPONSE_BYTES`.
 Detected provider settings replace only matching environment keys.
-Setup manages REA's launcher, selected provider settings, and supported timeout
-defaults. Client approval policies remain user choices, but the current Codex
-refresh drops those policies inside the REA entry; see the
-[Codex preservation limitation](client-configuration.md#codex-and-devin) before
-refreshing a customized registration.
+Setup manages REA's launcher, selected provider settings, and recommended timeout
+defaults. Codex approval policies, tool selections, and other caller-owned server
+settings are preserved. Known malformed policy values block setup before it
+writes the configuration or a backup; see
+[Codex settings preservation](client-configuration.md#codex-and-devin).
 Setup and doctor report a malformed REA environment map or invalid runtime
 setting before setup writes files. Repair the named setting in the client
 configuration; setup does not silently discard the rest of the map.
@@ -745,6 +745,18 @@ may conflict with Hopper's versioned `zlib` dependency. Resolve the package
 conflict yourself, install Hopper's official package manually, or use another
 provider such as Ghidra; rerun `rea setup` after installing Hopper.
 
+If setup cannot finish releasing its resources, a normally returned structured
+result reports `needs_human` and includes `cleanup.reason` with the identified
+paths in `cleanup.resources`. A thrown typed failure reports the same retained
+paths in `details.resources`, preserving the primary failure separately. Reasons
+that do not identify a resource remain explicit without guessing paths from text.
+For in-process callers retaining REA's setup host, a successful retry of its close
+updates the original failure's cleanup state and removes released resource labels.
+Custom `SetupHost` implementations must bind returned or thrown cleanup errors
+to their resource owners to provide the same live recovery. An ownerless error
+remains an unconfirmed snapshot: `runSetup` does not observe later direct calls
+to the caller's port or replace that port's methods.
+
 The supported Linux demo forwards additional launches into its existing
 application, even across private displays. REA therefore reserves one Linux
 Hopper application per user across cooperating REA processes. A competing
@@ -985,9 +997,13 @@ Target admission preserves recognized PE/NE/LE/LX signatures separately from
 reader layout support. A Windows header overlapping the first 64 DOS-header
 bytes remains an unsupported layout in this release; it is not reported as an
 invalid offset. Tiny PE files with short optional headers have additional
-unverified loader requirements. Unconfirmed nonzero DOS padding remains an
-unresolved Windows-header candidate, with independently validated DOS facts in
-the target error diagnostics; those facts do not prove a Windows header absent.
+unverified loader requirements. A nonzero Windows-header pointer without a
+recognized signature remains an unresolved candidate, with independently
+validated DOS facts in the target error diagnostics; those facts do not prove a
+Windows header absent. When a nonempty relocation table ends inside a complete
+DOS header, the remaining header bytes are DOS padding, so a nonzero dword
+there is not a Windows declaration. An unread signature beyond the current
+probe is requested before that padding rule applies.
 On Linux and macOS, `annotate_native_function` also edits a function name and/or
 entry comments atomically and returns refreshed analysis, and `set_address_name`
 and `set_addresses_names` name a function entry or any other mapped address
@@ -1180,7 +1196,28 @@ One session contains exactly one imported Program; use `provider_id: "ghidra"`, 
 One persistent decompiler is owned by the Program, and a serial queue keeps
 Ghidra API calls on the owning Program thread without a fixed queue length.
 Operations run until a result, caller cancellation, or provider shutdown; there
-is no fixed per-operation or response-size ceiling. Unresolved computed calls
+is no fixed per-operation or response-size ceiling. Cancelling an operation that
+is already running stops the Ghidra session, so one function whose
+decompilation runs past the MCP client's deadline costs the whole import.
+`REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` (an integer from 1 to 2,147,483; absent by
+default, which leaves decompilation unbounded) bounds each native decompile
+instead. This maximum keeps Ghidra’s signed 32-bit seconds-to-milliseconds
+conversion from overflowing. The client must still support a deadline covering
+startup, that limit and operation headroom. Ghidra stops that one decompile and starts a fresh decompiler process
+for the next request. `analyze_function` still returns the function's assembly,
+references and basic blocks, with pseudocode, `native_api` and
+`native_value_flow` unavailable for the reason "exceeded the N-second limit",
+and that dossier is not saved to analysis snapshots. `procedure_pseudo_code`
+fails with `provider_timeout` and that message; other Ghidra tools stay
+available. If the caller also cancels while the timeout settles, the session
+still closes and the message says so. Session reuse concerns an active MCP or
+library session; a standalone CLI command still closes its own session when it
+finishes. The limit is read when a Ghidra session
+starts, and Codex/Kimi registrations derived by `rea setup` add it to the tool
+deadline as a single-decompile estimate. A bulk call can need that limit for
+every attempted function plus listing and file work; select the client deadline
+for the workload, split batches, use `decompile_all` limit/resume, or reduce
+`trace_native_values` `max_functions` to select fewer serial decompiles. Ghidra's own interactive default is 30 seconds. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
 

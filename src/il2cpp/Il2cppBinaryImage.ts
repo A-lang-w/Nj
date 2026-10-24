@@ -2,6 +2,7 @@ import {
   readFatContainerHeader,
   validateFatSlice,
 } from "../domain/apple/machoContainer.js";
+import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -127,6 +128,7 @@ export function* openImageSteps(
     if (container.format === "elf")
       relocated = yield* applyElfRelativeRelocationsSteps(
         image,
+        container.elf,
         container.mappings,
         container.zero_fills,
       );
@@ -144,7 +146,11 @@ export function* openImageSteps(
   let machoPointerFixups: PointerFixups | undefined;
   if (container.format === "macho") {
     try {
-      const layout = parseMachoLayout(image, container.architecture);
+      const layout = parseMachoLayout(
+        image,
+        binaryMetadataArchitecture(container.architecture) ??
+          container.architecture,
+      );
       machoPointerFixups = parsePointerFixups(
         image,
         layout.fixups,
@@ -233,6 +239,9 @@ export const readUInt32 = (
     throw cause;
   }
 };
+
+/** Exact lowercase hexadecimal form of an address in reports and issues. */
+export const hexAddress = (value: bigint) => `0x${value.toString(16)}`;
 
 export const isMapped = (image: NativeImage, address: bigint, size: number) => {
   try {

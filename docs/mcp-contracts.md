@@ -21,10 +21,23 @@ as an upstream tool's original report, and is `null` when there is none. The sam
 record is retained in the session bundle. `analysis_profile` is always present:
 a concrete profile object or `null`; either value participates in semantic
 identity. Records omitting this field are rejected. Pass the returned Evidence
-directly to a compatible comparison tool: `analyze_function` Evidence can be passed
-directly to `compare_functions`, and `inspect_artifact` Evidence to
-`compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
+directly to a compatible comparison tool: complete `analyze_function` Evidence
+can be passed directly to `compare_functions`, and `inspect_artifact` Evidence
+to `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
+
+`analyze_function` does not deliver its complete record by default. Without
+`detail`, it retains the complete dossier in the session and returns
+`inspect_analysis_view` summary Evidence whose
+`normalized_result.parent_evidence_id` names that dossier; see
+[retained analysis Evidence](#retained-application-evidence-inputs). Page the
+dossier with `inspect_analysis_view`. Tools that consume function dossiers
+reject the summary record. Give `compare_functions` the retained dossier as
+`{"kind": "retained-evidence", "evidence_id": "<parent_evidence_id>"}`; give
+`match_native_functions` the same reference inside `left_observations` or
+`right_observations`, since its `left` and `right` take `list_procedures`
+Evidence. Request `detail: "complete"` for `build_call_path`, which accepts
+only inline complete dossiers.
 
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
@@ -55,11 +68,14 @@ byte correspondence or decode the map's original source paths.
 Artifact inventories declare `coverage.scope` (`root` or `container-entries`)
 and `coverage.status` (`complete` or `unknown`) independently of diagnostic
 wording. Comparison requires matching scopes, complete graph members and complete
-traversal coverage before concluding equality. A fully observed root without
-container children can be `unchanged`; its scope notice stays in `limitations`
-without creating a gap. Content and executable metadata changes still produce
-root deltas. Missing graph members yield `truncated`; unknown traversal coverage
-or unavailable occurrence hashes retain uncertainty. Integrity mismatches remain
+traversal coverage before concluding equality. Fully observed roots can be
+`unchanged` within root scope; their scope notice stays in `limitations` without
+creating a gap. Root-scoped equality establishes equality of the observed root
+bytes. Child-container presence and unexamined format details remain unresolved,
+including when the root format is `unknown`. Content and executable metadata
+changes still produce root deltas. Missing graph members yield `truncated`;
+unknown traversal coverage or unavailable occurrence hashes retain uncertainty.
+Integrity mismatches remain
 contradictions. Static artifact equality does not establish unchanged runtime
 behavior.
 Source-map relation deltas include the content identity of the mapped source,
@@ -160,6 +176,11 @@ sets `truncated: true`; any path already supported by observed edges remains
 visible. When a requested goal is not reached but an expansion is unresolved,
 `goal_status` is `unknown`; `not_reached` means traversal exhausted without
 unresolved relationship reads. Cancellation remains a tool error.
+
+`trace_feature` validates each reference's containing-procedure resolution using
+the same contract as navigation context. Explicit absence remains a successful
+negative observation; malformed provider replies return `unreadable_output`
+for `resolve_containing_procedure` before successful-result projection.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
@@ -346,11 +367,13 @@ after target content was read.
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
-`inspect_wasm_artifact`, `inspect_macho`, and `decode_interface_builder`
-accept `detail`:
-`complete` (default) returns the complete analysis Evidence; `summary` records
+`inspect_wasm_artifact`, `inspect_macho`, `decode_interface_builder`, and
+`analyze_function` accept `detail`:
+`complete` returns the complete analysis Evidence; `summary` records
 that complete Evidence in the session and returns the derived
-`inspect_analysis_view` summary Evidence instead. Its
+`inspect_analysis_view` summary Evidence instead. `complete` is the default
+except for `analyze_function`, whose dossier can reach several megabytes of
+value flow and references, so it defaults to `summary`. Its
 `normalized_result.parent_evidence_id` and `evidence_links` name the retained
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
@@ -935,6 +958,13 @@ deadlines remain unchanged. Doctor reports an informational recommendation
 when a configured deadline is shorter than the known provider allowance. An
 explicit JEB upstream deadline (`REA_JEB_MCP_TIMEOUT_MS`, shared by catalog
 discovery and each tools/call) also contributes to that allowance.
+An explicit `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` is added to the Ghidra startup
+allowance as a single-decompile estimate. A multi-function call needs a client
+deadline covering every attempted decompile plus other work; the static
+registration value does not bound an arbitrary batch or `trace_native_values`
+traversal. Split batches, use `decompile_all` limit/resume, or reduce the trace
+`max_functions` to select work for the whole-call deadline. Existing caller
+deadlines remain unchanged.
 
 For an already connected client using the pinned SDK, request options are the
 **second** argument of `callTool`:

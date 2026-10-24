@@ -19,7 +19,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import {
   fixtureDosLoadImage,
   compareDosClientFixture,
@@ -86,8 +85,9 @@ const installationHost = (
 const provider = (
   host = installationHost(),
   clientFactory?: GhidraProviderClientFactory,
+  environment: Readonly<Record<string, string>> = {},
 ): GhidraProvider => {
-  const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
+  const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL, ...environment });
   if (!config.ok) throw config.error;
   return new GhidraProvider(
     config.value,
@@ -702,12 +702,13 @@ describe("Ghidra platform support", () => {
 
 describe("Ghidra Windows platform support", () => {
   it("keeps Windows P0 unavailable until native isolation authority exists", async () => {
+    const reason = "Authored native artifact unavailable diagnostic";
     const native = vi
       .spyOn(nativeLoader, "systemWindowsNativeAuthority")
       .mockReturnValue({
         available: false,
         failureStage: "artifact",
-        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        reason,
       });
     onTestFinished(() => native.mockRestore());
     const ghidra = provider(installationHost("win32"));
@@ -727,9 +728,7 @@ describe("Ghidra Windows platform support", () => {
     expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "runtime_missing",
-      reason: expect.stringContaining(
-        "Windows native controls are unavailable",
-      ),
+      reason,
       diagnostics: {
         windows_native_failure: {
           stage: "artifact",
@@ -1365,6 +1364,169 @@ describe("Ghidra decompiler failure projection", () => {
       expect(projected.remediation.action).not.toContain("rea doctor");
     }
   });
+
+  it("reports one procedure's decompile limit as a request timeout", async () => {
+    const code = "decompile_timed_out";
+    const message =
+      "Ghidra decompilation of 0x401000 exceeded the 5-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS";
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () =>
+          Promise.resolve(
+            err(
+              new GhidraSessionError(
+                "remote",
+                message,
+                { remote_code: code },
+                { remoteCode: code },
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(ok(null)),
+      }),
+      { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "5" },
+    );
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
+    // Not a ProviderAdapterError: BinarySession keeps other Ghidra
+    // operations available after a request-level timeout.
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisTimeoutError", timeoutMs: 5000 },
+    });
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "provider_timeout",
+        retryable: true,
+        message: `${message}. Only this procedure's decompilation was stopped; the Ghidra session remains usable.`,
+        recovery: { kind: "inspect_timeout_state", timeout_ms: 5000 },
+        details: { diagnostics: { remote_code: code } },
+      });
+      const action = projected.remediation.action;
+      expect(action).toContain("analyze_function");
+      expect(action).toContain("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS");
+      expect(action).toContain("tool-call deadline");
+      expect(action).toContain("new Codex/Kimi registrations");
+      expect(action).toContain("preserves existing positive values");
+      expect(action).toContain("edit existing deadlines yourself");
+      expect(action).not.toContain("rea doctor");
+    }
+  });
+});
+
+describe("Ghidra failures during cancellation cleanup", () => {
+  it.each(
+    [
+      {
+        remoteCode: "decompile_failed",
+        projectedCode: "execution_failure",
+        message: "Ghidra decompilation failed: Injected backend failure",
+      },
+      {
+        remoteCode: "decompile_timed_out",
+        projectedCode: "provider_timeout",
+        message:
+          "Ghidra decompilation of 0x401000 exceeded the 5-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+      },
+      {
+        remoteCode: "regex_stack_exhausted",
+        projectedCode: "resource_constraint",
+        message:
+          "Ghidra's Java regex engine exhausted its stack while matching pattern (a+)+$.",
+      },
+    ].flatMap((entry) => [
+      { ...entry, cancelled: false, cleanupFailed: false },
+      { ...entry, cancelled: true, cleanupFailed: false },
+      { ...entry, cancelled: true, cleanupFailed: true },
+    ]),
+  )(
+    "reports observed session state for $remoteCode (cancelled: $cancelled, cleanup failed: $cleanupFailed)",
+    async ({
+      remoteCode,
+      projectedCode,
+      message,
+      cancelled,
+      cleanupFailed,
+    }) => {
+      const cleanup = new ProviderCleanupError("ghidra", ["owned session"], {
+        reason: "Fixture cleanup still needs retry",
+      });
+      const observed = new GhidraSessionError(
+        "remote",
+        message,
+        { remote_code: remoteCode },
+        { remoteCode },
+      );
+      const remote = cancelled
+        ? observed.withConcurrentCancellation({ reason: "client deadline" })
+        : observed;
+      const ghidra = provider(
+        installationHost(),
+        () => ({
+          start: () => Promise.resolve(ok(sessionInfo())),
+          callTool: () =>
+            Promise.resolve(
+              err(cleanupFailed ? remote.withCleanupFailure(cleanup) : remote),
+            ),
+          close: () => Promise.resolve(ok(null)),
+        }),
+        { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "5" },
+      );
+      const client = await createElfClient(ghidra);
+      const result =
+        remoteCode === "regex_stack_exhausted"
+          ? await client.execute("search_procedures", { pattern: "(a+)+$" })
+          : await client.execute("procedure_pseudo_code", {
+              procedure: "main",
+            });
+      if (result.ok) throw new Error("Expected the observed remote failure");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe(
+        cleanupFailed ? "cleanup_incomplete" : projectedCode,
+      );
+      expect(projected.message).toContain(message);
+      if (!cancelled) {
+        expect(projected.message).toContain(
+          remoteCode === "regex_stack_exhausted"
+            ? "remain available"
+            : "remains usable",
+        );
+        expect(projected.remediation.action).not.toContain("remain available");
+        return;
+      }
+      const explanation = JSON.stringify(projected);
+      expect(explanation).not.toContain("remains usable");
+      expect(explanation).not.toContain("remain available");
+      expect(explanation).toContain(
+        cleanupFailed
+          ? "retry retained cleanup"
+          : "REA closed the Ghidra session",
+      );
+      if (cleanupFailed) {
+        expect(explanation).not.toContain(
+          "the next request starts a new session",
+        );
+        expect(result.error).toMatchObject({ cleanupIncomplete: true });
+      }
+      expect(projected.details).toMatchObject({
+        diagnostics: cleanupFailed
+          ? {
+              primary_error: {
+                code: projectedCode,
+                details: {
+                  diagnostics: { session_closed_by_cancellation: true },
+                },
+              },
+            }
+          : { session_closed_by_cancellation: true },
+      });
+    },
+  );
 });
 
 describe("Ghidra PE CodeView debug symbol limitations", () => {
@@ -3655,7 +3817,7 @@ const failureOutput = (stdout = "", stderr = "") => ({
   }),
 });
 const projectFailure = async (
-  kind: "cancelled" | "process" | "protocol" | "remote" | "timeout",
+  kind: "cancelled" | "process" | "protocol" | "remote" | "start" | "timeout",
   diagnostics: Readonly<Record<string, JsonValue>>,
 ) => {
   const ghidra = provider(installationHost(), () => ({
@@ -3937,6 +4099,7 @@ describe("Ghidra SIGKILL projection", () => {
     async (kind) => {
       const projected = await projectFailure(kind, {
         ...killed,
+        stop_requested: false,
         memory_cgroup: cgroup(1, 3_221_225_472),
       });
       expect(projected).toMatchObject({
@@ -3966,6 +4129,7 @@ describe("Ghidra SIGKILL projection", () => {
   ] as const)("reports %s as observed", async (_name, memoryMax) => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       memory_cgroup: cgroup(2, memoryMax),
     });
     expect(projected).toMatchObject({
@@ -3974,27 +4138,40 @@ describe("Ghidra SIGKILL projection", () => {
     });
   });
 
-  it("does not attribute a SIGKILL sent while REA was stopping Ghidra", async () => {
-    const projected = await projectFailure("process", {
+  it.each([
+    { state: "unreported", stop: {} },
+    { state: "requested", stop: { stop_requested: true } },
+  ] as const)(
+    "does not attribute a SIGKILL when the stop request is $state",
+    async ({ stop }) => {
+      const diagnostics = {
+        ...killed,
+        ...stop,
+        memory_cgroup: cgroup(1, 3_221_225_472),
+      };
+      const projected = await projectFailure("process", diagnostics);
+      expect(projected.code).toBe("execution_failure");
+      expect(projected.message).toContain("SIGKILL");
+      expect(projected.message).toContain("does not establish its cause");
+      expect(projected.message).not.toContain("before REA stopped it");
+      expect(projected.message).not.toContain("oom_kill");
+      expect(projected.details?.diagnostics).toMatchObject(diagnostics);
+    },
+  );
+
+  it("keeps start-failure SIGKILL cause unknown despite a cgroup OOM delta", async () => {
+    const diagnostics = {
       ...killed,
-      stop_requested: true,
+      stop_requested: false,
       memory_cgroup: cgroup(1, 3_221_225_472),
-    });
+    };
+    const projected = await projectFailure("start", diagnostics);
     expect(projected.code).toBe("execution_failure");
     expect(projected.message).toContain("SIGKILL");
     expect(projected.message).toContain("does not establish its cause");
-    expect(projected.message).not.toContain("before REA stopped it");
-    expect(projected.message).not.toContain("oom_kill");
-    expect(projected.details?.diagnostics).toMatchObject({
-      ...killed,
-      stop_requested: true,
-      memory_cgroup: cgroup(1, 3_221_225_472),
-    });
+    expect(projected.details?.diagnostics).toMatchObject(diagnostics);
     expect(projected.remediation.action).toContain(
       "host or container termination records",
-    );
-    expect(projected.remediation.action).not.toContain(
-      "GHIDRA_HEADLESS_MAXMEM",
     );
   });
 
@@ -4007,18 +4184,29 @@ describe("Ghidra SIGKILL projection", () => {
   ])("names the signal instead of doctor advice %s", async (_name, extra) => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       ...extra,
     });
     expect(projected.code).toBe("execution_failure");
     expect(projected.message).toContain("SIGKILL");
-    expect(projected.message).toContain("out of memory");
+    expect(projected.message).toContain("does not establish its cause");
     expect(projected.message).not.toContain("rea doctor");
-    expect(projected.remediation.action).toContain("decompiler");
+    expect(projected.remediation.action).toContain(
+      "host or container termination records",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "GHIDRA_HEADLESS_MAXMEM",
+    );
+    expect(projected.details?.diagnostics).toMatchObject({
+      ...killed,
+      ...extra,
+    });
   });
 
   it("keeps an observed OOME primary over the kill", async () => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       failure_output: failureOutput(issueOutput),
       memory_cgroup: cgroup(1, 3_221_225_472),
     });
@@ -4030,6 +4218,7 @@ describe("Ghidra SIGKILL projection", () => {
     async (kind) => {
       const projected = await projectFailure(kind, {
         ...killed,
+        stop_requested: false,
         memory_cgroup: cgroup(1, 3_221_225_472),
       });
       expect(projected.code).not.toBe("resource_constraint");

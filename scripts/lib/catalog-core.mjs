@@ -116,6 +116,7 @@ const SOURCE_PATHS = {
   applicationContracts: "dist/contracts/applicationToolContracts.js",
   analysisViewContracts: "dist/contracts/analysisViewToolContracts.js",
   webScriptContracts: "dist/contracts/webScriptToolContracts.js",
+  environmentContracts: "dist/contracts/environmentToolContracts.js",
   javascriptRecoveryContracts:
     "dist/contracts/javascript/javascriptRecoveryToolContracts.js",
   javascriptRecoveryProvider: "dist/javascript/recovery/WakaruRelease.js",
@@ -130,8 +131,6 @@ const SOURCE_PATHS = {
   v8InspectorProvider: "dist/inspector/providerIdentity.js",
   evidence: "dist/domain/evidence.js",
   evidenceBundle: "dist/domain/evidenceBundle.js",
-  evidenceCompletion: "dist/domain/evidenceCompletionLedger.js",
-  completionGeneration: "dist/domain/completionLedgerGeneration.js",
   processCapture: "dist/domain/process/processCapture.js",
   analysisSnapshot: "dist/domain/analysisSnapshot.js",
   artifactGraph: "dist/domain/artifactGraph.js",

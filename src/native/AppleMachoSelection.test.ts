@@ -70,6 +70,25 @@ const registerThinCpuFamilyControls = (): void => {
   });
 };
 
+it.each([false, true])(
+  "retains the shared FAT declaration without imposing Hopper policy (wide=%s)",
+  (wide) => {
+    const thin = machoImage({ cpu: CPU.arm64e });
+    const fat = Buffer.from(fatImage([{ cpu: CPU.arm64e, bytes: thin }], wide));
+    if (wide) fat.writeUInt32BE(0x89abcdef, 8 + 28);
+    expect(selectMachoSlice(fat, "arm64").fatDeclaration).toEqual({
+      index: 0,
+      offset: 4096,
+      size: thin.byteLength,
+      cpuType: CPU.arm64e.type,
+      cpuSubtype: CPU.arm64e.subtype,
+      alignmentExponent: 12,
+      reserved: wide ? 0x89abcdef : null,
+      tableEnd: 8 + (wide ? 32 : 20),
+    });
+  },
+);
+
 describe("native Mach-O slice selection", () => {
   it("rejects misaligned load commands", () => {
     expect(() =>
@@ -273,5 +292,35 @@ describe("native Mach-O fixup load command boundaries", () => {
     unterminated.writeUInt32LE(24, 8);
     // machoImage includes zero padding after sizeofcmds; it is outside this command.
     expect(() => decode(unterminated)).toThrow(/Unterminated dylib/u);
+  });
+
+  it("preserves distinct opaque install-name bytes and literal Unicode names", () => {
+    const commands = [0x80, 0x81].map((byte) => {
+      const command = Buffer.from(dylibCommand(LC.LOAD_DYLIB, "/lib?"));
+      command[28] = byte;
+      return command;
+    });
+    commands.push(
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, "/lib�")),
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, "\ufeff/libé")),
+    );
+    const layout = parseMachoLayout(
+      Buffer.from(machoImage({ commands })),
+      "arm64",
+    );
+    expect(layout.fixups.dylibs).toEqual([
+      {
+        bytes_base64: Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x80]).toString(
+          "base64",
+        ),
+      },
+      {
+        bytes_base64: Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x81]).toString(
+          "base64",
+        ),
+      },
+      "/lib�",
+      "\ufeff/libé",
+    ]);
   });
 });

@@ -9,11 +9,14 @@ import {
   type NativeCommandRunner,
 } from "../native/CommandRunner.js";
 import {
-  parseLipoOutput,
+  parseLipoOutputResult,
   type LipoArchitecture,
 } from "../native/parsers/lipo.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
+  machoArchitectureFamily,
+  machoCpuSubtypeBase,
+} from "../domain/apple/machoCpuIdentity.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
@@ -115,7 +118,14 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     };
     await this.#verifySource(source);
     const fileSize = source.initial.size;
-    const lipo = parseLipoOutput(captured.value.stdout, this.path);
+    const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
+    if (!parsed.ok)
+      throw new ArtifactReaderFailure(
+        "format",
+        `lipo did not produce readable architecture records: ${parsed.error.message}`,
+        { cause: parsed.error },
+      );
+    const lipo = parsed.value;
     const { architectures } = lipo;
     const structural = await readStructuralSlices(source.handle, fileSize);
     await this.#verifySource(source);
@@ -623,10 +633,10 @@ const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
       ARM_SUBTYPES[reported] ===
       machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
     );
-  // Newer lipo names pointer-auth ABI variants arm64e.<variant>. Their
-  // physical type/subtype, range and alignment are still compared separately.
+  if (reported === machoArchitectureFamily(observed.architecture)) return true;
+  // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (
-    observed.architecture === "arm64e" &&
+    machoArchitectureFamily(observed.architecture) === "arm64e" &&
     /^arm64e\.[A-Za-z0-9_]+$/u.test(reported)
   );
 };
