@@ -1535,13 +1535,15 @@ describe("doctor configured scope edge cases", () => {
       ...workstation(true),
       packageRunner: "npx",
     });
-    expect(audit.configured_scope?.argv.slice(0, 3)).toEqual([
+    // The pinned release that produced this report, as setup registers it.
+    expect(audit.configured_scope?.argv.slice(0, 4)).toEqual([
       "npx",
-      "rea-agents",
+      "-y",
+      PRODUCT_IDENTITY.registrationPackageSpecifier,
       "doctor",
     ]);
     expect(audit.configured_scope?.command).toMatch(
-      /^npx rea-agents doctor --client cursor /u,
+      /^npx -y rea-agents@\S+ doctor --client cursor /u,
     );
     expect(
       systemDoctorHost({
@@ -1552,6 +1554,26 @@ describe("doctor configured scope edge cases", () => {
       }).packageRunner,
     ).toBe("bunx");
     expect(systemDoctorHost({ environment: {} }).packageRunner).toBeUndefined();
+  });
+
+  it("keeps a discovered Hopper whose later check fails", async () => {
+    const audit = await runDoctor(undefined, {
+      ...workstation(true),
+      platform: "linux",
+      linuxDemoRuntimeCheck: () =>
+        Promise.resolve({
+          name: "hopper-demo-runtime",
+          ok: false,
+          classification: "missing_analysis_engine",
+          detail: "Hopper demo runtime dependencies are missing.",
+          remediation: "Install the Hopper demo runtime dependencies.",
+        }),
+    });
+    expect(audit.hopperPath).toBeDefined();
+    expect(audit.configured_scope).toMatchObject({
+      providers: expect.arrayContaining(["hopper"]),
+      healthy: false,
+    });
   });
 
   it("omits the configured workflow when nothing is set up", async () => {

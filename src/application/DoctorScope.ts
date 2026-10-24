@@ -25,6 +25,8 @@ export interface DoctorScopeReport {
 interface DoctorProviderState {
   readonly hopperAvailable: boolean;
   readonly hopperConfigured: boolean;
+  /** A launcher was found, whether or not its later checks pass. */
+  readonly hopperDiscovered?: boolean;
   readonly providerInspections: readonly DoctorProviderInspection[] | undefined;
 }
 
@@ -74,7 +76,10 @@ export const selectConfiguredDoctorScope = (
     ...(input.providers.providerInspections ?? [])
       .filter(({ configured }) => configured)
       .map(({ id }) => id),
-    ...(input.providers.hopperConfigured || input.providers.hopperAvailable
+    // Select by presence, not readiness, so a found but failing Hopper stays
+    // in the workflow and its failure stays visible.
+    ...(input.providers.hopperConfigured ||
+    input.providers.hopperDiscovered === true
       ? ["hopper"]
       : []),
   ]);

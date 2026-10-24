@@ -294,6 +294,7 @@ const inspectDoctor = async (
         .filter(({ name }) => name.startsWith("hopper"))
         .every(({ ok }) => ok),
     hopperConfigured: host.configuredHopperPath !== undefined,
+    hopperDiscovered: hopperPath !== undefined,
     providerInspections,
   };
   const environmentHealthy = doctorHealthy(checks, providers);
@@ -348,10 +349,13 @@ const inspectConfiguredScope = async (
     selection,
     target,
     platform: host.platform,
+    // Pin the release that produced this report, as setup registers it.
     launcher:
       host.packageRunner === undefined
         ? ["rea"]
-        : [host.packageRunner, "rea-agents"],
+        : host.packageRunner === "npx"
+          ? ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier]
+          : ["bunx", PRODUCT_IDENTITY.registrationPackageSpecifier],
   };
   if (selection.clients.length === 0)
     return configuredDoctorScope({
