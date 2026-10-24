@@ -81,7 +81,8 @@ export const readStableArtifact = async (
       "path",
       `Expected a regular file without a symlink: ${path}`,
     );
-  if (before.size > BigInt(maximumBytes))
+  const maximumSize = BigInt(maximumBytes);
+  if (before.size > maximumSize)
     throw new ArtifactReaderFailure(
       "limit",
       `Selected artifact exceeds ${String(maximumBytes)} bytes: ${path}`,
@@ -109,7 +110,14 @@ export const readStableArtifact = async (
           "integrity",
           `Artifact changed before open: ${path}`,
         );
-      const chunks: Buffer[] = [];
+      assertArtifactReadActive(signal);
+      // A raced descriptor size must not allocate beyond the selected budget.
+      // These private bytes are published only after the exact count and both
+      // file identities below validate, so an incomplete read exposes no tail.
+      const bytes = Buffer.allocUnsafe(
+        Number(initial.size > maximumSize ? maximumSize : initial.size),
+      );
+      const hash = createHash("sha256");
       let count = 0;
       for await (const chunk of file.createReadStream({
         autoClose: false,
@@ -122,15 +130,18 @@ export const readStableArtifact = async (
             "format",
             `Artifact stream did not return bytes: ${path}`,
           );
-        const bytes = value;
-        count += bytes.length;
+        const offset = count;
+        count += value.length;
         if (count > maximumBytes)
           throw new ArtifactReaderFailure(
             "limit",
             `Selected artifact grew beyond its byte limit: ${path}`,
             { boundary: "file-size" },
           );
-        chunks.push(bytes);
+        // Discard growth beyond the expected size while preserving physical
+        // read failures and byte-budget refusal ahead of final integrity checks.
+        if (offset < bytes.length) value.copy(bytes, offset);
+        hash.update(value);
       }
       const after = await file.stat({ bigint: true });
       const current = await afterValidation(path, "during read", () =>
@@ -145,10 +156,9 @@ export const readStableArtifact = async (
           `Artifact changed during read: ${path}`,
         );
       assertArtifactReadActive(signal);
-      const bytes = Buffer.concat(chunks, count);
       return {
         bytes,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: hash.digest("hex"),
       };
     },
   );
