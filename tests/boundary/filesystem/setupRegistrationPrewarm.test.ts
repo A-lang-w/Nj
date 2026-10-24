@@ -188,4 +188,46 @@ describe("setup registration package-runner prewarm", () => {
     expect(result.status).toBe("ready");
     expect(result.prewarm).toBeUndefined();
   });
+
+  it("skips the prewarm when no client registration was applied", async () => {
+    const root = await createTestTempDirectory("rea-setup-prewarm-skip-");
+    roots.push(root);
+    const client = supportedClients(root, "darwin", {}).find(
+      (candidate) => candidate.name === "cursor",
+    );
+    if (client === undefined) throw new Error("Cursor registration is missing");
+    await mkdir(dirname(client.configPath), { recursive: true });
+    const doctor = createDoctorHostFixture({
+      clientRegistrations: () =>
+        readClientRegistrationStatuses(root, undefined, {
+          platform: "darwin",
+          environment: {},
+        }),
+      providerInspections: () => Promise.resolve([]),
+    });
+    let prewarmCalls = 0;
+    const host = {
+      ...systemSetupHost(doctor, packageRunnerEnvironment),
+      nodeVersion: "24.22.1",
+      detectedClients: () => Promise.resolve([client]),
+      supportedClients: () => Promise.resolve([client]),
+      prewarmRegistrationRunner: () => {
+        prewarmCalls += 1;
+        return Promise.resolve({ status: "warmed" as const });
+      },
+    };
+    const result = await runSetup(
+      {
+        ...options(true),
+        clientIds: [],
+        installSkill: false,
+        proposeHopper: false,
+        readinessScope: { clients: [], providers: [], skill: false },
+      },
+      host,
+    );
+    expect(result.status).toBe("ready");
+    expect(prewarmCalls).toBe(0);
+    expect(result.prewarm).toBeUndefined();
+  });
 });

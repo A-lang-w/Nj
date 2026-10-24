@@ -2,12 +2,25 @@ import { describe, expect, it } from "vitest";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
+  launchRegistrationRunnerCommand,
   materializeRegistrationRunnerCache,
   registrationPrewarmCommand,
-  type RegistrationRunnerSpawn,
+  type RegistrationRunnerLaunch,
+  type RegistrationRunnerLauncher,
 } from "./SetupRegistrationPrewarm.js";
 
 const specifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
+
+const launch = (
+  overrides: Partial<RegistrationRunnerLaunch> = {},
+): RegistrationRunnerLaunch => ({
+  exitCode: 0,
+  signal: null,
+  stdout: "",
+  stderr: "",
+  timedOut: false,
+  ...overrides,
+});
 
 describe("registrationPrewarmCommand", () => {
   it("replaces the server subcommand of an npx registration", () => {
@@ -48,52 +61,48 @@ describe("registrationPrewarmCommand", () => {
 });
 
 describe("materializeRegistrationRunnerCache", () => {
-  it("skips direct launchers without spawning", async () => {
-    let spawned = 0;
-    const spawn: RegistrationRunnerSpawn = async () => {
-      spawned += 1;
+  it("skips direct launchers without launching", async () => {
+    let launched = 0;
+    const launcher: RegistrationRunnerLauncher = async () => {
+      launched += 1;
+      return launch();
     };
     const result = await materializeRegistrationRunnerCache(
       ["/opt/rea/rea", "mcp"],
       {},
-      spawn,
+      launcher,
     );
     expect(result).toEqual({ status: "skipped", reason: "direct_launcher" });
-    expect(spawned).toBe(0);
+    expect(launched).toBe(0);
   });
 
   it("materializes the pinned spec once and reports warmed", async () => {
-    const launches: (readonly string[])[] = [];
-    const spawn: RegistrationRunnerSpawn = async (
+    const commands: (readonly string[])[] = [];
+    const launcher: RegistrationRunnerLauncher = async (
       command,
       arguments_,
       options,
     ) => {
-      launches.push([command, ...arguments_]);
-      expect(options.timeout).toBeGreaterThan(0);
+      commands.push([command, ...arguments_]);
+      expect(options.timeoutMs).toBeGreaterThan(0);
       expect(options.env.REA_PREWARM_PROBE).toBe("1");
       expect(options.cwd.length).toBeGreaterThan(0);
+      return launch({ stdout: "6.7.0\n" });
     };
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       { REA_PREWARM_PROBE: "1" },
-      spawn,
+      launcher,
     );
     expect(result).toEqual({ status: "warmed" });
-    expect(launches).toEqual([["npx", "-y", specifier, "--version"]]);
+    expect(commands).toEqual([["npx", "-y", specifier, "--version"]]);
   });
 
-  it("reports a bounded failure reason with command output facts", async () => {
-    const failure = Object.assign(
-      new Error("Command failed: npx -y rea-agents@0.0.0 --version"),
-      { stdout: "", stderr: "spawn EPERM\n", code: 1 },
-    );
+  it("reports a bounded failure reason for a non-zero exit", async () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
-      async () => {
-        throw failure;
-      },
+      async () => launch({ exitCode: 1, stderr: "spawn EPERM\n" }),
     );
     expect(result.status).toBe("failed");
     if (result.status !== "failed") return;
@@ -107,12 +116,55 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
-      async () => {
-        throw new Error("Command timed out after 180000 ms: npx");
-      },
+      async () => launch({ exitCode: null, timedOut: true }),
     );
     expect(result.status).toBe("failed");
     if (result.status !== "failed") return;
-    expect(result.reason).toContain("timed out after 180000 ms");
+    expect(result.reason).toContain("timed out");
+  });
+
+  it("reports a spawn failure", async () => {
+    const result = await materializeRegistrationRunnerCache(
+      ["npx", "-y", specifier, "mcp"],
+      {},
+      async () => launch({ exitCode: null, spawnError: "spawn npx ENOENT" }),
+    );
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.reason).toContain("spawn npx ENOENT");
+  });
+});
+
+describe("launchRegistrationRunnerCommand", () => {
+  it("captures a successful command exit", async () => {
+    const result = await launchRegistrationRunnerCommand(
+      process.execPath,
+      ["--version"],
+      {
+        env: process.env,
+        cwd: process.cwd(),
+        timeoutMs: 30_000,
+        platform: process.platform,
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+    expect(result.stdout.trim().length).toBeGreaterThan(0);
+  });
+
+  it("stops the runner tree at the deadline and reports the timeout", async () => {
+    const startedAt = Date.now();
+    const result = await launchRegistrationRunnerCommand(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        env: process.env,
+        cwd: process.cwd(),
+        timeoutMs: 300,
+        platform: process.platform,
+      },
+    );
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
 });

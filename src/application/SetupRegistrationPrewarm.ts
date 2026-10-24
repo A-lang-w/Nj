@@ -1,9 +1,7 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 
-import {
-  execFileOutput,
-  execFileOutputFailure,
-} from "../process/ExecFileOutput.js";
+import { cleanupWindowsProcessTree } from "../process/ProcessOwnership.js";
 import { inspectClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 
 /**
@@ -18,23 +16,32 @@ export type SetupRegistrationPrewarm =
 
 /** One cold package install at setup time; client startup deadlines stay untouched. */
 const PREWARM_TIMEOUT_MS = 180_000;
-const PREWARM_MAX_OUTPUT_BYTES = 64 * 1024;
+const PREWARM_CAPTURE_LIMIT = 64 * 1024;
 const PREWARM_REASON_LIMIT = 300;
 
-/** Spawn shape shared with execFileOutput so tests can observe the launch. */
-export type RegistrationRunnerSpawn = (
+/** Facts of one supervised package-runner launch. */
+export interface RegistrationRunnerLaunch {
+  readonly exitCode: string | number | null;
+  readonly signal: string | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  readonly spawnError?: string;
+}
+
+/** Launch shape shared with the supervised spawn so tests can observe it. */
+export type RegistrationRunnerLauncher = (
   command: string,
   arguments_: readonly string[],
   options: {
-    readonly timeout: number;
-    readonly stopSignal: NodeJS.Signals;
-    readonly maxBuffer: number;
     readonly env: Readonly<NodeJS.ProcessEnv>;
     /** Neutral directory; inside a REA source checkout the package runner
      * would resolve the local project instead of the published entry. */
     readonly cwd: string;
+    readonly timeoutMs: number;
+    readonly platform: NodeJS.Platform;
   },
-) => Promise<unknown>;
+) => Promise<RegistrationRunnerLaunch>;
 
 /**
  * Resolve the cache-materializing variant of a registration command. The
@@ -58,35 +65,105 @@ export const registrationPrewarmCommand = (
 export const materializeRegistrationRunnerCache = async (
   command: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  spawnCommand: RegistrationRunnerSpawn = execFileOutput,
+  launchCommand: RegistrationRunnerLauncher = launchRegistrationRunnerCommand,
 ): Promise<SetupRegistrationPrewarm> => {
   const prewarm = registrationPrewarmCommand(command);
   if (prewarm === undefined)
     return { status: "skipped", reason: "direct_launcher" };
-  try {
-    await spawnCommand(prewarm[0] ?? "", prewarm.slice(1), {
-      timeout: PREWARM_TIMEOUT_MS,
-      stopSignal: "SIGTERM",
-      maxBuffer: PREWARM_MAX_OUTPUT_BYTES,
-      env: environment,
-      cwd: tmpdir(),
-    });
-    return { status: "warmed" };
-  } catch (cause: unknown) {
-    return { status: "failed", reason: prewarmFailureReason(cause) };
-  }
+  const launch = await launchCommand(prewarm[0] ?? "", prewarm.slice(1), {
+    env: environment,
+    cwd: tmpdir(),
+    timeoutMs: PREWARM_TIMEOUT_MS,
+    platform: process.platform,
+  });
+  return launch.timedOut ||
+    launch.spawnError !== undefined ||
+    launch.exitCode !== 0
+    ? { status: "failed", reason: prewarmFailureReason(launch) }
+    : { status: "warmed" };
 };
 
-const prewarmFailureReason = (cause: unknown): string => {
-  const failure = execFileOutputFailure(cause);
+/**
+ * Stop the whole runner tree: killing only the direct child leaves npm, which
+ * inherited the output pipes, holding them open past the deadline.
+ */
+const stopRunnerTree = (
+  child: ChildProcess,
+  platform: NodeJS.Platform,
+): Promise<void> => {
+  const pid = child.pid;
+  if (pid === undefined) return Promise.resolve();
+  if (platform === "win32")
+    return cleanupWindowsProcessTree(pid).then(() => undefined);
+  return new Promise((resolve) => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // The process group may already be gone.
+    }
+    resolve();
+  });
+};
+
+export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
+  command,
+  arguments_,
+  options,
+) =>
+  new Promise((resolve) => {
+    const child = spawn(command, [...arguments_], {
+      env: options.env,
+      cwd: options.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      // POSIX runs the runner in its own group so one signal stops the tree.
+      ...(options.platform === "win32" ? {} : { detached: true }),
+    });
+    const stdout = boundedStream(child.stdout);
+    const stderr = boundedStream(child.stderr);
+    let timedOut = false;
+    let spawnError: string | undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void stopRunnerTree(child, options.platform).finally(() => {
+        child.kill("SIGKILL");
+      });
+    }, options.timeoutMs);
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      spawnError = error.message;
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({
+        exitCode: code ?? signal,
+        signal: signal ?? null,
+        stdout: stdout(),
+        stderr: stderr(),
+        timedOut,
+        ...(spawnError === undefined ? {} : { spawnError }),
+      });
+    });
+  });
+
+const boundedStream = (
+  stream: NodeJS.ReadableStream | null,
+): (() => string) => {
+  let captured = "";
+  stream?.on("data", (chunk: Buffer) => {
+    if (captured.length < PREWARM_CAPTURE_LIMIT)
+      captured += chunk.toString("utf8").slice(0, PREWARM_CAPTURE_LIMIT);
+  });
+  return () => captured;
+};
+
+const prewarmFailureReason = (launch: RegistrationRunnerLaunch): string => {
   const observed =
-    failure === undefined
-      ? cause instanceof Error
-        ? cause.message
-        : String(cause)
-      : `exit ${failure.code === null ? "unknown" : String(failure.code)}${
-          failure.stderr.trim() === "" ? "" : `: ${failure.stderr.trim()}`
-        }`;
+    launch.spawnError !== undefined
+      ? launch.spawnError
+      : launch.timedOut
+        ? `the package runner timed out after the bounded prewarm window`
+        : `exit ${launch.exitCode === null ? "unknown" : String(launch.exitCode)}${
+            launch.stderr.trim() === "" ? "" : `: ${launch.stderr.trim()}`
+          }`;
   const normalized = observed
     .replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\([0-9A-Za-z]|[@-Z\\^_])/gu, "")
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
