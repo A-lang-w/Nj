@@ -52,6 +52,7 @@ export const resolveElectronBrowserWindowReceiver = (
   let receiver = unwrapJavaScriptExpression(node).node;
   const path = [...suffix];
   const seen = new Set<string>();
+  const aliases: { receiver: t.Identifier; path: readonly string[] }[] = [];
   for (;;) {
     if (
       t.isMemberExpression(receiver) ||
@@ -78,20 +79,44 @@ export const resolveElectronBrowserWindowReceiver = (
         .hasDefiniteInitializer
     )
       return undefined;
-    completeSemanticSteps(index.indexMemberMutationFactsSteps());
-    if (index.referenceMayHaveChangedAt(site, receiver, path)) return undefined;
+    aliases.push({ receiver, path: [...path] });
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
   if (!t.isNewExpression(receiver)) return undefined;
   const constructor = electronCalleePath(receiver.callee, context);
-  return constructor?.length === 1 &&
-    constructor[0] === "BrowserWindow" &&
+  if (
+    constructor?.length !== 1 ||
+    constructor[0] !== "BrowserWindow" ||
+    !supportedReceiverPath(path)
+  )
+    return undefined;
+  if (
     context.electronExportIntact?.([
       "electron",
       "BrowserWindow",
       "prototype",
       ...path,
-    ]) === true
-    ? { owner: receiver, path }
-    : undefined;
+    ]) !== true
+  )
+    return undefined;
+  // Only source-proven supported receivers justify the whole-file mutation pass.
+  // Keep every alias's consumed path and check at the original invocation site.
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  for (const alias of aliases)
+    if (index.referenceMayHaveChangedAt(site, alias.receiver, alias.path))
+      return undefined;
+  return { owner: receiver, path };
+};
+
+const supportedReceiverPath = (path: readonly string[]): boolean => {
+  const operation = path.at(-1);
+  if (operation === "loadFile" || operation === "loadURL")
+    return (
+      path.length === 1 || (path.length === 2 && path[0] === "webContents")
+    );
+  return (
+    path[0] === "webContents" &&
+    ((path.length === 3 && path[1] === "ipc") ||
+      (path.length === 4 && path[1] === "mainFrame" && path[2] === "ipc"))
+  );
 };

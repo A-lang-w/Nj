@@ -76,3 +76,39 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ).toEqual([]);
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "does not uniquely pair a renderer with exactly one scoped literal handler through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-single-scoped-ipc-");
+    await writeFixtureFiles(root, {
+      "main.cjs": `const { BrowserWindow } = require("electron");
+        const window = new BrowserWindow();
+        window.webContents.mainFrame.ipc.handle("only-scoped", () => "result");`,
+      "preload.cjs": `const { ipcRenderer } = require("electron");
+        ipcRenderer.invoke("only-scoped");`,
+    });
+    const application = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(application.summary.ipc).toMatchObject({
+      operations: 2,
+      main_handlers: 1,
+      renderer_transmissions: 1,
+      dynamic_channel_operations: 0,
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 1,
+    });
+    const handlers = application.graph.nodes.filter(
+      ({ kind }) => kind === "ipc-handler",
+    );
+    expect(handlers).toHaveLength(1);
+    expect(handlers[0]?.observations[0]?.properties.receiver).toMatchObject({
+      kind: "main-frame",
+    });
+    expect(
+      application.graph.edges.filter(
+        ({ evidence }) =>
+          evidence.extractor.operation === "pair-ipc-literal-channel",
+      ),
+    ).toEqual([]);
+  },
+);
