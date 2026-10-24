@@ -79,7 +79,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -569,8 +569,9 @@ export class GhidraClient {
         cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
           ? { reason: artifactFileCancellationCause(cause) }
           : undefined;
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let failure =
+        origin === "owned-or-classified" &&
         primary instanceof GhidraSessionError
           ? primary
           : this.#failure(
@@ -1330,7 +1331,7 @@ export class GhidraClient {
       ...failure.diagnostics,
       exit_code: snapshot.exitCode ?? null,
       exit_signal: snapshot.signal ?? null,
-      ...(snapshot.stopRequested === true ? { stop_requested: true } : {}),
+      stop_requested: snapshot.stopRequested === true,
       diagnostic_truncated: snapshot.diagnosticTruncated === true || incomplete,
       output_incomplete: snapshot.outputIncomplete === true || drainIncomplete,
       stdout: ghidraDiagnosticStream(snapshot.stdout, token),
@@ -1354,7 +1355,7 @@ export class GhidraClient {
     if (
       before === undefined ||
       failure.diagnostics.exit_signal !== "SIGKILL" ||
-      failure.diagnostics.stop_requested === true
+      failure.diagnostics.stop_requested !== false
     )
       return failure;
     const after = await this.#readMemoryCgroup();

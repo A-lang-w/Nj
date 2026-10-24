@@ -190,15 +190,6 @@ const hostFailurePath = (cause: unknown): string | undefined => {
   return undefined;
 };
 
-/** Host permission failures retain their typed cause; unexpected failures propagate. */
-const rethrowUnlessDenied = (
-  cause: unknown,
-  path: string,
-  operation: string,
-): never => {
-  throw accessDeniedError(cause, path, undefined, "read", operation) ?? cause;
-};
-
 /** A path that is not a readable regular file, including inline JSON text offered as one. */
 const NOT_A_FILE_CODES = new Set([
   "ENOENT",
@@ -337,7 +328,9 @@ export const readEnvironmentExportFile = async (
           `${path} could not be read as the ${role} file.`,
         ),
       );
-    return rethrowUnlessDenied(cause, path, operation);
+    const denied = accessDeniedError(cause, path, undefined, "read", operation);
+    if (denied !== undefined) return err(denied);
+    throw cause;
   }
   return environmentExportFile(role, path, bytes, operation);
 };
