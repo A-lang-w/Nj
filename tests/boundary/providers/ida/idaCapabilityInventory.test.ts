@@ -83,6 +83,36 @@ it.each([false, true])(
   },
 );
 
+it("omits effects of IDA calls hidden behind unavailable workflow prerequisites", () => {
+  const entries = buildCapabilityInventory(
+    {
+      open: true,
+      kind: "executable",
+      capabilities: providerCapabilitySets(idaCapabilities("attached", false)),
+    },
+    enabledPolicy,
+  );
+  for (const name of ["find_xrefs_to_name", "get_navigation_context"]) {
+    expect(TOOL_EFFECTS[name], name).toMatchObject({
+      accessesNetwork: false,
+      launchesProcess: false,
+      writesFilesystem: false,
+    });
+    expect(
+      entries.find((entry) => entry.name === name),
+      name,
+    ).toMatchObject({
+      available: false,
+      effects: {
+        accessesNetwork: false,
+        launchesProcess: false,
+        writesFilesystem: false,
+      },
+      annotations: { open_world: false },
+    });
+  }
+});
+
 it("keeps native attached UI effects limited to the operations that show them", () => {
   const input = {
     open: true,

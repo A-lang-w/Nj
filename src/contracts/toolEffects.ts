@@ -604,7 +604,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   ),
   get_call_graph: providerEffects(evidence, providerRemoteEffects),
   analyze_swift_types: providerEffects(evidence, providerRemoteEffects),
-  find_xrefs_to_name: providerEffects(evidence, providerRemoteEffects),
+  find_xrefs_to_name: evidence,
   binary_overview: providerEffects(evidence, providerRemoteEffects),
   analyze_function: providerUiNetworkEvidence,
   inspect_native_api: providerEffects(
@@ -756,10 +756,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     mayDiscardData: true,
   }),
   get_evidence_bundle: effects(),
-  get_navigation_context: providerEffects(
-    effects({ mutatesSession: true }),
-    providerRemoteEffects,
-  ),
+  get_navigation_context: effects({ mutatesSession: true }),
   inspect_address_context: effects({ mutatesSession: true }),
   import_evidence_bundle: effects({ mutatesSession: true }),
   capture_process_scenario: effects({
