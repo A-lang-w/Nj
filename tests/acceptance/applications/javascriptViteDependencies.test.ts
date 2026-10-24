@@ -1005,6 +1005,11 @@ const allScenarios: readonly ViteScenario[] = [
         '__vite__mapDeps([0]); const box = {f: __vite__mapDeps.f}; Object.freeze(box); box.f = []; box.f[0] = "./last.js";',
     },
     {
+      file: "frozen-deferred-receiver-replacement.js",
+      mutation:
+        '__vite__mapDeps([0]); const inner = {cache: __vite__mapDeps.f}; const box = {}; box.object = inner; Object.freeze(box.object); inner.cache = []; inner.cache[0] = "./last.js";',
+    },
+    {
       file: "frozen-returned-holder-cache.js",
       mutation:
         '__vite__mapDeps([0]); const box = Object.freeze({f: __vite__mapDeps.f}); box.f[0] = "./last.js";',
@@ -2692,6 +2697,15 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: ["first.js"],
     unknown: false,
   })),
+  {
+    file: "harmless-read-copy.js",
+    source: mapDependencies('["./first.js"]', "[0]").replace(
+      "__vite__mapDeps([0]);",
+      "const cache = __vite__mapDeps.f;\nconsole.log(cache[0]);\nObject.assign({}, __vite__mapDeps);\n__vite__mapDeps([0]);",
+    ),
+    resolved: ["first.js"],
+    unknown: false,
+  },
 ];
 
 const batches = Array.from(

@@ -66,6 +66,7 @@ export class ViteCacheProperties {
     ViteCacheAllocation,
     Map<string, Map<t.Node, Vertex>>
   >();
+  private readonly snapshotInitials = new Map<Vertex, Vertex>();
   readonly writes = new Map<ViteCacheAllocation, ViteCacheWrite[]>();
   readonly escapes = new Map<
     ViteCacheAllocation,
@@ -74,6 +75,10 @@ export class ViteCacheProperties {
   private readonly restrictions = new Map<
     ViteCacheAllocation,
     Map<Key, Set<t.Node>>
+  >();
+  private readonly pendingRestrictions = new Map<
+    Vertex,
+    Set<{ key: Key; node: t.Node }>
   >();
   private readonly ordinaryAllocations = new WeakMap<
     ViteCacheAllocation,
@@ -91,7 +96,18 @@ export class ViteCacheProperties {
       allocation: ViteCacheAllocation | null | undefined,
       key: Key,
       node: t.Node,
+      receiver?: Vertex,
     ): void => {
+      if (receiver !== undefined && !this.internalAllocation(allocation)) {
+        // The receiver's allocation was not settled at retain time; land the
+        // restriction when the receiver's fact changes instead of dropping it.
+        const pending =
+          this.pendingRestrictions.get(receiver) ??
+          new Set<{ key: Key; node: t.Node }>();
+        this.pendingRestrictions.set(receiver, pending);
+        pending.add({ key, node });
+        return;
+      }
       if (allocation === undefined || allocation === null) return;
       const keys =
         this.restrictions.get(allocation) ?? new Map<Key, Set<t.Node>>();
@@ -159,11 +175,85 @@ export class ViteCacheProperties {
         method === "defineProperty" && keyNode !== undefined
           ? readExactJavaScriptLiteral(keyNode)
           : undefined;
+      const receiver = this.graph.normalize(target);
       restrict(
-        this.graph.normalize(target).fact?.allocation,
+        receiver.fact?.allocation,
         key?.found && typeof key.value === "string" ? key.value : null,
         node,
+        receiver,
       );
+    }
+  }
+
+  private internalAllocation(
+    allocation: ViteCacheAllocation | null | undefined,
+  ): boolean {
+    return (
+      allocation != null &&
+      (allocation.kind === "container" ||
+        allocation.kind === "cache" ||
+        allocation.kind === "helper")
+    );
+  }
+
+  /**
+   * A restriction recorded before its receiver's allocation settled lands once
+   * the receiver has one, with snapshots built against the allocation rebuilt
+   * so their acceptance checks consult the landed restriction.
+   */
+  *restrictReceiverSteps(vertex: Vertex): Generator<void> {
+    const pending = this.pendingRestrictions.get(vertex);
+    if (pending === undefined) return;
+    const allocation = vertex.fact?.allocation;
+    let examined = 0;
+    for (const record of pending) {
+      if (examined++ % 1024 === 0) yield;
+      if (record === undefined) continue;
+      // Unknown identities cannot carry restriction effects, and a foreign
+      // receiver cannot become an internal allocation later; keep the record
+      // pending otherwise so a later settled fact can land it.
+      if (allocation === undefined || allocation === null) continue;
+      if (allocation.kind === "foreign") continue;
+      pending.delete(record);
+      yield* this.landRestrictionSteps(allocation, record.key, record.node);
+    }
+    if (pending.size === 0) this.pendingRestrictions.delete(vertex);
+  }
+
+  /**
+   * Records a landed restriction. Snapshots already built for the allocation
+   * are rebuilt in place: whole-object restrictions gate every snapshot key,
+   * and keyed restrictions gate only their own key.
+   */
+  private *landRestrictionSteps(
+    allocation: ViteCacheAllocation,
+    key: Key,
+    node: t.Node,
+  ): Generator<void> {
+    const keys =
+      this.restrictions.get(allocation) ?? new Map<Key, Set<t.Node>>();
+    this.restrictions.set(allocation, keys);
+    const nodes = keys.get(key) ?? new Set<t.Node>();
+    keys.set(key, nodes);
+    nodes.add(node);
+    const byKey = this.snapshotReads.get(allocation);
+    if (byKey === undefined) return;
+    let examined = 0;
+    for (const affected of key === null ? byKey.keys() : [key]) {
+      const byRead = byKey.get(affected);
+      if (byRead === undefined) continue;
+      for (const [read, base] of byRead) {
+        if (examined++ % 1024 === 0) yield;
+        const initial = this.snapshotInitials.get(base);
+        if (initial === undefined) continue;
+        yield* this.buildSnapshotSteps(
+          base,
+          initial,
+          allocation,
+          affected,
+          read,
+        );
+      }
     }
   }
 
@@ -325,6 +415,24 @@ export class ViteCacheProperties {
     if (previous !== undefined) return previous;
     const base = this.graph.vertex();
     byRead.set(read, base);
+    this.snapshotInitials.set(base, initial);
+    return yield* this.buildSnapshotSteps(base, initial, allocation, key, read);
+  }
+
+  /**
+   * Builds the snapshot body for a base vertex. Rebuilding clears prior
+   * connections and reruns acceptance so landed restrictions take effect on
+   * every already-built snapshot read position.
+   */
+  private *buildSnapshotSteps(
+    base: Vertex,
+    initial: Vertex,
+    allocation: ViteCacheAllocation,
+    key: string,
+    read: t.Node,
+  ): Generator<void, Vertex> {
+    base.inputs.length = 0;
+    delete base.seed;
     for (const selection of [key, null])
       this.graph.connect(base, {
         kind: "alias",

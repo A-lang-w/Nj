@@ -309,7 +309,17 @@ export class ViteCacheIdentities {
         allocations.add(vertex.fact.allocation);
       for (const input of vertex.inputs) {
         if (examined++ % 1024 === 0) yield;
-        retain(input.source);
+        // A selection whose resolved value is a known foreign constant (a
+        // literal string, for example) cannot carry escaped receivers with it.
+        // Following its source would mark unrelated owners unsafe through a
+        // harmless read and erase valid dependency paths.
+        if (
+          !(
+            input.kind === "select" &&
+            vertex.fact?.allocation?.kind === "foreign"
+          )
+        )
+          retain(input.source);
         if (
           input.kind === "default" &&
           !providedDefaultInput(input, input.source.fact)
@@ -569,6 +579,8 @@ export class ViteCacheIdentities {
                 source: this.normalize(write.value),
               });
           }
+        if (this.snapshots)
+          yield* this.properties.restrictReceiverSteps(vertex);
         if (this.snapshots)
           for (const exposure of this.exposureReceivers.get(vertex) ?? []) {
             if (examined++ % 1024 === 0) yield;
