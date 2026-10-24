@@ -72,7 +72,7 @@ const coverage = (
     ? { status: "complete", reason: null, examined_entries: examined, exports }
     : {
         status: "partial",
-        reason: `${String(issues.length)} export table issue(s) left entries unreported; see issues`,
+        reason: `${String(issues.length)} export table issue(s) affect reported rows or metadata; see issues`,
         examined_entries: examined,
         exports,
       };
@@ -462,7 +462,7 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
   if (
     sections.length === 0 ||
-    (dynsym === undefined && directory.has_dynamic_segment)
+    (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
   )
     return {
       ...result,

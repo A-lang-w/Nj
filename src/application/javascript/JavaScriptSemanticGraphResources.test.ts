@@ -1,11 +1,10 @@
+import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 import { expect, it } from "vitest";
 
 import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
-import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 import { resolveJavaScriptSemanticEvidence } from "../../domain/javascript/javascriptSemanticGraph.js";
-import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -285,10 +284,13 @@ it("projects literal seeds and static object flow", () => {
         kind === "property-slot" && properties.name === "token",
     ),
   ).toBeDefined();
-  const literal = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "literal", value: "TOKEN" },
-    direction: "forward-influence",
-  });
+  const literal = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "TOKEN" },
+      direction: "forward-influence",
+    }),
+  );
   expect(literal.status).toBe("ambiguous");
   const targetName = (targetId: string): string => {
     const target = graph.nodes.find(({ node_id }) => node_id === targetId);
@@ -318,10 +320,13 @@ it("projects literal seeds and static object flow", () => {
     "token",
   ]);
   expect(literal.summary.total_seed_matches).toBe(literalTargets.length);
-  const property = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "property", name: "token" },
-    direction: "forward-influence",
-  });
+  const property = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "property", name: "token" },
+      direction: "forward-influence",
+    }),
+  );
   expect(property.status).toBe("ambiguous");
   expect(property.seed_node_ids.map(targetName).sort()).toEqual([
     "copy.token",
@@ -364,10 +369,13 @@ it("does not promote transformed return expressions to resolved aliases", () => 
   );
   if (output === undefined || input === undefined)
     throw new Error("Expected caller bindings");
-  const strict = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "semantic-node", node_id: output.node_id },
-    direction: "backward-provenance",
-  });
+  const strict = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: output.node_id },
+      direction: "backward-provenance",
+    }),
+  );
   expect(strict.nodes.map(({ node_id }) => node_id)).not.toContain(
     input.node_id,
   );
@@ -375,10 +383,9 @@ it("does not promote transformed return expressions to resolved aliases", () => 
 });
 
 it("uses unavailable evidence when no source produced semantic IR", () => {
-  const graph = buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
-    analysis: emptyAnalysis(),
+  const graph = createJavaScriptSemanticGraphProjection().finish(SHA256, {
+    graph_id: GRAPH_ID,
+    nodes: [],
   });
   const root = graph.nodes[0];
   if (root === undefined) throw new Error("Expected unavailable semantic root");
@@ -389,19 +396,4 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
       location: { available: false, reason: "not-observed" },
     },
   );
-});
-
-const emptyAnalysis = (): JavaScriptArtifactAnalysis => ({
-  jsonDocuments: new JavaScriptJsonDocuments(),
-  files: [],
-  packages: [],
-  json_modules: [],
-  html_scripts: [],
-  html_inline_scripts: [],
-  source_maps: [],
-  visited_ast_nodes: 0,
-  findings: 0,
-  modules: 0,
-  parse_failures: 0,
-  limitations: [],
 });

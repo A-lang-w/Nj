@@ -88,11 +88,11 @@ Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
 `REA_MCP_MAX_RESPONSE_BYTES`.
 Detected provider settings replace only matching environment keys.
-Setup manages REA's launcher, selected provider settings, and supported timeout
-defaults. Client approval policies remain user choices, but the current Codex
-refresh drops those policies inside the REA entry; see the
-[Codex preservation limitation](client-configuration.md#codex-and-devin) before
-refreshing a customized registration.
+Setup manages REA's launcher, selected provider settings, and recommended timeout
+defaults. Codex approval policies, tool selections, and other caller-owned server
+settings are preserved. Known malformed policy values block setup before it
+writes the configuration or a backup; see
+[Codex settings preservation](client-configuration.md#codex-and-devin).
 Setup and doctor report a malformed REA environment map or invalid runtime
 setting before setup writes files. Repair the named setting in the client
 configuration; setup does not silently discard the rest of the map.
@@ -745,6 +745,18 @@ may conflict with Hopper's versioned `zlib` dependency. Resolve the package
 conflict yourself, install Hopper's official package manually, or use another
 provider such as Ghidra; rerun `rea setup` after installing Hopper.
 
+If setup cannot finish releasing its resources, a normally returned structured
+result reports `needs_human` and includes `cleanup.reason` with the identified
+paths in `cleanup.resources`. A thrown typed failure reports the same retained
+paths in `details.resources`, preserving the primary failure separately. Reasons
+that do not identify a resource remain explicit without guessing paths from text.
+For in-process callers retaining REA's setup host, a successful retry of its close
+updates the original failure's cleanup state and removes released resource labels.
+Custom `SetupHost` implementations must bind returned or thrown cleanup errors
+to their resource owners to provide the same live recovery. An ownerless error
+remains an unconfirmed snapshot: `runSetup` does not observe later direct calls
+to the caller's port or replace that port's methods.
+
 The supported Linux demo forwards additional launches into its existing
 application, even across private displays. REA therefore reserves one Linux
 Hopper application per user across cooperating REA processes. A competing
@@ -985,9 +997,13 @@ Target admission preserves recognized PE/NE/LE/LX signatures separately from
 reader layout support. A Windows header overlapping the first 64 DOS-header
 bytes remains an unsupported layout in this release; it is not reported as an
 invalid offset. Tiny PE files with short optional headers have additional
-unverified loader requirements. Unconfirmed nonzero DOS padding remains an
-unresolved Windows-header candidate, with independently validated DOS facts in
-the target error diagnostics; those facts do not prove a Windows header absent.
+unverified loader requirements. A nonzero Windows-header pointer without a
+recognized signature remains an unresolved candidate, with independently
+validated DOS facts in the target error diagnostics; those facts do not prove a
+Windows header absent. When a nonempty relocation table ends inside a complete
+DOS header, the remaining header bytes are DOS padding, so a nonzero dword
+there is not a Windows declaration. An unread signature beyond the current
+probe is requested before that padding rule applies.
 On Linux and macOS, `annotate_native_function` also edits a function name and/or
 entry comments atomically and returns refreshed analysis, and `set_address_name`
 and `set_addresses_names` name a function entry or any other mapped address
