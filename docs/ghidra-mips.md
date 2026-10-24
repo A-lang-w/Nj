@@ -47,7 +47,11 @@ relabeled, because the declared-ABI lane is verified for
 `EF_MIPS_ARCH_32R2` headers only. The recordless MIPS-I lane pins the same
 generic 32-bit language, which also decodes later MIPS32 instructions; the
 session states that conformance to the MIPS-I subset is not established from
-the header alone.
+the header alone, and names the committed language when the caller selected a
+variant instead of the pin. A committed profile is bound to the current
+target's lane and captured ELF metadata before startup; reusing a profile
+resolved for the other recordless lane is refused rather than exporting
+attribution for a target it did not describe.
 
 Explicit `EF_MIPS_FP64` and `EF_MIPS_NAN2008` declarations are refused. Their
 absence is insufficient: Clang can emit identical `e_flags` for FP32, FP64 and

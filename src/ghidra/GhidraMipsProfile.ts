@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type {
   BinaryTarget,
@@ -231,16 +232,27 @@ export const isMips1LegacyAdmission = (target: BinaryTarget): boolean =>
 /**
  * MIPS-I predates MIPS32, but Ghidra ships a generic 32-bit MIPS language that
  * decodes later instructions too. The header establishes the declared ISA, not
- * that every decoded instruction belongs to the MIPS-I subset.
+ * that every decoded instruction belongs to the MIPS-I subset. Name the
+ * committed language so a caller-selected variant is not reported as the pin.
  */
 export const ghidraMips1Limitations = (
   target: BinaryTarget,
-): readonly string[] =>
-  isMips1LegacyAdmission(target)
-    ? [
-        "The ELF header declares the MIPS-I ISA. REA pins the generic 32-bit MIPS language, which also decodes later MIPS32 instructions; conformance to the MIPS-I subset is not established from the header alone.",
-      ]
-    : [];
+  importLanguage?: GhidraLanguageOverride,
+  providerPinned = false,
+): readonly string[] => {
+  if (!isMips1LegacyAdmission(target)) return [];
+  const consequence =
+    "conformance to the MIPS-I subset is not established from the header alone.";
+  if (providerPinned)
+    return [
+      `The ELF header declares the MIPS-I ISA. REA pins the generic 32-bit MIPS language, which also decodes later MIPS32 instructions; ${consequence}`,
+    ];
+  return [
+    importLanguage === undefined
+      ? `The ELF header declares the MIPS-I ISA. No import language is committed to the profile, so the decoder's MIPS-I conformance is not established from the header alone.`
+      : `The ELF header declares the MIPS-I ISA. REA imports it with the caller-selected ${importLanguage.languageId} language, which may decode instructions outside the MIPS-I subset; ${consequence}`,
+  ];
+};
 
 /** Soft-float prototype policy applied by ReaGhidraMipsSoftFloat.java after analysis. */
 export const GHIDRA_MIPS_SOFT_FLOAT_STORAGE = "o32-soft-float-prototype-v1";
@@ -411,6 +423,41 @@ export const ghidraMipsProfileParameters = (
     ...(legacy ? { mips_abi_basis: "inferred-o32-assumption-v1" } : {}),
     ...pinnedLanguage,
   };
+};
+
+/**
+ * Bind a committed MIPS profile to the target being imported. The recordless
+ * MIPS-I and MIPS32 lanes share one language pin, so the language checks alone
+ * cannot detect a profile resolved for a different ISA revision. The profile
+ * also carries header metadata used by shipped evidence and snapshots, so a
+ * mismatch must be refused before startup rather than attributed to this target.
+ */
+export const ghidraMipsProfileMismatchReason = (
+  target: BinaryTarget,
+  parameters: Readonly<Record<string, unknown>>,
+): string | null => {
+  if (target.architecture !== "mips" || target.mips === undefined) return null;
+  const expected = ghidraMipsProfileParameters(target);
+  // PSP keeps its own loader and lane but still commits target-derived MIPS
+  // metadata; bind that metadata without demanding the generic lane name.
+  const pspLane = "psp-elf32-exec-eabi32-allegrex-v2";
+  const committedLane = parameters.mips_support_lane;
+  const expectedLane =
+    committedLane === pspLane ? pspLane : expected.mips_support_lane;
+  const expectedBasis =
+    committedLane === pspLane ? undefined : expected.mips_abi_basis;
+  if (
+    expectedLane !== undefined &&
+    (committedLane !== expectedLane ||
+      parameters.mips_abi_basis !== expectedBasis)
+  )
+    return "The committed MIPS analysis lane was resolved for a different target; reopen the target to resolve a new profile.";
+  if (
+    expected.mips_elf !== undefined &&
+    !isDeepStrictEqual(parameters.mips_elf, expected.mips_elf)
+  )
+    return "The committed MIPS ELF metadata does not match the current target; reopen the target to resolve a new profile.";
+  return null;
 };
 
 /** Read the provider-pinned import language back from a resolved legacy profile. */
