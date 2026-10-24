@@ -132,6 +132,7 @@ const inspectPackage = async (
       manifest.text,
       manifest.status,
       app.target_sdk || null,
+      app.min_sdk || null,
     ),
     class_count: loaded.class_count,
     resource_count: loaded.resource_count,

@@ -111,6 +111,77 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
   </application>
 </manifest>`;
 
+it.each([
+  [
+    "application",
+    '<application xmlns="urn:vendor"><activity xmlns="" android:name=".Decoy"/></application>',
+    [],
+    [],
+  ],
+  [
+    "component",
+    '<application><activity xmlns="urn:vendor" android:name=".Decoy"/></application>',
+    [],
+    [],
+  ],
+  [
+    "filter",
+    '<application><activity android:name=".Real"><intent-filter xmlns="urn:vendor"><action android:name="DECOY"/></intent-filter></activity></application>',
+    ["activity"],
+    [],
+  ],
+  [
+    "action",
+    '<application><activity android:name=".Real"><intent-filter><action xmlns="urn:vendor" android:name="DECOY"/><action android:name="REAL"/></intent-filter></activity></application>',
+    ["activity"],
+    ["REAL"],
+  ],
+  [
+    "category",
+    '<application><activity android:name=".Real"><intent-filter><category xmlns="urn:vendor" android:name="DECOY"/><action android:name="REAL"/></intent-filter></activity></application>',
+    ["activity"],
+    ["REAL"],
+  ],
+] as const)(
+  "ignores foreign namespace %s elements",
+  (_kind, body, kinds, actions) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example">${body}</manifest>`,
+      "complete",
+      "30",
+    );
+    expect(inventory.status).toBe("complete");
+    expect(inventory.items.map((item) => item.kind)).toEqual(kinds);
+    expect(inventory.items[0]?.actions ?? []).toEqual(actions);
+    expect(inventory.items[0]?.categories ?? []).toEqual([]);
+    if (_kind === "filter")
+      expect(inventory.items[0]?.intent_filter_count).toBe(0);
+  },
+);
+
+it("refuses a namespaced manifest root", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns="urn:vendor" xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Decoy"/></application></manifest>',
+    "complete",
+    "30",
+  );
+  expect(inventory.status).toBe("unavailable");
+  expect(inventory.items).toEqual([]);
+});
+
+it("does not index foreign activities as alias targets", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity xmlns="urn:vendor" android:name=".Target"/><activity-alias android:name=".Alias" android:targetActivity=".Target"/></application></manifest>',
+    "complete",
+    "30",
+  );
+  expect(inventory.items.map((item) => item.kind)).toEqual(["activity-alias"]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "do not match a preceding activity declaration",
+  );
+});
+
 it("projects declared components with resolved names and export defaults", () => {
   const inventory = parseAndroidManifestComponents(MANIFEST, "complete", "30");
   expect(inventory.status).toBe("complete");
@@ -388,10 +459,12 @@ it("applies the provider export default from the target SDK", () => {
   });
   const modern = parseAndroidManifestComponents(MANIFEST, "complete", "33");
   expect(modern.items[6]?.exported_default).toBe(false);
-  // An unknown target SDK leaves the provider default unestablished; this
-  // manifest's provider declares android:exported, so no limitation fires.
-  // The omitted-exported warning path is covered by its own test.
-  const unknown = parseAndroidManifestComponents(MANIFEST, "complete", null);
+  // A reported but unrecognized SDK stays unknown; omission has a legacy default.
+  const unknown = parseAndroidManifestComponents(
+    MANIFEST,
+    "complete",
+    "Preview",
+  );
   expect(unknown.items[6]?.exported_default).toBeNull();
   expect(unknown.limitations.join(" ")).toContain("target SDK is unknown");
 });
@@ -409,7 +482,7 @@ it("leaves target-31-or-later filtered components without an inferred export def
     parseAndroidManifestComponents(manifest, "complete", "30").items[0],
   ).toMatchObject({ exported_default: true });
   expect(
-    parseAndroidManifestComponents(manifest, "complete", null).items[0],
+    parseAndroidManifestComponents(manifest, "complete", "Preview").items[0],
   ).toMatchObject({ exported_default: null });
 });
 
@@ -762,9 +835,9 @@ it("marks the inventory partial when nameless declarations are dropped", () => {
 
 it("does not warn about providers that declare android:exported", () => {
   const inventory = parseAndroidManifestComponents(
-    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Declared" android:exported="false" /><provider android:name=".Omitted" /></application></manifest>`,
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><uses-sdk android:targetSdkVersion="Preview"/><application><provider android:name=".Declared" android:exported="false" /><provider android:name=".Omitted" /></application></manifest>`,
     "complete",
-    null,
+    "Preview",
   );
   expect(inventory.limitations.join(" ")).toContain("1 provider(s) omit");
   expect(inventory.limitations.join(" ")).not.toContain("2 provider(s) omit");
@@ -789,9 +862,9 @@ it("counts unnamed declarations against the component bound", () => {
 
 it("distinguishes nonliteral android:exported values from omission", () => {
   const inventory = parseAndroidManifestComponents(
-    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Resource" android:exported="@bool/exported" /><provider android:name=".Omitted" /><provider android:name=".Empty" android:exported="" /><activity android:name=".True" android:exported="True"><intent-filter><action android:name="com.example.app.OPEN" /></intent-filter></activity></application></manifest>`,
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><uses-sdk android:targetSdkVersion="Preview"/><application><provider android:name=".Resource" android:exported="@bool/exported" /><provider android:name=".Omitted" /><provider android:name=".Empty" android:exported="" /><activity android:name=".True" android:exported="True"><intent-filter><action android:name="com.example.app.OPEN" /></intent-filter></activity></application></manifest>`,
     "complete",
-    null,
+    "Preview",
   );
   const resource = inventory.items.find(({ name }) =>
     name.endsWith(".Resource"),

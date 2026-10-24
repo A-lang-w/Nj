@@ -87,6 +87,12 @@ const unavailable = (
 const childNodes = (element: Element): readonly Node[] =>
   Array.from(element.childNodes);
 
+/** Manifest tags are unnamespaced; Android's namespace qualifies attributes. */
+const isManifestElement = (node: Node | null): node is Element =>
+  node !== null &&
+  node.nodeType === 1 &&
+  (node as Element).namespaceURI === null;
+
 /** Read an unnamespaced attribute, the shape manifest `package` uses. */
 const plainAttribute = (element: Element, name: string): string | null => {
   const value = element.getAttribute(name);
@@ -173,19 +179,6 @@ export const resolveAndroidComponentName = (
 const isComponentKind = (tag: string): tag is AndroidComponentKind =>
   (ANDROID_COMPONENT_KINDS as readonly string[]).includes(tag);
 
-/**
- * Android's target-SDK rule for an absent android:exported on providers:
- * exported through API 16, not exported from API 17.
- */
-export const providerExportedDefault = (
-  targetSdk: string | null,
-): boolean | null => {
-  if (targetSdk === null || !/^\d+$/u.test(targetSdk)) return null;
-  const level = Number(targetSdk);
-  if (!Number.isSafeInteger(level) || level < 1) return null;
-  return level <= 16;
-};
-
 const androidTargetSdkLevel = (targetSdk: string | null): number | null => {
   if (targetSdk === null || !/^\d+$/u.test(targetSdk)) return null;
   const level = Number(targetSdk);
@@ -205,8 +198,8 @@ const intentValues = (
   let budget = ANDROID_MANIFEST_LIMITS.intentValues;
   for (const filter of filters.slice(0, ANDROID_MANIFEST_LIMITS.intentFilters))
     for (const member of childNodes(filter)) {
-      if (member.nodeType !== 1) continue;
-      const element = member as Element;
+      if (!isManifestElement(member)) continue;
+      const element = member;
       if (element.nodeName !== "action" && element.nodeName !== "category")
         continue;
       const value = androidAttribute(element, "name");
@@ -268,7 +261,8 @@ const providerAuthorities = (
 export const parseAndroidManifestComponents = (
   manifestText: string,
   coverage: "complete" | "partial",
-  targetSdk: string | null = null,
+  declaredTargetSdk: string | null = null,
+  minimumSdk: string | null = null,
 ): AndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
@@ -285,7 +279,7 @@ export const parseAndroidManifestComponents = (
       `The decoded manifest is not well-formed XML (${parsed.error.reason}), so its component inventory is unavailable.`,
     );
   const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "manifest")
+  if (!isManifestElement(root) || root.nodeName !== "manifest")
     return unavailable(
       "The decoded manifest root is not <manifest>, so its component inventory is unavailable.",
     );
@@ -323,10 +317,29 @@ export const parseAndroidManifestComponents = (
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   let authorityBudget = ANDROID_MANIFEST_LIMITS.authorityBytes;
   let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
-  const targetSdkLevel = androidTargetSdkLevel(targetSdk);
-  for (const node of childNodes(root)) {
-    if (node.nodeType !== 1) continue;
-    const element = node as Element;
+  const children = childNodes(root);
+  let targetSdkDeclared = false;
+  let minimumSdkDeclared = false;
+  for (const child of children) {
+    if (!isManifestElement(child) || child.nodeName !== "uses-sdk") continue;
+    // Match the bridge's declaration owner: the last uses-sdk supplies values.
+    targetSdkDeclared = androidAttribute(child, "targetSdkVersion") !== null;
+    minimumSdkDeclared = androidAttribute(child, "minSdkVersion") !== null;
+  }
+  // Empty protocol values can mean omission or an empty declared attribute.
+  // XML presence disambiguates them; an explicit unknown never becomes API 1.
+  let effectiveTargetSdk = declaredTargetSdk;
+  if (effectiveTargetSdk === null && !targetSdkDeclared) {
+    effectiveTargetSdk = minimumSdk;
+    if (effectiveTargetSdk === null && !minimumSdkDeclared)
+      effectiveTargetSdk = "1";
+  }
+  const targetSdkLevel = androidTargetSdkLevel(effectiveTargetSdk);
+  // Parse the effective SDK once even when hundreds of providers share it.
+  const providerDefault = targetSdkLevel === null ? null : targetSdkLevel <= 16;
+  for (const node of children) {
+    if (!isManifestElement(node)) continue;
+    const element = node;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
     const precedingActivityTargetNames = new Set<string>();
@@ -347,8 +360,8 @@ export const parseAndroidManifestComponents = (
         ? null
         : Buffer.byteLength(applicationPermission);
     for (const child of childNodes(element)) {
-      if (child.nodeType !== 1) continue;
-      const component = child as Element;
+      if (!isManifestElement(child)) continue;
+      const component = child;
       if (!isComponentKind(component.nodeName)) continue;
       // Every declaration counts against the bound, named or not, so an
       // unnamed flood cannot exceed it while still reporting complete.
@@ -366,7 +379,7 @@ export const parseAndroidManifestComponents = (
       const unresolvedName = containsUnresolvedToken(declared);
       const filters = childNodes(component).filter(
         (entry): entry is Element =>
-          entry.nodeType === 1 && entry.nodeName === "intent-filter",
+          isManifestElement(entry) && entry.nodeName === "intent-filter",
       );
       const collected = intentValues(filters);
       if (collected.truncated) {
@@ -497,10 +510,6 @@ export const parseAndroidManifestComponents = (
           } else permissionBudget -= permissionBytes;
         }
       }
-      const providerDefault =
-        component.nodeName === "provider"
-          ? providerExportedDefault(targetSdk)
-          : null;
       const declaredExported = androidAttribute(component, "exported");
       const targetActivity =
         component.nodeName === "activity-alias"
