@@ -18,6 +18,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args);
       const close = handle.close.bind(handle);
+      // Establish the owner at admission and count its first close as well as
+      // retries; stream teardown must not supply an implicit extra attempt.
+      cleanupState.firstHandle ??= handle;
       if (cleanupState.abortController !== undefined)
         setImmediate(() => {
           cleanupState.abortController?.abort();
@@ -26,8 +29,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       handle.close = async () => {
         if (handle === cleanupState.firstHandle)
           cleanupState.firstHandleCloseAttempts += 1;
-        else if (cleanupState.firstHandle === undefined)
-          cleanupState.firstHandle = handle;
         if (
           cleanupState.failFirstClose &&
           handle === cleanupState.firstHandle
@@ -84,10 +85,13 @@ it.each(["go", "pe"] as const)(
       expect(first.error.cause.errors[1]).toMatchObject({
         cleanupResources: [path],
       });
+      expect(cleanupState.firstHandleCloseAttempts).toBe(1);
+      expect(cleanupState.firstHandle?.fd).toBeGreaterThanOrEqual(0);
 
       const retry = await provider.inspect(input);
       expect(retry.ok).toBe(true);
       expect(cleanupState.firstHandleCloseAttempts).toBe(2);
+      expect(cleanupState.firstHandle?.fd).toBe(-1);
     } finally {
       await provider.close();
       cleanupState.failFirstClose = false;
