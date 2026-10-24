@@ -79,3 +79,24 @@ it("distinguishes execute denial from missing or unreadable version output", asy
     },
   });
 });
+
+it("names a host-policy execute denial separately from missing permission", async () => {
+  vi.mocked(execFileOutput).mockRejectedValueOnce(
+    Object.assign(new Error("not permitted"), {
+      code: "EPERM",
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  await expect(inspectAdbClient(selection)).rejects.toMatchObject({
+    code: "binary_not_executable",
+    message:
+      "Execution of the selected adb binary was denied (EPERM): /host/adb",
+    diagnostics: {
+      filesystem_error: "EPERM",
+      remediation: expect.stringContaining("host security policy") as unknown,
+    },
+  });
+});

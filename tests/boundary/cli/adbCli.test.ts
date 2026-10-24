@@ -176,6 +176,13 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
     }
+    // A parent component that is a file throws ENOTDIR synchronously.
+    expectConfigurationRefusal(
+      await serve(["inspect-adb-client", "--json"], {
+        REA_ADB_PATH: `${file}/adb`,
+      }),
+      `The selected adb binary was not found: ${file}/adb. Set REA_ADB_PATH`,
+    );
     await chmod(file, 0o755);
     const result = await serve(["inspect-adb-client", "--json"], {
       REA_ADB_PATH: file,

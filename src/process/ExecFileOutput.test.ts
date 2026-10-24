@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -419,6 +419,45 @@ describe("execFileOutput failure metadata", () => {
       code: 7,
     });
   });
+  it.skipIf(process.platform === "win32")(
+    "admits a synchronously thrown spawn error with its code and empty capture",
+    async () => {
+      const root = await createTestTempDirectory("rea-exec-enotdir-");
+      const file = join(root, "regular");
+      await writeFile(file, "");
+      const failure: unknown = await execFileOutput(join(file, "adb"), [
+        "version",
+      ]).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+
+      expect(failure).toMatchObject({ code: "ENOTDIR", syscall: "spawn" });
+      expect(execFileOutputFailure(failure)).toEqual({
+        stdout: "",
+        stderr: "",
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        code: "ENOTDIR",
+        signal: null,
+        killed: false,
+        outputTruncated: false,
+      });
+    },
+  );
+
+  it("leaves a synchronous argument validation error unadmitted", async () => {
+    const failure: unknown = await execFileOutput(process.execPath, [
+      "nul\0byte",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(failure).toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    expect(execFileOutputFailure(failure)).toBeUndefined();
+  });
+
   it("preserves explicit truncation metadata from an owned process failure", () => {
     const failure = Object.assign(new Error("owned output was truncated"), {
       stdout: "partial stdout",

@@ -163,13 +163,15 @@ export const inspectAdbClient = async (
         userMessage: `adb version probe reached its ${String(VERSION_TIMEOUT_MS)} ms deadline (deadlineExpired). This release has no runtime override.`,
         remediationAction: `This ${String(VERSION_TIMEOUT_MS)} ms adb version probe has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
       });
-    if (failure?.code === "ENOENT")
+    // ENOTDIR: a parent component of the selected path is not a directory.
+    if (failure?.code === "ENOENT" || failure?.code === "ENOTDIR")
       throw new AdbConfigurationFailure(
         "binary_missing",
         `The selected adb binary was not found: ${selection.binary}`,
         {
           selected_binary: selection.binary,
           path_source: selection.pathSource,
+          filesystem_error: failure.code,
           remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
         },
         { cause },
