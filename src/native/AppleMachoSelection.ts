@@ -2,6 +2,7 @@ import { MachoLoadCommandCursor } from "../domain/apple/machoLoadCommands.js";
 import { createHash } from "node:crypto";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
+import { decodeMachoName } from "./AppleMachoNames.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
   machoSubtypeRank,
@@ -10,6 +11,7 @@ import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   readFatSliceDeclarations,
   validateFatSlice,
+  validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 
@@ -33,15 +35,7 @@ export interface MachoSlice {
   slice: number;
   sliceEnd: number;
   /** FAT table identity, absent for a thin image. */
-  fatDeclaration?: {
-    offset: number;
-    size: number;
-    cpuType: number;
-    cpuSubtype: number;
-    alignmentExponent: number;
-    index: number;
-    tableEnd: number;
-  };
+  fatDeclaration?: FatSliceDeclaration & { readonly tableEnd: number };
 }
 
 /** Parsed little-endian 64-bit Mach-O layout for the selected architecture slice. */
@@ -192,7 +186,7 @@ export const parseMachoLayout = (
   const cpuSubtype = readHeaderUInt32(slice + 8);
   const fat = selection.fatDeclaration;
   if (fat !== undefined) {
-    const issue = validateFatSlice(fat, bytes.length, fat.tableEnd, {
+    const issue = validateFatSliceIdentity(fat, {
       cpuType,
       cpuSubtype,
     });
@@ -293,7 +287,7 @@ interface LayoutState {
   readonly sliceEnd: number;
   readonly segments: Segment[];
   readonly sections: Section[];
-  readonly dylibs: string[];
+  readonly dylibs: FixupCommands["dylibs"][number][];
   readonly binds: FixupCommands["binds"][number][];
   readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
@@ -388,6 +382,8 @@ const collectFixupCommand = (
     const end = bytes.indexOf(0, cursor + nameOffset);
     if (end < 0 || end >= cursor + size)
       throw new RangeError("Unterminated dylib install name");
-    state.dylibs.push(bytes.toString("utf8", cursor + nameOffset, end));
+    state.dylibs.push(
+      decodeMachoName(bytes.subarray(cursor + nameOffset, end)),
+    );
   }
 };
