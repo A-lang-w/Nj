@@ -6,12 +6,12 @@ import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 
-// Digests were computed by the pre-refactor resolver (upstream 0583fc69b,
+// Digests were computed by the unmodified upstream resolver (3ae7daa10,
 // raw branch inline) and must not change when the binary-loader policy is shared.
 const RAW_DIGESTS = {
-  "6502": "c1e8421c8c1e30804ab4e201c3841118208ec01c9653edabb183ee93927b86ff",
+  "6502": "adbec31711f31471f9cdbdbb2fc743a0ce6b46c9be5568bf90a3f51ef46e376d",
   "x86-disabled-analyzer":
-    "af1eb701376684a028c9bd6b1f792ca6936c0e77c9a535b6703e534e4d44e245",
+    "493a02888eca575be286b5a96041af8007444586854edb974d6a0c12fd2768c4",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {

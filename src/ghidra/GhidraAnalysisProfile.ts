@@ -37,7 +37,6 @@ import {
   ghidraDolLanguageUnsupportedReason,
   ghidraDolProfileParameters,
 } from "./GhidraDolProfile.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 
 import {
   ghidraProcessorUnsupportedReason,
