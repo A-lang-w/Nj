@@ -111,6 +111,67 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
   </application>
 </manifest>`;
 
+it.each([".9Activity", ".hyphen-name", ".😀Activity", ".nested.7"])(
+  "resolves DEX component name %s and its alias reference",
+  (name) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${name}"/><activity-alias android:name=".Alias" android:targetActivity="${name}"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.items[0]?.name).toBe(`com.example${name}`);
+    expect(inventory.items[1]?.target_activity).toBe(name);
+    expect(inventory.status).toBe("complete");
+  },
+);
+
+it.each([
+  ["0x10", true, true],
+  ["0X11", false, true],
+  ["0x1f", false, null],
+] as const)(
+  "interprets decoded hexadecimal target SDK %s",
+  (sdk, providerDefault, activityDefault) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".Provider"/><activity android:name=".Activity"><intent-filter><action android:name="OPEN"/></intent-filter></activity></application></manifest>`,
+      "complete",
+      sdk,
+    );
+    expect(inventory.items.map((item) => item.exported_default)).toEqual([
+      providerDefault,
+      activityDefault,
+    ]);
+  },
+);
+
+it("uses a decoded hexadecimal minimum SDK when target SDK is omitted", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><uses-sdk android:minSdkVersion="0x10"/><application><provider android:name=".Provider"/></application></manifest>',
+    "complete",
+    null,
+    "0x10",
+  );
+  expect(inventory.items[0]?.exported_default).toBe(true);
+});
+
+it.each([
+  "0x",
+  "0xgg",
+  "1e1",
+  "-1",
+  "0",
+  "2147483648",
+  "0x80000000",
+  "Preview",
+])("keeps unsupported SDK spelling %s unknown", (sdk) => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".Provider"/></application></manifest>',
+    "complete",
+    sdk,
+  );
+  expect(inventory.items[0]?.exported_default).toBeNull();
+});
+
 it.each([
   [
     "application",
@@ -272,7 +333,8 @@ it.each([
   ".Bad//Main",
   "com.example.Bad/Name",
   "com..example.Bad",
-  "com.example.9Bad",
+  "com.example.Bad;Name",
+  "com.example.Bad[Name",
 ])(
   "retains malformed component class name %s without resolving it",
   (declaredName) => {
@@ -287,7 +349,7 @@ it.each([
     });
     expect(inventory.status).toBe("partial");
     expect(inventory.limitations.join(" ")).toContain(
-      "do not fit the supported Java binary class-name syntax",
+      "do not fit DEX binary class-name syntax",
     );
   },
 );
@@ -567,7 +629,7 @@ it("does not resolve package-relative names against malformed package syntax", (
   ]);
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
-    "does not fit the supported Java binary class-name syntax",
+    "does not fit the supported Java package-name syntax",
   );
   expect(inventory.limitations.join(" ")).toContain(
     "package-relative component name(s) remain unresolved",

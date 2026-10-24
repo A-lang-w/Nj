@@ -129,21 +129,10 @@ const javaIdentifierStart = /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc})$/u;
 const javaIdentifierPart =
   /^(?:\p{L}|\p{Nl}|\p{Sc}|\p{Pc}|\p{Mn}|\p{Mc}|\p{Nd}|\p{Cf})$/u;
 
-/**
- * Android class names use Java binary-name syntax after the manifest's
- * relative-name expansion. This accepts the Java identifier character
- * categories and the separators between binary-name segments. Unrecognized
- * characters remain source evidence instead of becoming a class identity.
- */
-const hasSupportedJavaBinaryClassNameSyntax = (name: string): boolean => {
+/** Package declarations keep their Java identifier validation. */
+const hasSupportedJavaPackageNameSyntax = (name: string): boolean => {
   let segmentStart = true;
-  let first = true;
   for (const character of name) {
-    if (first && character === ".") {
-      first = false;
-      continue;
-    }
-    first = false;
     if (character === ".") {
       if (segmentStart) return false;
       segmentStart = true;
@@ -155,8 +144,31 @@ const hasSupportedJavaBinaryClassNameSyntax = (name: string): boolean => {
   return !segmentStart;
 };
 
-const hasSupportedJavaPackageNameSyntax = (name: string): boolean =>
-  !name.startsWith(".") && hasSupportedJavaBinaryClassNameSyntax(name);
+// DEX SimpleName permits digits at the start, '-', supplemental code points,
+// and (since format 040) spaces. A decoded manifest does not qualify DEX
+// version or class existence; accept the documented character union here.
+const dexSimpleNameCharacter =
+  /^[A-Za-z0-9$_\- \u00a0-\u1fff\u2000-\u200a\u2010-\u2027\u202f-\ud7ff\ue000-\uffef\u{10000}-\u{10ffff}]$/u;
+
+const hasSupportedDexBinaryClassNameSyntax = (name: string): boolean => {
+  let segmentStart = true;
+  let first = true;
+  for (const character of name) {
+    if (first && character === ".") {
+      first = false;
+      continue;
+    }
+    first = false;
+    if (character === ".") {
+      if (segmentStart) return false;
+      segmentStart = true;
+    } else {
+      if (!dexSimpleNameCharacter.test(character)) return false;
+      segmentStart = false;
+    }
+  }
+  return !segmentStart;
+};
 
 const containsUnresolvedToken = (value: string): boolean =>
   value.includes("@") || value.includes("?") || value.includes("${");
@@ -180,9 +192,14 @@ const isComponentKind = (tag: string): tag is AndroidComponentKind =>
   (ANDROID_COMPONENT_KINDS as readonly string[]).includes(tag);
 
 const androidTargetSdkLevel = (targetSdk: string | null): number | null => {
-  if (targetSdk === null || !/^\d+$/u.test(targetSdk)) return null;
+  // JADX prints TYPE_INT_HEX as 0x..., while TYPE_INT_DEC stays decimal.
+  // Both originate in an Android signed 32-bit resource integer.
+  if (targetSdk === null || !/^(?:[0-9]+|0x[0-9a-f]+)$/iu.test(targetSdk))
+    return null;
   const level = Number(targetSdk);
-  return Number.isSafeInteger(level) && level >= 1 ? level : null;
+  return Number.isInteger(level) && level >= 1 && level <= 0x7fffffff
+    ? level
+    : null;
 };
 
 /**
@@ -391,7 +408,7 @@ export const parseAndroidManifestComponents = (
       const invalidDeclaredName =
         declared.length === 0 ||
         declared !== rawDeclaredName ||
-        (!unresolvedName && !hasSupportedJavaBinaryClassNameSyntax(declared));
+        (!unresolvedName && !hasSupportedDexBinaryClassNameSyntax(declared));
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
         !invalidDeclaredName &&
@@ -527,7 +544,7 @@ export const parseAndroidManifestComponents = (
             targetName.length === 0 ||
             targetName !== targetActivity ||
             (!targetUnresolved &&
-              !hasSupportedJavaBinaryClassNameSyntax(targetName));
+              !hasSupportedDexBinaryClassNameSyntax(targetName));
           const targetPackageKnown =
             packageName !== null &&
             !packageHasInvalidWhitespace &&
@@ -614,7 +631,7 @@ export const parseAndroidManifestComponents = (
   }
   if (invalidNames > 0) {
     limitations.push(
-      `${String(invalidNames)} component name value(s) are empty, have surrounding whitespace, or do not fit the supported Java binary class-name syntax; the raw declaration is retained without resolving it as an identity.`,
+      `${String(invalidNames)} component name value(s) are empty, have surrounding whitespace, or do not fit DEX binary class-name syntax; the raw declaration is retained without resolving it as an identity.`,
     );
     truncated = true;
   }
@@ -626,7 +643,7 @@ export const parseAndroidManifestComponents = (
   }
   if (packageHasUnsupportedClassNameSyntax) {
     limitations.push(
-      "The manifest package does not fit the supported Java binary class-name syntax; package-relative component names were not resolved against it.",
+      "The manifest package does not fit the supported Java package-name syntax; package-relative component names were not resolved against it.",
     );
     truncated = true;
   }

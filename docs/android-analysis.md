@@ -56,6 +56,11 @@ Provider `android:readPermission` and `android:writePermission` overrides are
 not projected as separate fields; their presence marks the inventory partial
 and is called out in `limitations`. Relative component names are not resolved
 against a manifest package with surrounding whitespace.
+Class-name segments follow DEX `SimpleName` characters, including a leading
+digit or hyphen, rather than Java source identifier rules. Relative-name
+expansion does not prove class existence, DEX-version compatibility or runtime
+loadability. SDK defaults accept JADX's decimal and hexadecimal integer
+spellings; the original SDK declaration strings remain unchanged.
 
 `exported` is the declared literal `true` or `false`, otherwise null.
 `exported_default` is the documented default only where it can be established;
