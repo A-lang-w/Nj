@@ -17,6 +17,8 @@ import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 
 const MAX_RETAINED_CSS_VARIABLES = 250;
 const MAX_INTAKE_CSS_VARIABLES = 2000;
+const MAX_REJECTED_PREVIEWS = 3;
+const MAX_PREVIEW_NAME_LENGTH = 64;
 
 const emptyCssVariables = (
   status: BrowserCssVariables["status"],
@@ -116,7 +118,8 @@ export const captureCssVariables = async (
   );
   const validItems: BrowserCssVariableItem[] = [];
   let totalObserved = 0;
-  const rejectedReasons: string[] = [];
+  let rejectedCount = 0;
+  const rejectedPreviews: string[] = [];
 
   for (const prop of computedProps) {
     const name = cdpStringValue(prop.name);
@@ -132,20 +135,27 @@ export const captureCssVariables = async (
         validItems.push(parsed.data);
       }
     } else {
-      const issue =
-        parsed.error.issues[0]?.message ?? "invalid token format or size";
-      rejectedReasons.push(`${name} (${issue})`);
+      rejectedCount += 1;
+      if (rejectedPreviews.length < MAX_REJECTED_PREVIEWS) {
+        const truncatedName =
+          name.length > MAX_PREVIEW_NAME_LENGTH
+            ? `${name.slice(0, MAX_PREVIEW_NAME_LENGTH - 3)}...`
+            : name;
+        const issue =
+          parsed.error.issues[0]?.message ?? "invalid token format or size";
+        rejectedPreviews.push(`${truncatedName} (${issue})`);
+      }
     }
   }
 
-  if (rejectedReasons.length > 0) {
-    const preview = rejectedReasons.slice(0, 3).join(", ");
+  if (rejectedCount > 0) {
+    const preview = rejectedPreviews.join(", ");
     const remaining =
-      rejectedReasons.length > 3
-        ? ` and ${String(rejectedReasons.length - 3)} more`
+      rejectedCount > rejectedPreviews.length
+        ? ` and ${String(rejectedCount - rejectedPreviews.length)} more`
         : "";
     limitations.push(
-      `${String(rejectedReasons.length)} root CSS custom ${rejectedReasons.length === 1 ? "property was" : "properties were"} rejected: ${preview}${remaining}.`,
+      `${String(rejectedCount)} root CSS custom ${rejectedCount === 1 ? "property was" : "properties were"} rejected: ${preview}${remaining}.`,
     );
   }
 

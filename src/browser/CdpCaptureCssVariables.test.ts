@@ -311,6 +311,54 @@ it("preserves observed count and records rejection limitation when tokens fail s
   ).toBe(true);
 });
 
+it("truncates excessively long rejected names and bounds preview list in limitations", async () => {
+  const longName = `--${"a".repeat(150)}`;
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: 1,
+        children: [{ nodeId: 2, nodeType: 1, nodeName: "HTML" }],
+      },
+    },
+    "CSS.enable": {},
+    "CSS.getComputedStyleForNode": {
+      computedStyle: [
+        { name: longName, value: "10px" },
+        { name: "--bad-1", value: "x".repeat(600) },
+        { name: "--bad-2", value: "x".repeat(600) },
+        { name: "--bad-3", value: "x".repeat(600) },
+        { name: "--bad-4", value: "x".repeat(600) },
+      ],
+    },
+    "CSS.disable": {},
+  });
+
+  const limitations: string[] = [];
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+    },
+    limitations,
+  );
+
+  expect(result.total).toBe(5);
+  expect(result.retained_count).toBe(0);
+  expect(limitations).toHaveLength(1);
+  const limitationMsg = limitations[0] ?? "";
+  expect(limitationMsg).toContain(
+    "5 root CSS custom properties were rejected:",
+  );
+  expect(limitationMsg).toContain("...");
+  expect(limitationMsg).toContain("and 2 more");
+  expect(limitationMsg.includes(longName)).toBe(false);
+});
+
 it("records informational limitation when CSS variables are truncated", async () => {
   const oversizedVariables = Array.from({ length: 260 }, (_, i) => ({
     name: `--var-${String(i).padStart(3, "0")}`,
