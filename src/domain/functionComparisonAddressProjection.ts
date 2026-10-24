@@ -3,6 +3,7 @@ import {
   parseAddress,
   type TextAddressLocation,
 } from "./functionComparisonTextParsing.js";
+import { nativeSymbolOrigin } from "./native/nativeSymbol.js";
 
 export interface AddressMask {
   readonly kind: "relative" | "external";
@@ -11,7 +12,10 @@ export interface AddressMask {
 }
 
 export interface AddressProjection {
-  readonly maskIdentifier: (address: bigint) => AddressMask | null;
+  readonly maskIdentifier: (
+    address: bigint,
+    name: string,
+  ) => AddressMask | null;
   readonly maskTextAddress: (
     address: bigint,
     location: TextAddressLocation,
@@ -51,6 +55,7 @@ export const createFunctionAddressProjection = (
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   const targetsBySite = referenceTargetsBySite(snapshot);
   const instructionSites = observedInstructionSites(snapshot);
+  const namedSymbols = namedSymbolNames(snapshot);
   const observedAddress = (address: bigint): AddressMask | null => {
     if (extent !== null && contains(extent.ranges, address))
       return {
@@ -63,7 +68,8 @@ export const createFunctionAddressProjection = (
   };
   return {
     isCalleeAddress: (address) => calleeAddresses.has(address),
-    maskIdentifier: observedAddress,
+    maskIdentifier: (address, name) =>
+      namedSymbols.has(name) ? null : observedAddress(address),
     maskTextAddress: (address, location) => {
       if (location.isAddressSpaceQualified) return null;
       if (
@@ -178,6 +184,26 @@ const corroboratedAddresses = (snapshot: FunctionSnapshot): Set<bigint> => {
     add(item.source_address);
   }
   return addresses;
+};
+
+/** A producer-reported named symbol is an identity even when it looks address-derived. */
+const namedSymbolNames = (snapshot: FunctionSnapshot): Set<string> => {
+  const { dossier } = snapshot;
+  return new Set(
+    [
+      dossier.procedure,
+      ...dossier.callers,
+      ...dossier.callees,
+      ...[
+        ...dossier.incoming_references,
+        ...dossier.outgoing_references,
+      ].flatMap((edge) => [edge.source_procedure, edge.target_procedure]),
+    ].flatMap((identity) =>
+      identity !== null && nativeSymbolOrigin(identity.symbol) === "named"
+        ? [identity.name]
+        : [],
+    ),
+  );
 };
 
 /** Reference facts are matched by source site and operand, never by value alone. */

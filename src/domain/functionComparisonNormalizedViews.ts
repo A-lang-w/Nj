@@ -30,7 +30,8 @@ const POLICY = "rea-address-normalized-text-v1";
  * A label matches only when its suffix is fully hexadecimal and the whole token
  * ends there, so `sub_deallocate` and a named symbol such as `__RTC_CheckEsp`
  * never match. Matching is form-based; masking additionally requires that this
- * dossier corroborates the embedded address.
+ * dossier corroborates the embedded address and does not report the name as a
+ * named symbol.
  */
 const NORMALIZABLE_ADDRESS_TOKEN =
   /(?<![0-9A-Za-z_])(?:(?<label>(?:thunk_|flt_)?(?:FUN|SUB|DAT|LAB|PTR|UNK|SwitchD|Join)_|(?:sub|loc|off|unk|nullsub)_|(?:fcn|sub|loc|off|data)\.)(?<identifier_prefix>0x)?(?<identifier_address>[0-9a-f]{4,})(?![0-9A-Za-z_])|(?<address>0x[0-9a-f]+))/giu;
@@ -40,7 +41,7 @@ const RULES = [
   {
     rule: "address_derived_identifier",
     description:
-      "Recognized provider address-derived identifiers whose embedded address this dossier corroborates are replaced by provider-label-preserving ordinals; identifiers inside strings and comments stay visible. Function-local labels retain their explicit entry-relative offset.",
+      "Recognized provider address-derived identifiers whose embedded address this dossier corroborates are replaced by provider-label-preserving ordinals; identifiers inside strings and comments, and names the dossier reports with a named symbol origin, stay visible. Function-local labels retain their explicit entry-relative offset.",
   },
   {
     rule: "function_relative_address",
@@ -108,7 +109,7 @@ const normalizeText = (
           address === null
             ? null
             : isIdentifier
-              ? projection.maskIdentifier(address)
+              ? projection.maskIdentifier(address, match)
               : projection.maskTextAddress(
                   address,
                   addressLocation(codeStart + index),

@@ -204,6 +204,42 @@ describe("wallace relocation-only function pair", () => {
     expect(projection).toMatchObject({ status: "unchanged" });
     expect(projection?.left_count).toBe(projection?.right_count);
   });
+
+  it.each([
+    { source: "default", masked: 1, status: "unchanged" },
+    { source: "user_defined", masked: 0, status: "changed" },
+  ] as const)(
+    "masks an address-shaped name only without a named symbol origin ($source)",
+    ({ source, masked, status }) => {
+      const withSymbol = (address: string) => {
+        const dossier = addressRelocationText(address);
+        return {
+          ...dossier,
+          procedure: {
+            ...dossier.procedure,
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "function",
+              source,
+            },
+          },
+        };
+      };
+      const result = compareFunctions(
+        ...syntheticPair(withSymbol("0x411700"), withSymbol("0x4116f0")),
+        { includeNormalizedViews: true },
+      );
+      const projection = view(result, "pseudocode_normalized");
+      for (const side of ["left", "right"] as const)
+        expect(projection?.masking?.[side]).toMatchObject({
+          address_derived_identifiers: masked,
+          unmasked_address_derived_identifiers: 1 - masked,
+        });
+      expect(projection).toMatchObject({ status });
+    },
+  );
 });
 
 describe("wallace edited function pairs", () => {
