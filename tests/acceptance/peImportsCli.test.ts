@@ -4,6 +4,9 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   peImportImage,
+  peImportFixtureOffset,
+  peImportLeadingSectionImage,
+  peImportManySectionsImage,
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -57,3 +60,84 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
     details: { operation: "inspect_pe_imports" },
   });
 });
+
+cliTest(
+  "retains a partial inventory when an IAT RVA overflows",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-imports-cli-overflow-");
+    for (const bits of [32, 64] as const) {
+      const bytes = peImportImage({ bits });
+      bytes.writeUInt32LE(
+        0x100000000 - bits / 8,
+        peImportFixtureOffset(0x1000) + 16,
+      );
+      const path = join(root, `app-${String(bits)}.exe`);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_pe_imports").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+        "GetProcAddress",
+      ]);
+      expect(report.coverage.status).toBe("partial");
+      expect(report.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "malformed_entry",
+            location: "0x100000000",
+          }),
+        ]),
+      );
+      expect(report.imphash.md5).toBeNull();
+    }
+  },
+);
+
+cliTest(
+  "keeps complete facts when pefile cannot see the same import table",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-pe-imports-cli-compatibility-",
+    );
+    const functions = Array.from({ length: 140 }, (_, i) => ({
+      name: `Function${String(i).padStart(3, "0")}`,
+    }));
+    const cases = [
+      [
+        "cross-section",
+        peImportImage({
+          sectionBytes: 0x4000,
+          splitAt: 0x1000,
+          dlls: [{ name: "KERNEL32.dll", functions }],
+        }),
+        140,
+      ],
+      ["section-cap", peImportManySectionsImage(2049, 2), 2],
+      ["null-section", peImportLeadingSectionImage(false), 2],
+    ] as const;
+    for (const [name, bytes, count] of cases) {
+      const path = join(root, `${name}.exe`);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_pe_imports").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      expect(report.imports[0]?.name).toBe("KERNEL32.dll");
+      expect(report.imports[0]?.functions).toHaveLength(count);
+      expect(report.coverage.status).toBe("complete");
+      expect(report.imphash).toMatchObject({
+        md5: null,
+        reason: expect.stringMatching(/mapping|compatibility/u),
+      });
+      if (name === "cross-section")
+        expect(report.imports[0]?.functions[128]?.name).toBe("Function128");
+    }
+  },
+);
