@@ -187,6 +187,20 @@ Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle
 carries it: build from a neutral folder when that path should not ship.
 
+Over MCP, `export_environment_bundle` builds the same bundle and returns the
+same report. Its `source` is capture Evidence the session retained
+(`{"kind": "retained-evidence", "evidence_id"}`), such as a
+`capture_browser_scenario` or `inspect_web_network_capture` result, or a
+capture Evidence file (`{"kind": "evidence-file", "path"}`); inspect a HAR with
+`inspect_web_network_capture` first. Retained Evidence is written into the
+bundle as `--format json` writes it, so the bundle is the one
+`environment-build` writes from that file. `output_directory` must be an
+absolute path that does not exist yet, whose parent does; the tool creates it
+and refuses an existing directory, empty or not. `name`, `template_rules`,
+`package_tarball` and `dry_run` work as `--name`, `--template-rule`,
+`--package-tarball` and `--dry-run` do, and retained Evidence has no file to
+name the environment after, so a loopback or IP origin needs `name`.
+
 ## From a browser scenario
 
 The capture can also come from REA itself: a
@@ -274,6 +288,35 @@ application returns in response bodies, such as session tokens, are kept, and
 the replayed body is the bytes the browser exposes for each response, with any
 declared secret replaced by its redaction marker (a body that redaction had to
 empty replays no body).
+
+To record writes, sign in through the UI and then send the application's API
+calls with [request steps](browser-scenario-contract.md#request-steps): each
+sends one request to the start origin through the page's own `fetch`, with the
+session's cookies, and a header can carry the CSRF cookie or stored token the
+application's own requests send. A write is served only when the capture shows
+its effect, so read each collection before writing, read every written entity
+back by id and in its list right after the write, and leave more than a second
+between a create and its first edit. The environment coverage view names each
+write it withholds and what to record next. A scenario with write requests
+changes the application's data: record against an instance whose data may
+change.
+
+```json
+{
+  "step_id": "create-folder-1",
+  "action": "request",
+  "method": "POST",
+  "path": "/api/folders",
+  "headers": [
+    {
+      "name": "X-CSRFToken",
+      "value": { "source": "cookie", "name": "csrftoken" }
+    }
+  ],
+  "json": { "title": "Scratch folder 1" },
+  "expected_status": [200, 201]
+}
+```
 
 ## What a manifest is
 

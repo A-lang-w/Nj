@@ -10,7 +10,8 @@ liveness deadlines. `INPUT_JSON` may be inline JSON or a JSON file path.
 The minimal request contains only browser launch/connect selection, `start_url`,
 and at least one `actions` entry. Launch `headless` defaults to `true` and can
 be set to `false` where the host supports a visible browser. Navigations follow
-the destinations named by the scenario and the page's ordinary browser requests;
+the destinations named by the scenario and the page's ordinary browser requests,
+and [request steps](#request-steps) send only to the start URL's origin;
 there is no separate origin allowlist or request-interception layer. Environment
 settings (including service workers blocked by default), empty storage, and a
 final sanitized URL capture are supplied by default. Set
@@ -204,7 +205,8 @@ language environments.
 HTTP(S) URLs may include ordinary query values and fragments directly. Use
 ordered structured query entries when a value needs to reference a declared
 environment-backed secret. Form, storage, and cookie values are either literal
-strings or declared secret references. Raw URL userinfo credentials are rejected.
+strings or declared secret references; request step headers can also read a
+cookie or local storage value from the page. Raw URL userinfo credentials are rejected.
 Captured credential-header
 values are not retained, and declared secret values are redacted automatically.
 A secret may be declared solely to
@@ -314,6 +316,76 @@ Launch owns a temporary profile; connect mode disconnects from the selected
 external browser without closing it. The request itself defines the operation;
 there is no additional REA grant step. The browser and host still enforce their
 own access and process rules.
+
+## Request steps
+
+A `request` step sends one HTTP request from the page with the page's own
+`fetch`, so the browser attaches the session's cookies and the request is
+recorded in the step's network events like any request the application makes.
+Use it to record an application's API, including writes, when driving the UI
+for each call would be slower or less exact than calling the endpoint the UI
+calls. It is the only action that changes application state without a user
+gesture, so run scenarios with write requests only against an instance whose
+data you may change.
+
+```json
+{
+  "step_id": "create-item",
+  "action": "request",
+  "method": "POST",
+  "path": "/api/items",
+  "query": [
+    { "name": "notify", "value": { "source": "literal", "value": "false" } }
+  ],
+  "headers": [
+    {
+      "name": "X-CSRFToken",
+      "value": { "source": "cookie", "name": "csrftoken" }
+    },
+    {
+      "name": "Authorization",
+      "value": {
+        "source": "local_storage",
+        "key": "auth",
+        "json_pointer": "/token"
+      },
+      "prefix": "Bearer "
+    }
+  ],
+  "json": { "title": "Scratch item 1" },
+  "expected_status": [201],
+  "timeout_ms": 10000
+}
+```
+
+- `method` is `GET`, `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`. `json` is the
+  body, sent with `Content-Type: application/json` unless a header sets one; a
+  `GET` or `HEAD` step cannot carry it.
+- `path` starts with one `/` and must resolve to the start URL's origin, which
+  validation checks before the browser starts. When the step runs, the page must
+  be on that origin; add a `goto` step first if an earlier action left it.
+  `query` entries are appended in order and may reference declared secrets.
+- Header values are literals, declared secrets, a cookie the browser holds for
+  the request URL (`{"source": "cookie", "name"}`), or a local storage entry on
+  the start origin (`{"source": "local_storage", "key"}`, with an optional
+  `json_pointer` into a stored JSON value). `prefix` is sent before the value.
+  Values read from the page are redacted like declared secrets, as
+  `[REDACTED:page:<step_id>.<header>]`, from records made after the step reads
+  them; a response recorded earlier, such as the login response that returned
+  a token, keeps the value. A missing cookie, key or
+  pointer fails the step. Header names a page's `fetch` cannot set, such as
+  `Cookie`, `Origin`, `Host` or `Sec-*`, are refused at validation.
+- The step completes when the whole response has been read. With
+  `expected_status`, any other status fails the step and the later actions are
+  recorded as `cancelled`; without it, any response completes the step. A
+  network error, or `timeout_ms` passing, fails the step.
+
+The request runs in the page's main world, so an application that wraps
+`fetch` sees it, and it goes through the same network observation as other
+page requests: select `network` events and network content to record it.
+Captures with request steps state in `limitations` that the steps sent their
+declared requests through the page's fetch. A scenario without request steps
+is unchanged.
 
 ## Network evidence
 
