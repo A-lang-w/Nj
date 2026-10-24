@@ -8,7 +8,10 @@ import type {
   SetupSkillInstallError,
 } from "./SetupSkill.js";
 import type { Result } from "../domain/result.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCleanupObservation,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
 import type {
   SetupFailureCode,
@@ -107,8 +110,8 @@ export interface SetupHost {
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
-  /** Retry and report any cleanup resources still owned by this setup host. */
-  close?(): Promise<AnalysisCleanupObservation | undefined>;
+  /** Retry retained owners; a returned typed failure follows their live release state. */
+  close?(): Promise<AnalysisError | undefined>;
   detectedClients(): Promise<readonly SetupClient[]>;
   supportedClients(): Promise<readonly SetupClient[]>;
   configureClient(
@@ -149,6 +152,8 @@ export interface SetupResult {
   readonly clientStates: readonly SetupClientState[];
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
+  /** Identified resources still retained after finalization; absent after confirmed release. */
+  readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
 
 /** Whether the requested setup actions still need approval or human repair. */

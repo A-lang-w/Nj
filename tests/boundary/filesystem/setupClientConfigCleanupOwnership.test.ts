@@ -257,6 +257,10 @@ describe("setup client configuration cleanup ownership", () => {
             (cause: unknown) => cause,
           );
         expect(failure).toBeInstanceOf(ConfigurationError);
+        if (!(failure instanceof ConfigurationError))
+          throw new Error(
+            "Expected the configuration failure to retain cleanup authority",
+          );
         if (encoding === "malformed UTF-8")
           expect(failure).toMatchObject({
             cause: {
@@ -279,6 +283,8 @@ describe("setup client configuration cleanup ownership", () => {
         expect(await readFile(client.configPath)).toEqual(original);
 
         await expectCloseReclaimsHandle(host, closeAttempts, release);
+        expect(failure.cleanupIncomplete).toBe(false);
+        expect(failure.cleanupResources).toEqual([]);
       } finally {
         await cleanupHeldHandle(host, release);
       }

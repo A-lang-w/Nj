@@ -11,7 +11,7 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import { setupCleanupError, SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 describe("setup workflow", () => {
@@ -184,10 +184,11 @@ describe("setup failure cleanup projection", () => {
       },
     });
     class SetupHostWithCleanupFailure extends FakeSetupHost {
-      close = async (): Promise<AnalysisCleanupObservation> => ({
-        reason: "Setup could not release its client configuration resources.",
-        resources: [],
-      });
+      close = async () =>
+        setupCleanupError(undefined, {
+          reason: "Setup could not release its client configuration resources.",
+          resources: [],
+        });
     }
     const host = new SetupHostWithCleanupFailure();
     host.clients = [{ name: "codex", configPath }];
@@ -264,7 +265,10 @@ describe("setup failure cleanup projection", () => {
           const reason = `Artifact cleanup remains incomplete: ${retainedPath}`;
           if (outcome === "throw")
             throw new ProviderCleanupError("setup", [retainedPath], { reason });
-          return { reason, resources: [retainedPath] };
+          return setupCleanupError(undefined, {
+            reason,
+            resources: [retainedPath],
+          });
         };
       }
       const host = new HostWithRetainedResource();
@@ -306,10 +310,11 @@ describe("setup opaque failure cleanup", () => {
     const primary = new Error("Controlled setup workflow failure");
     const retainedPath = "/fixture/home/retained/handle.bin";
     class HostWithRetainedResource extends FakeSetupHost {
-      close = async () => ({
-        reason: "Controlled host close failure",
-        resources: [retainedPath],
-      });
+      close = async () =>
+        setupCleanupError(undefined, {
+          reason: "Controlled host close failure",
+          resources: [retainedPath],
+        });
     }
     const host = new HostWithRetainedResource();
     host.initialSetupState = async () => {
@@ -333,6 +338,65 @@ describe("setup opaque failure cleanup", () => {
       details: { resources: [retainedPath] },
     });
   });
+});
+
+describe("setup returned result cleanup", () => {
+  it.each(["ready", "needs_human"] as const)(
+    "preserves %s result facts and reports retained resources",
+    async (state) => {
+      let held = true;
+      const cleanup = new SetupCleanupOwner([
+        {
+          close: async () =>
+            held
+              ? {
+                  reason: "Controlled host cleanup",
+                  resources: ["/fixture/retained"],
+                }
+              : undefined,
+        },
+      ]);
+      class HostWithCleanup extends FakeSetupHost {
+        close = () => cleanup.close();
+      }
+      const host = new HostWithCleanup();
+      const control = new FakeSetupHost();
+      for (const selected of [host, control]) {
+        selected.hopper = "/Applications/Hopper";
+        selected.doctorHealthy = state === "ready";
+        selected.scopedDoctorHealthy = state === "ready";
+        if (state === "needs_human") selected.nodeVersion = "25.0.0";
+      }
+      const input = {
+        ...options(true),
+        installSkill: false,
+        proposeHopper: false,
+        clientIds: [],
+      };
+      const baseline = await runSetup(input, control);
+      expect(baseline.status).toBe(state);
+      const result = await runSetup(input, host);
+      expect(result).toMatchObject({
+        status: "needs_human",
+        code: baseline.code ?? "cleanup_failed",
+        plannedActions: baseline.plannedActions,
+        appliedActions: baseline.appliedActions,
+        clients: baseline.clients,
+        doctor: baseline.doctor,
+        cleanup: {
+          reason: "Controlled host cleanup",
+          resources: ["/fixture/retained"],
+        },
+      });
+      expect(JSON.parse(JSON.stringify(result))).toMatchObject({
+        cleanup: { resources: ["/fixture/retained"] },
+      });
+      held = false;
+      expect(await host.close()).toBeUndefined();
+      expect(result.cleanup).toBeUndefined();
+      expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty("cleanup");
+    },
+  );
 });
 
 describe("setup scoped readiness", () => {

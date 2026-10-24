@@ -27,13 +27,9 @@ import {
   hostRemediation,
   systemSetupHost,
 } from "./SetupHost.js";
-import {
-  AnalysisError,
-  type AnalysisCleanupObservation,
-} from "../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
 
@@ -53,44 +49,41 @@ export const runSetup = async (
     primaryFailure = cause;
   }
 
-  let cleanup: AnalysisCleanupObservation | undefined;
+  let cleanup: AnalysisError | undefined;
   try {
     cleanup = await host.close?.();
   } catch (cause: unknown) {
-    cleanup = {
-      reason: `Setup resource cleanup failed: ${failureMessage(cause)}`,
-      resources: ArtifactReaderFailure.cleanupObservation(cause, []).resources,
-    };
+    cleanup = setupCleanupError(cause);
   }
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
-    const cleanupFailure = new ProviderCleanupError(
-      "setup",
-      cleanup.resources,
-      { reason: cleanup.reason },
-      { operation: "setup" },
-    );
     if (primaryFailure instanceof AnalysisError)
       throw analysisErrorWithCleanupFailure(
         primaryFailure,
-        cleanupFailure,
+        cleanup,
         "setup",
-      );
+      ).bindCleanupDependencies([primaryFailure, cleanup]);
     throw new AggregateError(
-      [primaryFailure, cleanupFailure],
+      [primaryFailure, cleanup],
       "Setup and resource cleanup failed.",
       { cause: primaryFailure },
     );
   }
   if (result === undefined) throw new Error("Setup returned no result.");
   if (cleanup === undefined) return result;
+  const cleanupReason = setupCleanupReason(cleanup);
   return {
     ...result,
     status: "needs_human",
     code: result.code ?? "cleanup_failed",
+    get cleanup() {
+      return cleanup.cleanupIncomplete
+        ? { reason: cleanupReason, resources: cleanup.cleanupResources }
+        : undefined;
+    },
     remediation: result.remediation
-      ? `${result.remediation} ${cleanup.reason}`
-      : cleanup.reason,
+      ? `${result.remediation} ${cleanupReason}`
+      : cleanupReason,
   };
 };
 

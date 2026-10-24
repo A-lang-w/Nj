@@ -111,8 +111,8 @@ describe("setup skill backup cleanup ownership", () => {
         expect(new Set(close.attempts).size).toBe(1);
         expect(await actualFs.readFile(manifest, "utf8")).toBe(original);
         const report = await host.close?.();
-        expect(report?.reason).toContain(backup);
-        expect(report?.resources).toEqual([backup]);
+        expect(report?.cleanup?.reason).toContain(backup);
+        expect(report?.cleanupResources).toEqual([backup]);
         const primary = new ConfigurationError(
           "Controlled setup state failure",
           {
@@ -151,6 +151,19 @@ describe("setup skill backup cleanup ownership", () => {
         const attemptsBeforeClose = close.attempts.length;
         close.release();
         expect(await host.close?.()).toBeUndefined();
+        expect(failure.cleanupIncomplete).toBe(false);
+        expect(projectAnalysisError(failure)).toMatchObject(
+          projectAnalysisError(primary),
+        );
+        expect(projectAnalysisError(failure).details).not.toHaveProperty(
+          "cleanup",
+        );
+        expect(projectAnalysisError(failure).details).not.toHaveProperty(
+          "resources",
+        );
+        expect(projectAnalysisError(failure).details).toHaveProperty(
+          "cleanup_history",
+        );
         expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
         expect(close.attempts[0]?.fd).toBe(-1);
       } finally {

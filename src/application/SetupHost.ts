@@ -24,7 +24,6 @@ import {
   installLinuxHopper,
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
-  type LinuxHopperInstallHost,
 } from "./LinuxHopper.js";
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
@@ -61,8 +60,13 @@ import type {
   SetupInitialState,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { DoctorScope } from "./Doctor.js";
+import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { bindRegularFileCleanup } from "./RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 
@@ -152,6 +156,27 @@ export const systemSetupHost = (
     linuxDistribution,
   );
   const pendingLinuxHopperCleanup = new LinuxHopperTemporaryCleanupOwner();
+  const cleanup = new SetupCleanupOwner([
+    {
+      rejectedPrefix: "Hopper host cleanup failed",
+      close: async () => macHopperHost?.close?.(),
+    },
+    {
+      rejectedPrefix: "Doctor host cleanup failed",
+      close: async () => doctorHost.close?.(),
+    },
+    {
+      rejectedPrefix: "Linux Hopper cleanup retry failed",
+      close: () => pendingLinuxHopperCleanup.retry(linuxHopperHost.cleanup),
+    },
+    {
+      rejectedPrefix: "Linux Hopper publisher cleanup failed",
+      close: async () => {
+        await linuxHopperHost.close?.();
+      },
+    },
+    { close: () => resources.close() },
+  ]);
   return {
     platform,
     homeDirectory,
@@ -167,10 +192,7 @@ export const systemSetupHost = (
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution,
-    close: () =>
-      closeSetupResources(resources, macHopperHost, doctorHost, () =>
-        closeLinuxHopperInstallHost(linuxHopperHost, pendingLinuxHopperCleanup),
-      ),
+    close: () => cleanup.close(),
     initialSetupState: async (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
@@ -361,58 +383,6 @@ const clientConfigurationOperations = (
     ),
 });
 
-const closeSetupResources = async (
-  resources: ArtifactResourceScope,
-  macHopperHost: ReturnType<typeof systemMacHopperInstallHost> | undefined,
-  doctorHost: DoctorHost,
-  retryLinuxHopperCleanup: () => Promise<string | undefined>,
-): Promise<AnalysisCleanupObservation | undefined> => {
-  const [resourceCleanup, hopperCleanup, doctorCleanup, linuxCleanup] =
-    await Promise.allSettled([
-      resources.close(),
-      Promise.resolve().then(() => macHopperHost?.close()),
-      Promise.resolve().then(() => doctorHost.close?.()),
-      retryLinuxHopperCleanup(),
-    ]);
-  const failures: string[] = [];
-  const owned = new Set<string>();
-  // Only causes that report their own resources contribute to the set; an
-  // opaque failure keeps its message and invents no resource name.
-  const absorb = (cause: unknown): void => {
-    for (const resource of ArtifactReaderFailure.cleanupObservation(cause, [])
-      .resources)
-      owned.add(resource);
-  };
-  if (hopperCleanup.status === "rejected") {
-    failures.push(
-      `Hopper host cleanup failed: ${errorMessage(hopperCleanup.reason)}`,
-    );
-    absorb(hopperCleanup.reason);
-  } else if (hopperCleanup.value !== undefined)
-    failures.push(hopperCleanup.value);
-  if (doctorCleanup.status === "rejected") {
-    failures.push(
-      `Doctor host cleanup failed: ${errorMessage(doctorCleanup.reason)}`,
-    );
-    absorb(doctorCleanup.reason);
-  } else if (doctorCleanup.value !== undefined)
-    failures.push(doctorCleanup.value);
-  if (linuxCleanup.status === "rejected") {
-    failures.push(
-      `Linux Hopper cleanup retry failed: ${errorMessage(linuxCleanup.reason)}`,
-    );
-    absorb(linuxCleanup.reason);
-  } else if (linuxCleanup.value !== undefined)
-    failures.push(linuxCleanup.value);
-  if (resourceCleanup.status === "rejected") {
-    failures.push(errorMessage(resourceCleanup.reason));
-    absorb(resourceCleanup.reason);
-  }
-  return failures.length === 0
-    ? undefined
-    : { reason: failures.join("; "), resources: [...owned] };
-};
-
 const runClientConfigurationOperation = async <Value>(
   resources: ArtifactResourceScope,
   operation: () => Promise<Value>,
@@ -436,6 +406,7 @@ const runClientConfigurationOperation = async <Value>(
           `Could not safely access client configuration at ${cause.path}: ${errorMessage(cleanup.primary)}.${rollbackMessage}`,
           cause,
           cleanup.cleanup,
+          cleanup.cleanupLeases,
         );
       }
     });
@@ -452,32 +423,20 @@ const configurationCleanupError = (
   cleanup:
     | { readonly reason: string; readonly resources: readonly string[] }
     | undefined,
-): ConfigurationError =>
-  new ConfigurationError(message, {
+  leases?: readonly AnalysisCleanupLease[],
+): ConfigurationError => {
+  const error = new ConfigurationError(message, {
     cause,
     settings: [{ setting: "client configuration", constraint: message }],
     ...(cleanup === undefined ? {} : { cleanup }),
   });
+  if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+  else bindRegularFileCleanup(cause, error);
+  return error;
+};
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
-
-const closeLinuxHopperInstallHost = async (
-  host: LinuxHopperInstallHost,
-  temporaryOwner: LinuxHopperTemporaryCleanupOwner,
-): Promise<string | undefined> => {
-  const reasons: string[] = [];
-  const temporary = await temporaryOwner.retry(host.cleanup);
-  if (temporary !== undefined) reasons.push(temporary);
-  try {
-    await host.close?.();
-  } catch (cause: unknown) {
-    reasons.push(
-      `Linux Hopper publisher cleanup failed: ${errorMessage(cause)}`,
-    );
-  }
-  return reasons.length === 0 ? undefined : reasons.join("; ");
-};
 
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
