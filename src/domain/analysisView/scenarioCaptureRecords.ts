@@ -132,6 +132,22 @@ const reportedRequest = (
   };
 };
 
+/** An unattributable transaction's record: nothing, except the request side review scans because the Evidence ships it. */
+const unattributedReport = (
+  request: RequestEvent,
+  index: BrowserScenarioTransactionIndex,
+  purpose: ScenarioRecordPurpose,
+): { readonly [key: string]: JsonValue } =>
+  purpose === "review"
+    ? {
+        request: reportedRequest(
+          request,
+          onlyContent(index, request.sequence),
+          purpose,
+        ),
+      }
+    : {};
+
 const record = (
   ordinal: number,
   observed: { readonly event: RequestEvent; readonly item: number },
@@ -164,7 +180,12 @@ const record = (
       (index.contents.get(response.sequence)?.length ?? 0) > 1)
   )
     return {
-      record: { ordinal, location, reported: {}, ...empty },
+      record: {
+        ordinal,
+        location,
+        reported: unattributedReport(request, index, purpose),
+        ...empty,
+      },
       responseBody: "absent",
     };
   const requestContent = onlyContent(index, request.sequence);

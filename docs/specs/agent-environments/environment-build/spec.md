@@ -48,8 +48,11 @@ before building.
   stack on deeply nested bodies. A browser scenario's retained header values and
   the query parameters of its recorded URLs are scanned as a HAR's headers and
   query strings are, and so are its request bodies recorded without a media
-  type. Each occurrence of a repeated form field counts, as each repeated
-  header or query parameter does.
+  type. Each occurrence of a repeated form field counts, as each repeated header
+  or query parameter does. A HAR request recorded with structured form
+  parameters and no text is scanned by those parameters, and a scenario
+  transaction that cannot be attributed to one response still has its request
+  side scanned.
 - Nothing is written before the bundle stage; `--dry-run` writes nothing,
   reports the files a build would write and refuses the package tarballs a build
   refuses, admitting and releasing the tarball as a build does: a close it
