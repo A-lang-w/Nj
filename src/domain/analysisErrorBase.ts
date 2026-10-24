@@ -72,6 +72,9 @@ export abstract class AnalysisError extends Error {
   readonly #cleanupPrimary: AnalysisError | undefined;
   // Undefined means unbound; a bound empty set records confirmed completion.
   #cleanupDependencies: Set<AnalysisError> | undefined;
+  #cleanupResourceProjection:
+    | { readonly cleanupResources: readonly string[] }
+    | undefined;
   #cleanupDependents: WeakRef<AnalysisError>[] = [];
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
   readonly capturedOutput: AnalysisCapturedOutput | undefined;
@@ -79,6 +82,7 @@ export abstract class AnalysisError extends Error {
   cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
+  #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
     super(message, options);
     this.#cleanupPrimary = options?.cleanupPrimary;
@@ -104,6 +108,10 @@ export abstract class AnalysisError extends Error {
   get cleanupPrimary(): AnalysisError | undefined {
     return this.#cleanupPrimary;
   }
+  /** Later typed failures retained without changing the primary error cause. */
+  get secondaryFailures(): readonly AnalysisError[] {
+    return [...this.#secondaryFailures];
+  }
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 
   /** Live dependencies own current resource attribution; cleanup keeps history. */
@@ -113,12 +121,14 @@ export abstract class AnalysisError extends Error {
         this.#cleanupResourceOwner?.cleanupResources ??
         this.#ownedCleanupResources
       );
+    const pending = [...this.#cleanupDependencies].filter(
+      (dependency) => dependency.cleanupIncomplete,
+    );
+    if (pending.length === 0) return [];
+    if (this.#cleanupResourceProjection !== undefined)
+      return this.#cleanupResourceProjection.cleanupResources;
     return [
-      ...new Set(
-        [...this.#cleanupDependencies]
-          .filter((dependency) => dependency.cleanupIncomplete)
-          .flatMap((dependency) => dependency.cleanupResources),
-      ),
+      ...new Set(pending.flatMap((dependency) => dependency.cleanupResources)),
     ];
   }
 
@@ -133,27 +143,33 @@ export abstract class AnalysisError extends Error {
     this.#ownedCleanupResources = [...resources];
   }
 
-  /** Retain a later lifecycle failure without replacing the original typed error. */
-  retainSecondaryFailure(
-    failure: AnalysisError,
-    diagnostics: Readonly<Record<string, JsonValue>>,
-  ): this {
-    // Secondary resources remain owned by their cleanup lifecycle; preserve
-    // the primary error's live cleanup status and original output.
+  /** Retain diagnostic facts without replacing the original typed error. */
+  retainDiagnostics(diagnostics: Readonly<Record<string, JsonValue>>): this {
     Object.assign(this, {
       diagnostics: structuredClone({ ...this.diagnostics, ...diagnostics }),
-      cause: new AggregateError(
-        this.cause === undefined ? [failure] : [this.cause, failure],
-        "Analysis failed and a later lifecycle operation also failed.",
-        { cause: this.cause },
-      ),
     });
     return this;
   }
 
+  retainSecondaryFailure(
+    failure: AnalysisError,
+    diagnostics?: Readonly<Record<string, JsonValue>>,
+  ): this {
+    // Secondary resources remain owned by their cleanup lifecycle; preserve
+    // the primary error's live cleanup status and original output.
+    if (diagnostics !== undefined) this.retainDiagnostics(diagnostics);
+    this.#secondaryFailures.push(failure);
+    return this;
+  }
+
   /** Keep a composed error incomplete until all explicitly owned source errors resolve. */
-  bindCleanupDependencies(dependencies: readonly AnalysisError[]): this {
+  bindCleanupDependencies(
+    dependencies: readonly AnalysisError[],
+    resourceProjection?: { readonly cleanupResources: readonly string[] },
+  ): this {
     const pending = (this.#cleanupDependencies ??= new Set<AnalysisError>());
+    if (resourceProjection !== undefined)
+      this.#cleanupResourceProjection = resourceProjection;
     for (const dependency of dependencies) {
       if (!dependency.cleanupIncomplete || pending.has(dependency)) continue;
       pending.add(dependency);
@@ -197,6 +213,12 @@ export const resolvedAnalysisError = (error: AnalysisError): AnalysisError => {
     error = error.cleanupPrimary;
   return error;
 };
+
+/** Original operation semantics remain distinct from the live cleanup envelope. */
+export const primaryAnalysisError = (error: AnalysisError): AnalysisError => {
+  while (error.cleanupPrimary !== undefined) error = error.cleanupPrimary;
+  return error;
+};
 import type {
   PartialProcessCaptureObservation,
   ProcessCaptureCleanupReport,
@@ -220,6 +242,7 @@ import type {
   AdbActivityStartPartialObservation,
   AdbAcquiredFilePartialObservation,
   AdbPackagePullPartialObservation,
+  AdbDisplayPartialObservation,
 } from "./adb/adbDeviceAnalysis.js";
 import type { InspectSignature } from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -229,18 +252,24 @@ import type {
   RecordedCrashPartialObservation,
 } from "./native/recordedCrash.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import type { WebExecution } from "./webExecution.js";
-import type { WebEventListeners } from "./webEventListeners.js";
+import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
+import type { WebExecutionObservation } from "./webExecution.js";
+import type { WebEventListenersObservation } from "./webEventListeners.js";
 
 import type { NativeLoadImagePartialObservation } from "./native/nativeLoadImage.js";
 import type { NativeAotSnapshotObservation } from "./native/nativeAotSnapshotObservation.js";
 import type { FileSnapshotPartialObservation } from "./fileSnapshotObservation.js";
 
 import type { WebModuleResolutionObservation } from "./webModuleTrace.js";
+import type { WebNetworkCapture } from "./webNetworkCapture.js";
+import type { FridaDeviceList, FridaProcessList } from "./fridaDiscovery.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | FridaDeviceList
+  | FridaProcessList
   | WebModuleResolutionObservation
+  | WebNetworkCapture
   | NativeLoadImagePartialObservation
   | NativeAotSnapshotObservation
   | FileSnapshotPartialObservation
@@ -250,8 +279,9 @@ export type AnalysisPartialObservation =
   | ElectronActivePartialObservation
   | BrowserScenarioPartialObservation
   | WebPageInspection
-  | WebExecution
-  | WebEventListeners
+  | WebBundleAnalysis
+  | WebExecutionObservation
+  | WebEventListenersObservation
   | JavaScriptRuntimeObservation
   | ArtifactInventoryPartialObservation
   | ArtifactExtractionPartialObservation
@@ -268,4 +298,5 @@ export type AnalysisPartialObservation =
   | ElectronPagePartialObservation
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation
-  | AdbPackagePullPartialObservation;
+  | AdbPackagePullPartialObservation
+  | AdbDisplayPartialObservation;

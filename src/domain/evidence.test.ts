@@ -1,3 +1,4 @@
+import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
@@ -6,7 +7,12 @@ import {
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
-import { createEvidence, evidenceSchema, parseEvidence } from "./evidence.js";
+import {
+  createEvidence,
+  evidenceSchema,
+  parseEvidence,
+  immutableEvidence,
+} from "./evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
@@ -603,4 +609,38 @@ it("preserves prototype-named raw and normalized results with aligned identity",
     rawResult: { constructor: "ordinary" },
   });
   expect(stripped.evidence_id).not.toBe(evidence.evidence_id);
+});
+
+it("borrows a previously sealed envelope only after authenticating all semantic fields", () => {
+  const original = freezeJsonSnapshot(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: { fact: 1 },
+    }),
+  );
+  expect(immutableEvidence(original)).toBe(original);
+  const changed = freezeJsonSnapshot({
+    ...original,
+    normalized_result: { fact: 2 },
+  });
+  expect(() => immutableEvidence(changed)).toThrow();
+});
+
+it("diagnoses a previous explicit-null coverage commitment without admitting or rewriting its ID", () => {
+  const historical = structuredClone(PRE_66_NULL_COVERAGE_EVIDENCE);
+  expect(() => parseEvidence(historical)).toThrow(
+    /earlier relationship_coverage identity commitment/u,
+  );
+  expect(historical).toEqual(PRE_66_NULL_COVERAGE_EVIDENCE);
+  const corrupted = { ...historical, normalized_result: { observed: false } };
+  expect(() => parseEvidence(corrupted)).toThrow(
+    /semantic identifier does not match/u,
+  );
+  const current = createEvidence(undefined, historical.provider, {
+    operation: "inspect",
+    parameters: {},
+    result: { observed: true },
+  });
+  expect(parseEvidence(current)).toEqual(current);
 });
