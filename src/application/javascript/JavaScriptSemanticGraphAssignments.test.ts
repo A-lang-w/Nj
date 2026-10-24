@@ -164,3 +164,21 @@ it("does not treat a callback body nested in a computed key as a key-time assign
     ),
   ).toEqual([]);
 });
+
+it("retains an assignment owned by a callback inside a computed key", () => {
+  const graph = graphForJavaScript(`
+    const accel = 0.001; let speed = 6;
+    const obj = { [(() => { speed = accel; return "tick"; })()]() {} };
+  `);
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const assignment = graph.relations.find(
+    (edge) => edge.properties.assignment_operator === "=",
+  );
+  expect(assignment).toBeDefined();
+  const source = nodes.get(assignment!.source_node_id);
+  const target = nodes.get(assignment!.target_node_id);
+  expect(source?.label).toBe("accel");
+  expect(target?.label).toBe("speed");
+  expect(source?.function_node_id).toBeTypeOf("string");
+  expect(source?.function_node_id).toBe(target?.function_node_id);
+});
