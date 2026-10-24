@@ -1688,6 +1688,7 @@ export function* collectSemanticMemberMutationsSteps(
   const storeMayInvokeSetter = (source: SemanticIterationSource): boolean => {
     const target = source.target;
     if (target === undefined) return true;
+    if (observablePaths.integerIndexedStore(target)) return false;
     const key = semanticStaticPropertyKey(target.property, target.computed);
     const ambientSetter = semanticStoreMayReachAmbientSetter(state, key, {
       mutation: source.mutation,
@@ -2259,6 +2260,9 @@ const observableMutationPaths = (
     path: PropertyPath,
     effect: ValueEffect,
   ) => PropertyPath | null;
+  readonly integerIndexedStore: (
+    target: t.MemberExpression | t.OptionalMemberExpression,
+  ) => boolean;
   readonly repeatsUnpruned: (
     bindingId: string,
     prefix: PropertyPath,
@@ -2586,5 +2590,14 @@ const observableMutationPaths = (
     repeated.set(key, result);
     return result;
   };
-  return { normalize, repeatsUnpruned };
+  const integerIndexedStore = (
+    target: t.MemberExpression | t.OptionalMemberExpression,
+  ): boolean => {
+    if (!isTypedArrayNumericIndex(target.property, target.computed))
+      return false;
+    const observer = expressionNode(target.object);
+    settle();
+    return observer.origins?.size === 1 && observer.origins.has("typed-array");
+  };
+  return { normalize, repeatsUnpruned, integerIndexedStore };
 };

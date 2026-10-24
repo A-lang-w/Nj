@@ -737,6 +737,13 @@ class ObjectReferenceWalk {
     const copyPresence =
       sourcePresence === "present" &&
       t.isObjectExpression(property.argument) &&
+      semanticObjectAccessorSelection(
+        property.argument,
+        null,
+        this.query.state,
+        "get",
+        "own",
+      ).references.length > 0 &&
       this.query.state.objectCopyMayInvalidateOwnDescriptors?.(
         property.argument,
       ) !== false
