@@ -27,7 +27,10 @@ import {
   hostRemediation,
   systemSetupHost,
 } from "./SetupHost.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
@@ -72,14 +75,18 @@ export const runSetup = async (
   if (result === undefined) throw new Error("Setup returned no result.");
   if (cleanup === undefined) return result;
   const cleanupReason = setupCleanupReason(cleanup);
+  const cleanupReport: AnalysisCleanupObservation = {
+    reason: cleanupReason,
+    get resources() {
+      return cleanup.cleanupResources;
+    },
+  };
   return {
     ...result,
     status: "needs_human",
     code: result.code ?? "cleanup_failed",
     get cleanup() {
-      return cleanup.cleanupIncomplete
-        ? { reason: cleanupReason, resources: cleanup.cleanupResources }
-        : undefined;
+      return cleanup.cleanupIncomplete ? cleanupReport : undefined;
     },
     remediation: result.remediation
       ? `${result.remediation} ${cleanupReason}`

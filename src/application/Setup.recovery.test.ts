@@ -391,9 +391,11 @@ describe("setup returned result cleanup", () => {
       expect(JSON.parse(JSON.stringify(result))).toMatchObject({
         cleanup: { resources: ["/fixture/retained"] },
       });
+      const retainedReport = result.cleanup;
       held = false;
       expect(await host.close()).toBeUndefined();
       expect(result.cleanup).toBeUndefined();
+      expect(retainedReport?.resources).toEqual([]);
       expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty("cleanup");
     },
   );
