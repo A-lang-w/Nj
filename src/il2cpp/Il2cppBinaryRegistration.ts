@@ -1,6 +1,5 @@
 import {
   BinaryFormatFailure,
-  createFileMappingIndex,
   mappedFileOffset,
 } from "../native/metadata/BinaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
@@ -505,11 +504,7 @@ function* findTypeTableByCode(
   requiredTypes: number,
 ): Generator<void, { readonly count: number; readonly types: bigint } | null> {
   const { bytes, container } = image;
-  // One indexed lookup per word, so many mappings cannot multiply the scan.
-  const lookup = createFileMappingIndex(
-    container.mappings,
-    container.zero_fills,
-  );
+  // Nomination and loader-aware confirmation share the image's mapping index.
   // Most words are not record addresses; reject those without the throwing
   // lookup. Starts are sorted, and reach[i] is the furthest end among the
   // first i + 1 mappings, so one binary search finds a possible container.
@@ -545,7 +540,7 @@ function* findTypeTableByCode(
   const recordOffset = (address: bigint) => {
     if (!maybeMapped(address)) return -1;
     try {
-      return lookup.offset(address, 12);
+      return image.fileMappings.offset(address, 12);
     } catch (cause) {
       // Unmapped, zero-filled or ambiguously mapped records are not types.
       if (cause instanceof BinaryFormatFailure) return -1;

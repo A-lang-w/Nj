@@ -614,6 +614,43 @@ export const createElfFixture = (
   return file;
 };
 
+/** A code-loaded type table plus isolated one-entry candidate runs in disjoint ELF mappings. */
+export const createIl2cppTypeScanFixture = (
+  mappingCount: number,
+  bytesPerMapping: number,
+): Buffer => {
+  const image = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  const original = createElfFixture(image);
+  const candidates = Buffer.alloc(mappingCount * bytesPerMapping);
+  for (let at = 0; at < candidates.length; at += 16)
+    candidates.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x9b0n, at);
+  // The original dynamic segment and complete payload retain their addresses.
+  // Move only the program header table to the unmapped end of the file.
+  const headers: Buffer[] = [Buffer.from(original.subarray(120, 176))];
+  for (let index = 0; index <= mappingCount; index++) {
+    const offset =
+      index === 0 ? 0 : original.length + (index - 1) * bytesPerMapping;
+    const size = index === 0 ? original.length : bytesPerMapping;
+    const header = Buffer.alloc(56);
+    header.writeUInt32LE(1);
+    header.writeUInt32LE(index === 0 ? 7 : 6, 4);
+    header.writeBigUInt64LE(BigInt(offset), 8);
+    header.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(offset), 16);
+    header.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(offset), 24);
+    header.writeBigUInt64LE(BigInt(size), 32);
+    header.writeBigUInt64LE(BigInt(size), 40);
+    header.writeBigUInt64LE(1n, 48);
+    headers.push(header);
+  }
+  const result = Buffer.concat([original, candidates, ...headers]);
+  result.writeBigUInt64LE(BigInt(original.length + candidates.length), 32);
+  result.writeUInt16LE(headers.length, 56);
+  return result;
+};
+
 export interface GenericRegistrationImageOptions {
   /** Let the 104-byte layout bound the rows as well as the 120-byte one. */
   readonly ambiguous?: boolean;
