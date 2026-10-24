@@ -2,6 +2,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
@@ -15,6 +16,8 @@ import {
   elfFixture,
   ptxFixture,
   amdFixture,
+  amdNoteFixture,
+  llvmBitcodeFixture,
 } from "../../fixtures/gpu/codeObjects.js";
 const inspect = async (
   bytes: Buffer,
@@ -278,6 +281,37 @@ it("keeps AMDGPU processor identity unknown when ELF flags are unassigned", asyn
     inspection: "inventory",
   });
 });
+it.each([false, true])(
+  "keeps HIP bitcode representation unsupported with wrapped=%s and no declared processor",
+  async (wrapped) => {
+    const payload = llvmBitcodeFixture(wrapped),
+      bytes = hipFixture(payload, "hip-amdgcn-amd-amdhsa--");
+    for (const analysis of ["inventory", "kernels"] as const) {
+      const result = await inspect(bytes, { analysis });
+      if (!result.ok) throw result.error;
+      const row = result.value.objects.find(({ kind }) => kind === "amdgpu")!;
+      expect(row).toMatchObject({
+        bundle_id: "hip-amdgcn-amd-amdhsa--",
+        target: null,
+        payload_target: null,
+        inspection: analysis === "inventory" ? "inventory" : "unsupported",
+        encoded_size: payload.length,
+        location: { size: payload.length },
+        sha256:
+          analysis === "inventory"
+            ? null
+            : createHash("sha256").update(payload).digest("hex"),
+      });
+      expect(row.limitations.join(" ")).toContain("LLVM bitcode");
+      expect(row.limitations.join(" ")).not.toContain("not an ELF image");
+      expect(result.value.coverage).toMatchObject({
+        discovery: "partial",
+        payloads: analysis === "inventory" ? "not-requested" : "partial",
+      });
+      expect(result.value.kernels).toEqual([]);
+    }
+  },
+);
 it.each([
   ["amdgcn", "gfx900:xnack+"],
   ["amdgcn", "gfx900+xnack"],
@@ -331,47 +365,127 @@ it.each(["amdgcn", "amdgpu9.00"])(
   },
 );
 it.each([
-  "amdgcn-amd-amdhsa-unknown-",
-  "amdgpu9.00-amd-amdhsa--",
-  "amdgpu9.00-amd-amdhsa-unknown-",
+  "producer-specific-gpu-target",
+  "amdgpu9.00-amd-amdhsa--gfx900:xnack",
 ])(
-  "compares AMDGPU note processor and feature declarations with %s",
-  async (prefix) => {
-    for (const comparison of ["match", "conflict", "feature-unknown"]) {
-      const payloadTarget = `${prefix}gfx900${comparison === "feature-unknown" ? ":xnack+" : ""}`;
-      const inventoryTarget = comparison === "conflict" ? "gfx1100" : "gfx900";
-      const bytes = hipFixture(
-        amdFixture(false, undefined, payloadTarget),
-        `hipv4-amdgcn-amd-amdhsa--${inventoryTarget}`,
+  "retains the unrecognized AMDGPU note target %s without substituting ELF processor flags",
+  async (noteTarget) => {
+    const result = await inspect(
+      hipFixture(amdFixture(false, undefined, noteTarget)),
+      { targets: ["gfx900"] },
+    );
+    if (!result.ok) throw result.error;
+    const row = result.value.objects.find(({ kind }) => kind === "amdgpu");
+    expect(row).toMatchObject({
+      target: "gfx900",
+      payload_target: noteTarget,
+      target_consistency: "unknown",
+      inspection: "complete",
+    });
+    expect(result.value.coverage.payloads).toBe("complete");
+    expect(result.value.kernels).toMatchObject([
+      { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+    ]);
+    expect(row?.limitations.join(" ")).not.toContain(
+      "Conflicting target declarations",
+    );
+    expect(result.value.kernels[0]?.limitations.join(" ")).not.toContain(
+      "Conflicting target declarations",
+    );
+  },
+);
+it("retains kernels from conflicting AMDGPU notes without choosing either note or ELF flags", async () => {
+  const bytes = amdFixture(
+    false,
+    amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100"),
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects).toMatchObject([
+    {
+      kind: "amdgpu",
+      target: null,
+      payload_target: null,
+      target_consistency: "unknown",
+      inspection: "partial",
+    },
+  ]);
+  expect(result.value.objects[0]?.limitations).toContain(
+    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  );
+  expect(result.value.coverage).toMatchObject({
+    discovery: "partial",
+    payloads: "partial",
+  });
+  expect(result.value.kernels).toMatchObject([
+    { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+    { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+  ]);
+  expect(new Set(result.value.kernels.map(({ id }) => id)).size).toBe(2);
+  const selected = await inspect(bytes, { targets: ["gfx900"] });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    target: null,
+    payload_target: null,
+    target_consistency: "unknown",
+    inspection: "not-selected",
+  });
+  expect(selected.value.kernels).toEqual([]);
+});
+it.each(
+  [
+    "amdgcn-amd-amdhsa-unknown-",
+    "amdgpu9.00-amd-amdhsa--",
+    "amdgpu9.00-amd-amdhsa-unknown-",
+  ].flatMap((prefix) =>
+    (
+      [
+        ["gfx900", "gfx900", "consistent"],
+        ["gfx1100", "gfx900", "conflict"],
+        ["gfx900", "gfx900:xnack+", "unknown"],
+        ["gfx900", "gfx900+xnack", "unknown"],
+        ["gfx900+xnack", "gfx900", "unknown"],
+        ["GFX900", "gfx900", "unknown"],
+        ["gfx900", "GFX900", "unknown"],
+      ] as const
+    ).map(([inventoryTarget, payloadTargetId, consistency]) => ({
+      inventoryTarget,
+      payloadTarget: `${prefix}${payloadTargetId}`,
+      consistency,
+    })),
+  ),
+)(
+  "compares AMDGPU inventory $inventoryTarget with note $payloadTarget as $consistency",
+  async ({ inventoryTarget, payloadTarget, consistency }) => {
+    const bytes = hipFixture(
+      amdFixture(false, undefined, payloadTarget),
+      `hipv4-amdgcn-amd-amdhsa--${inventoryTarget}`,
+    );
+    const result = await inspect(bytes, { targets: [inventoryTarget] });
+    if (!result.ok) throw result.error;
+    const row = result.value.objects.find((value) => value.kind === "amdgpu")!;
+    expect(row.payload_target).toBe(payloadTarget);
+    expect(result.value.kernels).toHaveLength(1);
+    if (consistency === "conflict") {
+      expect(row).toMatchObject({
+        target: inventoryTarget,
+        target_consistency: "conflict",
+        inspection: "partial",
+      });
+      expect(result.value.coverage.payloads).toBe("partial");
+      expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
+        "Conflicting target declarations",
       );
-      const result = await inspect(bytes);
-      if (!result.ok) throw result.error;
-      const row = result.value.objects.find(
-        (value) => value.kind === "amdgpu",
-      )!;
-      expect(row.payload_target).toBe(payloadTarget);
-      expect(result.value.kernels).toHaveLength(1);
-      if (comparison === "conflict") {
-        expect(row).toMatchObject({
-          target: "gfx1100",
-          target_consistency: "conflict",
-          inspection: "partial",
-        });
-        expect(result.value.coverage.payloads).toBe("partial");
-        expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
-          "Conflicting target declarations",
-        );
-      } else {
-        expect(row).toMatchObject({
-          target: "gfx900",
-          target_consistency: comparison === "match" ? "consistent" : "unknown",
-          inspection: "complete",
-        });
-        expect(result.value.coverage.payloads).toBe("complete");
-        expect(result.value.kernels[0]!.limitations.join(" ")).not.toContain(
-          "Conflicting target declarations",
-        );
-      }
+    } else {
+      expect(row).toMatchObject({
+        target: inventoryTarget,
+        target_consistency: consistency,
+        inspection: "complete",
+      });
+      expect(result.value.coverage.payloads).toBe("complete");
+      expect(result.value.kernels[0]!.limitations.join(" ")).not.toContain(
+        "Conflicting target declarations",
+      );
     }
   },
 );
@@ -746,9 +860,18 @@ it.each(["truncated", "invalid", "extension"] as const)(
       tail.write("AMDGPU\0", 12);
       tail[20] = kind === "invalid" ? 0xc1 : 0xd4;
     }
-    for (const bytes of [
-      amdFixture(false, tail),
-      hipFixture(amdFixture(false, tail)),
+    const payloadTarget = "amdgcn-amd-amdhsa--gfx900";
+    for (const { bytes, target, consistency } of [
+      {
+        bytes: amdFixture(false, tail),
+        target: payloadTarget,
+        consistency: "single-source",
+      },
+      {
+        bytes: hipFixture(amdFixture(false, tail)),
+        target: "gfx900",
+        consistency: "consistent",
+      },
     ]) {
       const result = await inspect(bytes);
       if (!result.ok) throw result.error;
@@ -761,7 +884,42 @@ it.each(["truncated", "invalid", "extension"] as const)(
       expect(
         result.value.objects.find((row) => row.kind === "amdgpu")!.inspection,
       ).toBe(kind === "extension" ? "unsupported" : "malformed");
+      const identity = {
+        target,
+        payload_target: payloadTarget,
+        target_consistency: consistency,
+      };
+      expect(
+        result.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(identity);
       expect(result.value.coverage.payloads).toBe("partial");
+      const selected = await inspect(bytes, { targets: [target] });
+      if (!selected.ok) throw selected.error;
+      expect(
+        selected.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(identity);
+      expect(selected.value.kernels).toEqual(result.value.kernels);
+      expect(selected.value.coverage.payloads).toBe("partial");
+      const skipped = await inspect(bytes, {
+        targets: [target === "gfx900" ? payloadTarget : "gfx900"],
+      });
+      if (!skipped.ok) throw skipped.error;
+      expect(
+        skipped.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(
+        target === payloadTarget
+          ? {
+              ...identity,
+              inspection: kind === "extension" ? "unsupported" : "malformed",
+            }
+          : {
+              target,
+              payload_target: null,
+              target_consistency: "unexamined",
+              inspection: "not-selected",
+            },
+      );
+      expect(skipped.value.kernels).toEqual([]);
     }
   },
 );
@@ -930,26 +1088,34 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
     error: { _tag: "AnalysisUnsupportedTargetError" },
   });
 });
-it("uses each legacy CCOB v1 stream boundary across alignment padding", async () => {
-  const first = ccobFixture(1, "zlib"),
-    second = ccobFixture(2, "zlib"),
-    padding = Buffer.alloc((8 - (first.length % 8)) % 8);
-  const result = await inspect(Buffer.concat([first, padding, second]));
-  if (!result.ok) throw result.error;
-  const bundles = result.value.objects.filter(
-    ({ kind }) => kind === "hip-bundle",
-  );
-  expect(bundles).toHaveLength(2);
-  expect(
-    bundles.map(({ inspection, decoded_size }) => [inspection, decoded_size]),
-  ).toEqual([
-    ["complete", expect.any(Number)],
-    ["complete", expect.any(Number)],
-  ]);
-  expect(bundles[0]!.sha256).toBe(bundles[1]!.sha256);
-  expect(result.value.kernels).toHaveLength(2);
-  expect(result.value.coverage.discovery).toBe("complete");
-});
+it.each(["zlib", "zstd"] as const)(
+  "uses each legacy CCOB v1 %s stream boundary across alignment padding",
+  async (codec) => {
+    const first = ccobFixture(1, codec),
+      second = ccobFixture(2, "zlib"),
+      padding = Buffer.alloc((8 - (first.length % 8)) % 8);
+    const result = await inspect(Buffer.concat([first, padding, second]));
+    if (!result.ok) throw result.error;
+    const bundles = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(bundles).toHaveLength(2);
+    expect(
+      bundles.map(({ inspection, decoded_size }) => [inspection, decoded_size]),
+    ).toEqual([
+      ["complete", expect.any(Number)],
+      ["complete", expect.any(Number)],
+    ]);
+    expect(bundles[0]!.sha256).toBe(bundles[1]!.sha256);
+    expect(bundles[0]!.encoded_size).toBe(first.length - 20);
+    expect(bundles[0]!.location.size).toBe(first.length - 20);
+    expect(bundles[1]!.metadata_location.offset).toBe(
+      first.length + padding.length,
+    );
+    expect(result.value.kernels).toHaveLength(2);
+    expect(result.value.coverage.discovery).toBe("complete");
+  },
+);
 it("keeps a later CCOB bundle after a truncated legacy v1 stream", async () => {
   const truncated = ccobFixture(1, "zlib").subarray(0, -1),
     later = ccobFixture(2, "zlib");
@@ -965,7 +1131,42 @@ it("keeps a later CCOB bundle after a truncated legacy v1 stream", async () => {
   ]);
   expect(result.value.kernels).toHaveLength(1);
   expect(result.value.coverage.discovery).toBe("partial");
+  expect(bundles[0]!.limitations.join(" ")).toContain(
+    "uncertain recovery candidate",
+  );
 });
+it.each(["checksum", "decoded-size"] as const)(
+  "preserves a completed v1 codec extent after a bad %s declaration",
+  async (declaration) => {
+    const bundle = hipFixture(
+        Buffer.from("ordinary CCOB marker"),
+        "host-other",
+      ),
+      compressed = deflateSync(bundle, { level: 0 }),
+      header = Buffer.from(ccobFixture(1, "zlib", bundle).subarray(0, 20));
+    if (declaration === "checksum") header[12] = header[12]! ^ 1;
+    else header.writeUInt32LE(bundle.length + 1, 8);
+    const first = Buffer.concat([header, compressed]);
+    const result = await inspect(
+      Buffer.concat([first, ccobFixture(2, "zlib")]),
+    );
+    if (!result.ok) throw result.error;
+    const wrappers = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(wrappers.map(({ inspection }) => inspection)).toEqual([
+      "malformed",
+      "complete",
+    ]);
+    expect(wrappers[0]).toMatchObject({
+      encoded_size: compressed.length,
+      location: { size: compressed.length },
+    });
+    expect(wrappers[0]!.limitations.join(" ")).not.toContain("recovery");
+    expect(wrappers[1]!.metadata_location.offset).toBe(first.length);
+    expect(result.value.coverage.discovery).toBe("partial");
+  },
+);
 it("continues at the declared CCOB boundary after an unsupported codec", async () => {
   const unknown = ccobFixture();
   unknown.writeUInt16LE(99, 6);

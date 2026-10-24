@@ -18,6 +18,7 @@ export const CLI_COMMANDS = Object.freeze({
   analyze: "analyze",
   inspect: "inspect",
   decompile: "decompile",
+  decompileAll: "decompile-all",
   setup: "setup",
   doctor: "doctor",
   uninstall: "uninstall",
@@ -70,8 +71,13 @@ export const CLI_COMMANDS = Object.freeze({
   inspectErlangBeam: "inspect-erlang-beam",
   inspectPeResources: "inspect-pe-resources",
   inspectPeCertificates: "inspect-pe-certificates",
+  inspectPeImports: "inspect-pe-imports",
   inspectNativeExports: "inspect-native-exports",
+  inspectDevicetree: "inspect-devicetree",
   inspectElfNotes: "inspect-elf-notes",
+  inspectAppleIps: "inspect-apple-ips",
+  inspectKernelModule: "inspect-kernel-module",
+  inspectPeLoadConfig: "inspect-pe-load-config",
   inspectAnalysisView: "inspect-analysis-view",
   listFridaDevices: "list-frida-devices",
   listFridaProcesses: "list-frida-processes",
@@ -137,6 +143,7 @@ export const CLI_COMMANDS = Object.freeze({
   environmentServe: "environment-serve",
   environmentExport: "environment-export",
   environmentCompare: "environment-compare",
+  environmentBuild: "environment-build",
   compare: "compare",
   captureProcess: "capture-process",
   compareProcessCaptures: "compare-process-captures",
@@ -174,11 +181,9 @@ export const CLI_COMMANDS = Object.freeze({
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */
 export const CLI_COMMAND_NAMES = Object.freeze(Object.values(CLI_COMMANDS));
 
-/** Command aliases registered on top of the primary CLI command inventory. */
-export const CLI_COMMAND_ALIASES = Object.freeze(["compare-bundles"]);
-
 /** Canonical MCP operations reached by CLI commands with different names. */
 export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
+  "environment-build": ["export_environment_bundle"],
   analyze: ["binary_overview"],
   inspect: ["binary_overview"],
   decompile: ["procedure_pseudo_code"],
@@ -188,16 +193,9 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   search: ["search_strings", "search_procedures"],
   "capture-process": ["capture_process_scenario"],
   "compare-bundles": ["compare_bundles"],
-  "list-cutter-sessions": ["list_cutter_sessions"],
-  "cutter-command": ["cutter_command"],
-  "inspect-with-objdump": ["inspect_with_objdump"],
   "list-objdump-architectures": ["inspect_with_objdump"],
-  "execute-rizin-command": ["execute_rizin_command"],
   "debug-with-gdb": ["gdb_console"],
   "debug-with-rizin": ["rizin_debug_command"],
-  "list-frida-devices": ["list_frida_devices"],
-  "list-frida-processes": ["list_frida_processes"],
-  "instrument-with-frida": ["instrument_with_frida"],
 });
 
 /** MCP operations without a dedicated CLI command or direct command alias. */

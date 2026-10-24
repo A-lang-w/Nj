@@ -298,6 +298,26 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
 
 it("retains detached state and resume evidence when remote cleanup needs retry", async () => {
   const fixture = await connectedFixture();
+  expect(
+    (await fixture.client.listTools()).tools.find(
+      (tool) => tool.name === "close_frida_session",
+    )?.annotations?.destructiveHint,
+  ).toBe(true);
+  const inventory = await fixture.client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const availability = expandToolAvailability(
+    toolContract("binary_session").outputSchema.parse(
+      inventory.structuredContent,
+    ).result.tool_availability,
+  );
+  expect(
+    availability.find((tool) => tool.name === "close_frida_session"),
+  ).toMatchObject({
+    effects: { executesForeignCode: true },
+    annotations: { destructive: true },
+  });
   const started = await fixture.client.callTool({
     name: "start_frida_session",
     arguments: {
@@ -364,7 +384,7 @@ it.each([
     );
     const partial = vi.spyOn(
       ToolResultDelivery.prototype,
-      "toRecordedPartialErrorToolResult",
+      "toPartialErrorToolResult",
     );
     onTestFinished(() => {
       loadSpy.mockRestore();
@@ -506,7 +526,7 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
     fixture.controls.resume = async () => {};
     throw new Error("native resume rejected");
   };
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toErrorToolResult");
   onTestFinished(() => delivery.mockRestore());
   let serverSignal: AbortSignal | undefined;
   const resume = fixture.manager.resumeSession.bind(fixture.manager);
@@ -542,12 +562,9 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
   await pending;
   await vi.waitFor(() => expect(delivery).toHaveBeenCalledOnce());
   expect(delivery.mock.calls[0]?.[0]).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCapabilityUnavailableError",
-      operation: "resume_frida_session",
-      message: expect.stringContaining("native resume rejected"),
-    },
+    _tag: "AnalysisCapabilityUnavailableError",
+    operation: "resume_frida_session",
+    message: expect.stringContaining("native resume rejected"),
   });
   expect(fixture.controls.detachCalls).toBe(1);
   expect(fixture.unloaded).toEqual(["resume-failure"]);
@@ -1432,5 +1449,37 @@ it.each([0, 1, 2, 3, 4, 8])(
       ]);
       expect(fixture.unloaded).toEqual([]);
     }
+  },
+);
+
+it.each(["attached", "resumed"] as const)(
+  "reports %s Frida resume refusal as selected session input",
+  async (state) => {
+    const fixture = await connectedFixture();
+    const started =
+      state === "attached"
+        ? await fixture.manager.startSession({ mode: "attach", pid: 512 })
+        : await fixture.manager.startSession({
+            mode: "spawn",
+            program: "/fixture",
+          });
+    if (!started.ok) throw started.error;
+    const id = started.value.sessionId;
+    if (state === "resumed")
+      expect((await fixture.manager.resumeSession(id)).ok).toBe(true);
+    const result = await fixture.client.callTool({
+      name: "resume_frida_session",
+      arguments: { session_id: id },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["session_id"], reason: "invalid_value" }],
+        },
+      },
+    });
+    expect(fixture.controls.resumes).toBe(state === "resumed" ? 1 : 0);
   },
 );

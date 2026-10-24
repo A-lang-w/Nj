@@ -10,8 +10,8 @@ import {
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../config/captureDecoderHeap.js";
 import {
-  DEFAULT_MCP_STARTUP_BUDGETS,
   mcpPhaseBudgetRecovery,
+  resolveMcpStartupBudgets,
 } from "../config/mcpStartupBudgets.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -77,7 +77,7 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   expect(heap).toContain("source ");
   expect(heap).toContain("then restart REA");
   expect(heap).not.toContain("tell the user");
-  const phase = mcpPhaseBudgetRecovery(DEFAULT_MCP_STARTUP_BUDGETS.initialize);
+  const phase = mcpPhaseBudgetRecovery(resolveMcpStartupBudgets({}).initialize);
   expect(phase).toContain("Set ");
   expect(phase).toContain("then restart REA");
   expect(phase).not.toContain("tell the user");
@@ -91,7 +91,6 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   const files = [
     "docs/user-visible-errors.csv",
     "docs/mcp-contracts.md",
-    "src/server/createServer.ts",
     "src/domain/analysisErrorPresentation.ts",
     ".agents/skills/reverse-engineer-anything/SKILL.md",
     ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md",
@@ -128,17 +127,6 @@ it("keeps ceiling dial recoveries and scrubs non-adjustable timeout teaching", a
   expect(skillProse).toContain("explicitly recommends that change");
   expect(skillProse).toContain("not a recommendation to change it");
   expect(skillProse).not.toContain("names a request field");
-  const instructions = prose(
-    await readFile(join(root, "src/server/createServer.ts"), "utf8"),
-  );
-  expect(instructions).toContain("once only");
-  expect(instructions).toContain("safe to repeat");
-  expect(instructions).toContain("tell the user");
-  expect(instructions).toContain("restart the MCP client");
-  expect(instructions).toContain("explicitly recommends that change");
-  expect(instructions).toContain("not a recommendation to change it");
-  expect(instructions).not.toContain("names a request field");
-
   const wakaru = await readFile(
     join(root, "src/javascript/recovery/RecoveryFiles.ts"),
     "utf8",

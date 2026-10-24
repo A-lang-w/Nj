@@ -4,8 +4,10 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   compressedElfNoteFixture,
+  compressedElfNoteSectionFixture,
   elfExtendedSectionCountFixture,
   elfNoteFixture,
+  elfNoteWithUnreadableSectionNameFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -51,6 +53,36 @@ cliTest(
 );
 
 cliTest(
+  "keeps GNU notes when a section-name offset is outside its string table",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-name-cli-");
+    const path = join(root, "program");
+    const bytes = elfNoteWithUnreadableSectionNameFixture("outside");
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.tables[0]?.name).toBeNull();
+    expect(evidence.normalized_result.limitations).toContain(
+      "ELF section names are incomplete because a name offset is outside its string table.",
+    );
+    expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+    expect(evidence.normalized_result.coverage).toMatchObject({
+      status: "complete",
+      examined_tables: 1,
+      examined_entries: 1,
+    });
+    expect(await readFile(path)).toEqual(bytes);
+  },
+);
+
+cliTest(
   "resolves a relative ELF path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-cli-rel-");
@@ -86,6 +118,27 @@ cliTest("reports a truncated ELF as invalid input", async ({ cli }) => {
 });
 
 cliTest(
+  "reports compressed note storage as unsupported without mutation",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-storage-cli-");
+    const path = join(root, "debug-notes.o");
+    const bytes = compressedElfNoteSectionFixture();
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringContaining(
+        "Compressed ELF note sections are unsupported",
+      ),
+    });
+    expect(await readFile(path)).toEqual(bytes);
+  },
+);
+
+cliTest(
   "reports valid extended numbering as unsupported without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-extended-cli-");
@@ -100,6 +153,6 @@ cliTest(
       code: "unsupported_target",
       message: expect.stringContaining("ELF extended numbering is unsupported"),
     });
-    expect(await readFile(path)).toEqual(before);
+    expect((await readFile(path)).equals(before)).toBe(true);
   },
 );

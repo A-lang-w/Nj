@@ -3,6 +3,10 @@ import { locateGodotPck } from "../GodotPckLocation.js";
 import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
 import type { ArtifactCleanupAttempt } from "../ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
+import { dirname } from "node:path";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { isPathWithinRoot } from "../../domain/localPath.js";
+import { SafeOutputTreeDestinationRefusal } from "../SafeOutputTreeAdmission.js";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
@@ -32,9 +36,9 @@ import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
   type ArtifactGraphManifest,
+  type ArtifactCommand,
   type ArtifactNode,
   type ArtifactOccurrence,
-  type IntegrityContradiction,
 } from "../../domain/artifactGraph.js";
 import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
 import type {
@@ -87,23 +91,25 @@ const extractArtifactInScope = async (
 };
 
 /** Materialize a scanned inventory, verifying every current occurrence against it. */
-export const materializeArtifactInventory = async (
+export const materializeArtifactInventoryInScope = async (
   input: ArtifactExtractionInput,
   sourcePath: string,
   snapshot: ArtifactInventorySnapshot,
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> => {
-  return input.resourceScope.run(() =>
-    materializeArtifactInventoryInScope(input, sourcePath, snapshot, signal),
-  );
-};
-
-const materializeArtifactInventoryInScope = async (
-  input: ArtifactExtractionInput,
-  sourcePath: string,
-  snapshot: ArtifactInventorySnapshot,
-  signal?: AbortSignal,
-): Promise<ArtifactExtractionResult> => {
+  abortIfNeeded(signal);
+  // A directory source must never acquire its own output as a new member on
+  // the verification traversal. Resolve the selected parent before any write.
+  const canonicalSource = await realpath(sourcePath);
+  if ((await lstat(canonicalSource)).isDirectory()) {
+    const parent = await realpath(
+      dirname(absoluteCallerPath(input.outputRoot)),
+    );
+    if (isPathWithinRoot(canonicalSource, parent))
+      throw new SafeOutputTreeDestinationRefusal(
+        `Extraction output parent ${parent} is inside source directory ${canonicalSource}. Choose a temporary directory outside the source.`,
+      );
+  }
   abortIfNeeded(signal);
   const containerMetadata = snapshot.occurrences.find(
     (row) => row.logical_path === ".",
@@ -144,23 +150,12 @@ const materializeArtifactInventoryInScope = async (
     }
     return true;
   });
-  const selectedIds = new Set(
-    activeOccurrences.map(({ occurrence_id: id }) => id),
-  );
   const neededNodes = new Set(
     activeOccurrences.map(({ artifact_id: id }) => id),
   );
   const nodes = new Map<string, ArtifactNode>();
   for (const node of snapshot.nodes)
     if (neededNodes.has(node.artifact_id)) nodes.set(node.artifact_id, node);
-  const inventory: ExtractionInventory = {
-    manifest: snapshot.manifest,
-    coverage: snapshot.coverage,
-    limitations: snapshot.limitations,
-    integrityContradictions: snapshot.integrity_contradictions.filter(
-      ({ occurrence_id: id }) => selectedIds.has(id),
-    ),
-  };
   const selected = activeOccurrences.map((occurrence) => {
     // REA never decrypts archive entries, so an encrypted entry makes the
     // complete extraction unsupported rather than the archive invalid.
@@ -170,8 +165,8 @@ const materializeArtifactInventoryInScope = async (
         input.inputPath,
         `Archive entry ${occurrence.logical_path} is encrypted; REA does not decrypt archive entries, so the archive cannot be extracted completely`,
       );
-    // Inventory keeps an ASAR unpacked entry whose companion file is absent,
-    // but extraction cannot materialize bytes it never observed.
+    // Inventory retains unavailable source occurrences, but extraction cannot
+    // materialize bytes it never observed.
     if (
       occurrence.entry_kind === "file" &&
       occurrence.artifact_id === null &&
@@ -179,14 +174,16 @@ const materializeArtifactInventoryInScope = async (
     )
       throw new ArtifactReaderFailure(
         "unavailable",
-        `ASAR unpacked companion bytes are unavailable for ${occurrence.logical_path}`,
+        `Inventoried source bytes are unavailable for ${occurrence.logical_path}`,
         undefined,
-        {
-          logicalPath: occurrence.logical_path,
-          declaredSha256: null,
-          calculatedSha256: null,
-          unpacked: true,
-        },
+        occurrence.unpacked === true
+          ? {
+              logicalPath: occurrence.logical_path,
+              declaredSha256: null,
+              calculatedSha256: null,
+              unpacked: true,
+            }
+          : undefined,
       );
     if (
       (occurrence.entry_kind !== "file" && occurrence.entry_kind !== "slice") ||
@@ -208,7 +205,7 @@ const materializeArtifactInventoryInScope = async (
   return materializeSelection({
     input,
     sourcePath,
-    inventory,
+    inventory: snapshot,
     selected,
     signal,
   });
@@ -236,7 +233,7 @@ const materializeSelection = async ({
 }: {
   readonly input: ArtifactExtractionInput;
   readonly sourcePath: string;
-  readonly inventory: ExtractionInventory;
+  readonly inventory: ArtifactInventorySnapshot;
   readonly selected: readonly SelectedOccurrence[];
   readonly signal: AbortSignal | undefined;
 }): Promise<ArtifactExtractionResult> => {
@@ -301,6 +298,7 @@ const materializeSelection = async ({
       selected,
       extracted,
       traversal.snapshot(),
+      reader.provenance(),
     );
     await output.commit(signal);
     return completed;
@@ -410,11 +408,18 @@ const releaseExtractionOwners = async (
 
 const createExtractionResult = (
   input: ArtifactExtractionInput,
-  inventory: ExtractionInventory,
+  inventory: ArtifactInventorySnapshot,
   selected: readonly SelectedOccurrence[],
   extracted: readonly ExtractedOccurrence[],
   traversal: ArtifactReaderTraversal,
+  materializationProvenance: readonly ArtifactCommand[],
 ): ArtifactExtractionResult => {
+  const selectedIds = new Set(
+    selected.map(({ occurrence }) => occurrence.occurrence_id),
+  );
+  const integrityContradictions = inventory.integrity_contradictions.filter(
+    ({ occurrence_id: id }) => selectedIds.has(id),
+  );
   const extractionSemantic = {
     source_manifest_id: inventory.manifest.manifest_id,
     selected_occurrence_ids: selected
@@ -433,28 +438,31 @@ const createExtractionResult = (
     artifacts: extracted,
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
-    provenance: [],
-    integrity_contradictions: inventory.integrityContradictions,
+    provenance: [...inventory.provenance, ...materializationProvenance],
+    coverage: {
+      ...inventory.coverage,
+      status: traversal.status,
+    },
+    integrity_contradictions: integrityContradictions,
     limitations: [
       ...traversal.limitations,
+      ...selected.flatMap(({ occurrence }) =>
+        occurrence.limitations.map(
+          (limitation) => `${occurrence.logical_path}: ${limitation}`,
+        ),
+      ),
       traversal.status === "complete"
-        ? "All regular files in the active artifact were materialized; nested archive contents remain represented by their containing file."
-        : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy. Nested archive contents remain represented by their containing file.",
-      ...(inventory.integrityContradictions.length === 0
+        ? "All regular files exposed by the active artifact reader were materialized."
+        : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy.",
+      "Publication verifies the selected inventoried regular files; it does not establish complete content decoding.",
+      ...(integrityContradictions.length === 0
         ? []
         : [
-            `${String(inventory.integrityContradictions.length)} extracted file(s) contradict declared integrity metadata; their bytes are observed-untrusted.`,
+            `${String(integrityContradictions.length)} extracted file(s) contradict declared integrity metadata; their bytes are observed-untrusted.`,
           ]),
     ],
   });
 };
-
-interface ExtractionInventory {
-  readonly manifest: ArtifactGraphManifest;
-  readonly coverage: ArtifactInventorySnapshot["coverage"];
-  readonly limitations: readonly string[];
-  readonly integrityContradictions: readonly IntegrityContradiction[];
-}
 
 /**
  * Refuse a format without an extraction reader before inventory work starts.

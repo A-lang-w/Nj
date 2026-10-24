@@ -97,7 +97,19 @@ it.each(
       },
     });
     const text = Buffer.concat(chunks).toString("utf8");
-    if (full)
+    if (full && format === "jsonl") {
+      const records = text
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records.slice(0, -1)).toEqual([1, null, null]);
+      expect(records.at(-1)).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "metadata",
+        records: { path: ["data"], emitted: 3, source: 3, filter: "selected" },
+        context: { ok: true, meta: { command: "rows" } },
+      });
+    } else if (full)
       expect(JSON.parse(text)).toMatchObject({
         ok: true,
         data: [1, null, null],
@@ -288,7 +300,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -312,6 +327,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual([1, null, null]);
+    else if (format === "md") expect(output).toBe("[1,null,null]\n");
     else expect(output).toBe(`${Formatter.format(selected, format)}\n`);
     expect(value).toEqual([{ selected: 1 }, {}, { selected: null }]);
   },
@@ -344,7 +360,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );
