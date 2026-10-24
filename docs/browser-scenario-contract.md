@@ -365,11 +365,13 @@ data you may change.
   validation checks before the browser starts. When the step runs, the page must
   be on that origin, checked again in the page as the request is sent; add a
   `goto` step first if an earlier action left it. A query in `path` is sent as
-  written, and `query` entries are appended after it in order and may
-  reference declared secrets.
+  written (a fragment is not sent), and `query` entries are appended after it
+  in order and may reference declared secrets.
 - Request steps follow no redirects: a redirect answer fails the step, and
-  nothing is sent to the location it names, so give the path the redirect
-  names.
+  nothing is sent to the location it names, though a write the redirect
+  answered may already have been applied. `expected_status` cannot name a 3xx
+  status. Give the path the redirect names; with header values selected, the
+  capture records its `Location`.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
   whose value the page's scripts can then see while the request runs), or a
@@ -381,11 +383,17 @@ data you may change.
   as the login response that returned a token, keeps the value. A value read
   again keeps its first marker, and a value shorter than 8 characters is not
   redacted, since redacting it would rewrite ids, ports and hosts throughout
-  the capture. A missing cookie, key or pointer fails the step.
+  the capture. A value is redacted as stored and as `fetch` sends it, without
+  surrounding spaces and tabs. A missing cookie, key or pointer fails the step.
+  Reading a page value raises the estimated cost of redacting every later
+  body, so the bodies kept within `max_network_body_allocation_bytes` (1 MiB
+  by default) get smaller: after a 32-character `X-CSRFToken` value, a body over
+  about 47 KiB is kept as `unavailable`. Raise `capture.limits` when the
+  application's responses are larger.
 - Validation refuses a header name given twice in a step, header names a
   page's `fetch` cannot set, such as `Cookie`, `Origin`, `Host` or `Sec-*`, and
-  `User-Agent`, which Chrome drops; it refuses line breaks and control
-  characters in literal values and prefixes, and the step fails before sending
+  `User-Agent`, which Chrome drops; it refuses line breaks and other ASCII
+  control characters in literal values and prefixes, and the step fails before sending
   when a secret or page value holds them.
 - The step completes when the whole response has been read. With
   `expected_status`, any other status fails the step and the later actions are

@@ -199,7 +199,10 @@ absolute path that does not exist yet, whose parent does; the tool creates it
 and refuses an existing directory, empty or not. `name`, `template_rules`,
 `package_tarball` and `dry_run` work as `--name`, `--template-rule`,
 `--package-tarball` and `--dry-run` do, and retained Evidence has no file to
-name the environment after, so a loopback or IP origin needs `name`. Refusals name their stage as `environment-build`'s do.
+name the environment after, so a loopback or IP origin needs `name`. Unlike
+`--dry-run`, `dry_run` still checks `output_directory`. Destination refusals
+name `export_environment_bundle`; the others name their stage as
+`environment-build`'s do.
 
 ## From a browser scenario
 

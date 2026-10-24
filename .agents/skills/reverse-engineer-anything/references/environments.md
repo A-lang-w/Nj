@@ -127,7 +127,15 @@ About `request` steps:
   `prefix` such as `"Bearer "`. Copy the headers the application's own
   requests send (a CSRF header, a bearer token). Values read from the page
   are redacted from records made after they are read, not from the login
-  response that returned them.
+  response that returned them, and values shorter than 8 characters are not
+  redacted at all.
+- Reading a page value makes later bodies costlier to keep: after a CSRF
+  token, bodies over about 47 KiB are kept as `unavailable`. When the API
+  returns larger responses, raise `capture.limits`
+  (`max_network_body_allocation_bytes`, `max_total_event_allocation_bytes`).
+- Request steps follow no redirects: a redirect fails the step, and
+  `expected_status` cannot name a 3xx status. Use the path the redirect names,
+  such as the one with the trailing slash.
 - Set `expected_status` on every step, so a refused call fails its step and
   the later steps report not having run, instead of recording read-backs of
   nothing.

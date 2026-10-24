@@ -140,7 +140,7 @@ const harAsJson = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `${path} is a HAR document, not capture Evidence; inspect it as a HAR first, or build from the file saved as .har.`,
+      userMessage: `${path} is a HAR document, not capture Evidence; save it as a .har file to build from it, or inspect it as a HAR first (inspect_web_network_capture) and build from that Evidence.`,
     },
     [
       {
