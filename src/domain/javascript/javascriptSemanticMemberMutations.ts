@@ -4,6 +4,7 @@ import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
   semanticIntrinsicReceiverIsSafe,
+  semanticStoreMayReachAmbientSetter,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import {
@@ -1393,29 +1394,7 @@ export function* collectSemanticMemberMutationsSteps(
     const target = source.target;
     if (target === undefined) return true;
     const key = semanticStaticPropertyKey(target.property, target.computed);
-    if (key === null || key === "__proto__") return true;
-    if (
-      ["Object", "Array", "Function"].some((owner) => {
-        const path = ["global", owner, "prototype", key];
-        return (
-          state.ambientWrites.covers(path) ||
-          state.ambientEscapes.covers(path) ||
-          state.ambientWrites.overlaps([
-            "global",
-            owner,
-            "prototype",
-            "__proto__",
-          ]) ||
-          state.ambientEscapes.overlaps([
-            "global",
-            owner,
-            "prototype",
-            "__proto__",
-          ])
-        );
-      })
-    )
-      return true;
+    if (semanticStoreMayReachAmbientSetter(state, key)) return true;
     const setters = localAccessorMethods(target.object, [key], "set", state, {
       ...completeSetterSelection,
       beforeStore: { mutation: source.mutation, target },

@@ -291,3 +291,21 @@ it.each([
       );
   },
 );
+
+it.each([
+  'Object.defineProperty(Object.prototype, "hook", { set(fn) { this.open = fn; } }); globalThis.hook = function() { this.Map.prototype.get = fetch; }; globalThis.open();',
+  'Object.defineProperty(Object.prototype, "hook", { set(fn) { this.open = fn; } }); const root = globalThis; root.hook = function() { this.Map.prototype.get = fetch; }; root.open();',
+  'Object.defineProperty(Object.prototype, "hook", { set(fn) { this.open = fn; } }); ({ value: globalThis.hook } = { value: function() { this.Map.prototype.get = fetch; } }); globalThis.open();',
+])("retains cross-key receiver effects from inherited setters: %s", (setup) => {
+  const source = `${setup} new Map().get("/accounts");`;
+  const observed: unknown[] = [];
+  runInNewContext(source, { fetch: (value: unknown) => observed.push(value) });
+  expect(observed).toEqual(["/accounts"]);
+  expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+    expect.objectContaining({
+      kind: "network",
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});

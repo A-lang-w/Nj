@@ -81,8 +81,7 @@ const fixture = async (
     const activeVersionCommand =
       activeVersion && spawn.arguments.includes("--version");
     if (!captureCommand && !activeVersionCommand) return launched;
-    if (activeVersionCommand) controller.abort(reason);
-    if (mode === "active" && captureCommand)
+    if (activeVersionCommand || (mode === "active" && captureCommand))
       launched.process.stdout?.on("data", (chunk: Buffer) => {
         if (chunk.toString().includes("ready")) controller.abort(reason);
       });

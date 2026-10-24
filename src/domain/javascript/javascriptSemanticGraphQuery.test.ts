@@ -68,7 +68,6 @@ it("accepts truncated partial coverage with unknown omission extents", () => {
   expect(
     createJavaScriptSemanticGraph({
       ...input,
-      limitations: ["The configured resource limit omitted semantic facts."],
       coverage: {
         ...input.coverage,
         status: "partial",
@@ -87,7 +86,6 @@ it("accepts omitted unknown occurrences as the reason for semantic truncation", 
   const family = input.coverage.families[0]!.family;
   const graph = createJavaScriptSemanticGraph({
     ...input,
-    limitations: ["The configured resource limit omitted semantic facts."],
     coverage: {
       ...input.coverage,
       status: "partial",

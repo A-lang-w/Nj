@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
     | {
         initialize: ReturnType<typeof vi.fn>;
         settle: ReturnType<typeof vi.fn>;
-        limitations: () => readonly string[];
         close: ReturnType<typeof vi.fn>;
         limitations: ReturnType<typeof vi.fn>;
       }
@@ -216,7 +215,6 @@ const fixture = () => {
   mocks.storage = {
     initialize: vi.fn(async () => undefined),
     settle: vi.fn(async () => undefined),
-    limitations: () => [],
     close: vi.fn(async (stopLoading = false) => ({
       loadingStopped: stopLoading,
     })),

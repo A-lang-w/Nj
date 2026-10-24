@@ -118,6 +118,24 @@ export const retainSemanticAmbientEffect = (
   return true;
 };
 
+/** Ambient prototype changes can turn a property store into an opaque setter call. */
+export const semanticStoreMayReachAmbientSetter = (
+  state: JavaScriptSemanticAnalysisState,
+  key: string | null,
+): boolean => {
+  if (key === null || key === "__proto__") return true;
+  return ["Object", "Array", "Function"].some((owner) => {
+    const path = ["global", owner, "prototype", key];
+    const prototype = ["global", owner, "prototype", "__proto__"];
+    return (
+      state.ambientWrites.covers(path) ||
+      state.ambientEscapes.covers(path) ||
+      state.ambientWrites.overlaps(prototype) ||
+      state.ambientEscapes.overlaps(prototype)
+    );
+  });
+};
+
 /** Parsed receiver facts stay separate from mutation-dependent safety. */
 export const semanticIntrinsicReceiverIsSafe = (
   node: t.Node,
@@ -1114,6 +1132,22 @@ export function* indexJavaScriptAmbientWritesSteps(
       if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
         retainSemanticAmbientEffect(state, "escape", path, node);
       }
+  // A setter can rewrite any property of its receiver, not just the assigned
+  // key. Publish that exposure before deciding whether a recognized native
+  // method still keeps its receiver away from user code.
+  for (const source of storedReferences) {
+    const target = source.target;
+    if (
+      target === undefined ||
+      !semanticStoreMayReachAmbientSetter(
+        state,
+        semanticStaticPropertyKey(target.property, target.computed),
+      )
+    )
+      continue;
+    for (const identity of ambientWrites(target.object, source.mutation, false))
+      retainSemanticAmbientEffect(state, "escape", identity, source.mutation);
+  }
   for (const { node, receiver } of nativeReceiverCalls) {
     if (semanticIntrinsicReceiverIsSafe(node, state)) continue;
     for (const identity of ambientWrites(receiver, node, true))
