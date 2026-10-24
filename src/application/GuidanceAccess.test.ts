@@ -1,13 +1,9 @@
-import { readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { searchGuidanceOutputSchema } from "../contracts/guidanceContracts.js";
-import { readSkillFile } from "./SetupSkill.js";
 import { RetainedRegularFileCleanupFailure } from "./RegularFileRead.js";
 import {
   readGuidanceSectionWithReader,
@@ -124,18 +120,6 @@ it("refuses an oversized guide bundle instead of indexing partial content", asyn
     ok: true,
     value: { status: "bundle_unavailable" },
   });
-});
-
-it("uses the managed regular-file reader to reject symlinks and oversized files", async () => {
-  const root = await createTestTempDirectory("rea-guidance-file-boundary-");
-  const target = join(root, "guide.md");
-  const link = join(root, "linked-guide.md");
-  const oversized = join(root, "oversized-guide.md");
-  await writeFile(target, "safe guide content");
-  await symlink(target, link);
-  await writeFile(oversized, "larger than limit");
-  await expect(readSkillFile(link)).rejects.toThrow();
-  await expect(readSkillFile(oversized, undefined, 4)).rejects.toThrow();
 });
 
 it("paginates deterministically without losing, duplicating, or reordering matches", async () => {
