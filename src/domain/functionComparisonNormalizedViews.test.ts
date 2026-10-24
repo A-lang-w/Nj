@@ -212,11 +212,76 @@ describe("wallace relocation-only function pair", () => {
     expect(projection).toMatchObject({ status: "unchanged" });
     expect(projection?.left_count).toBe(projection?.right_count);
   });
+});
+
+describe("normalized view projected facts and symbol names", () => {
+  it("requires projected facts in known normalized views", () => {
+    const result = compareFunctions(
+      ...syntheticPair(
+        addressRelocationText("0x411700"),
+        addressRelocationText("0x4116f0"),
+      ),
+      { includeNormalizedViews: true },
+    );
+    const views = result.normalized_views!.views;
+    expect(views[0]).toMatchObject({ status: "unchanged" });
+    const withoutFacts = {
+      ...result,
+      normalized_views: {
+        ...result.normalized_views!,
+        views: [
+          {
+            ...views[0]!,
+            left_digest: null,
+            right_digest: null,
+            left_count: null,
+            right_count: null,
+            text_delta: null,
+          },
+          views[1]!,
+        ],
+      },
+    };
+    expect(functionComparisonResultSchema.safeParse(withoutFacts).success).toBe(
+      false,
+    );
+  });
+
+  it("keeps projected facts when the bounded diff gives up", () => {
+    const make = (base: string, prefix: string) => ({
+      ...addressRelocationText(base),
+      pseudocode: `void f(void) {\n${Array.from(
+        { length: 12_000 },
+        (_, index) => `  ${prefix}${index} = ${index};`,
+      ).join("\n")}\n}`,
+    });
+    const result = compareFunctions(
+      ...syntheticPair(make("0x411700", "a"), make("0x4116f0", "b")),
+      { includeNormalizedViews: true },
+    );
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      conclusion_kind: "unresolved_branch",
+      text_delta: null,
+      left_digest: expect.any(String),
+      right_digest: expect.any(String),
+      masking: { policy: "rea-address-normalized-text-v1" },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("Bounded line diff exceeded"),
+      ]),
+    });
+  });
 
   it.each([
     { source: "default", qualifier: "", masked: 1, status: "unchanged" },
     { source: "user_defined", qualifier: "", masked: 0, status: "changed" },
     { source: "user_defined", qualifier: "ns::", masked: 0, status: "changed" },
+    {
+      source: "user_defined",
+      qualifier: "std::vector<int>::",
+      masked: 0,
+      status: "changed",
+    },
   ] as const)(
     "masks an address-shaped name only without a named symbol origin ($source, $qualifier)",
     ({ source, qualifier, masked, status }) => {
@@ -892,7 +957,9 @@ describe("normalized view callee identity", () => {
       ]),
     });
   });
+});
 
+describe("normalized view outgoing callee facts", () => {
   it.each([
     { edge: "call", call: true, jump: false },
     { edge: "tail jump", call: false, jump: true },
@@ -955,6 +1022,56 @@ describe("normalized view callee identity", () => {
         });
     },
   );
+
+  it("treats a partially classified outgoing call target as a masked callee", () => {
+    const make = (base: string, target: string) => {
+      const name = `FUN_${BigInt(target).toString(16)}`;
+      const dossier = syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { ${name}(); }`,
+        assembly: [`${base}: CALL ${target}`],
+      });
+      return {
+        ...dossier,
+        // Hopper reports a call classification without detailed reference flags.
+        outgoing_references: [
+          {
+            source_address: base,
+            target_address: target,
+            source_procedure: null,
+            target_procedure: null,
+            kind: {
+              available: false as const,
+              reason: "detailed reference flags unavailable",
+            },
+            call: {
+              classification: "direct" as const,
+              provider_type: 1,
+              provenance: "fixture",
+            },
+          },
+        ],
+      };
+    };
+    const [before, after] = syntheticPair(
+      make("0x411700", "0x411860"),
+      make("0x511700", "0x511860"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+    for (const name of ["pseudocode_normalized", "assembly_normalized"])
+      expect(view(result, name), name).toMatchObject({
+        status: "unknown",
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            "cannot establish callee identity or call order",
+          ),
+        ]),
+      });
+  });
 });
 
 describe("normalized view fail-closed parsing", () => {

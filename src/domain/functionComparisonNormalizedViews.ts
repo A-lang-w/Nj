@@ -36,10 +36,6 @@ const POLICY = "rea-address-normalized-text-v1";
 const NORMALIZABLE_ADDRESS_TOKEN =
   /(?<![0-9A-Za-z_])(?:(?<label>(?:thunk_|flt_)?(?:FUN|SUB|DAT|LAB|PTR|UNK|SwitchD|Join)_|(?:sub|loc|off|unk|nullsub)_|(?:fcn|sub|loc|off|data)\.)(?<identifier_prefix>0x)?(?<identifier_address>[0-9a-f]{4,})(?![0-9A-Za-z_])|(?<address>0x[0-9a-f]+))/giu;
 
-/** A `ns::` qualifier chain that can precede a matched identifier, read within a bounded window. */
-const QUALIFIER = /(?:[A-Za-z_][0-9A-Za-z_]*::)+$/u;
-const QUALIFIER_WINDOW = 256;
-
 /** Declared masking rules, reported verbatim so every view can be audited. */
 const RULES = [
   {
@@ -109,19 +105,11 @@ const normalizeText = (
           ? `${groups.identifier_prefix ?? "0x"}${groups.identifier_address ?? ""}`
           : (groups.address ?? match);
         const address = parseAddress(addressText.toLowerCase());
-        const qualifier = isIdentifier
-          ? (QUALIFIER.exec(
-              code.slice(Math.max(0, index - QUALIFIER_WINDOW), index),
-            )?.[0] ?? "")
-          : "";
         const mask =
           address === null
             ? null
             : isIdentifier
-              ? projection.maskIdentifier(address, [
-                  match,
-                  `${qualifier}${match}`,
-                ])
+              ? projection.maskIdentifier(address, { code, index, match })
               : projection.maskTextAddress(
                   address,
                   addressLocation(codeStart + index),
@@ -266,25 +254,6 @@ export const normalizedViews = (
           ...limitations,
           "Provider text contains an unsupported raw string or an unterminated string, character literal, or block comment, so normalization was skipped.",
         ]);
-      const changes = diffLines(leftText.text, rightText.text, {
-        timeout: 100,
-        maxEditLength: 10_000,
-      });
-      if (changes === undefined)
-        return unknownView(dimension, links, [
-          ...limitations,
-          "Bounded line diff exceeded its time or edit-distance limit.",
-        ]);
-      const delta = changes.reduce(
-        (summary, change) => ({
-          added_lines:
-            summary.added_lines + (change.added ? (change.count ?? 0) : 0),
-          removed_lines:
-            summary.removed_lines + (change.removed ? (change.count ?? 0) : 0),
-          hunks: summary.hunks + (change.added || change.removed ? 1 : 0),
-        }),
-        { added_lines: 0, removed_lines: 0, hunks: 0 },
-      );
       const masking: NonNullable<NormalizedTextView["masking"]> = {
         policy: POLICY,
         provider_id: left.evidence.provider.id,
@@ -301,21 +270,40 @@ export const normalizedViews = (
         evidence_links: [...links],
         masking,
       };
+      // Both projections completed, so an unresolved comparison keeps their facts.
+      const unresolved = (reason: string): NormalizedTextView => ({
+        ...projected,
+        status: "unknown",
+        text_delta: null,
+        limitations: [...limitations, reason],
+        conclusion_kind: "unresolved_branch",
+      });
+      const changes = diffLines(leftText.text, rightText.text, {
+        timeout: 100,
+        maxEditLength: 10_000,
+      });
+      if (changes === undefined)
+        return unresolved(
+          "Bounded line diff exceeded its time or edit-distance limit.",
+        );
+      const delta = changes.reduce(
+        (summary, change) => ({
+          added_lines:
+            summary.added_lines + (change.added ? (change.count ?? 0) : 0),
+          removed_lines:
+            summary.removed_lines + (change.removed ? (change.count ?? 0) : 0),
+          hunks: summary.hunks + (change.added || change.removed ? 1 : 0),
+        }),
+        { added_lines: 0, removed_lines: 0, hunks: 0 },
+      );
       if (
         delta.hunks === 0 &&
         options.callsStatus === "unknown" &&
         (leftText.maskedCalleeTarget || rightText.maskedCalleeTarget)
       )
-        return {
-          ...projected,
-          status: "unknown",
-          text_delta: null,
-          limitations: [
-            ...limitations,
-            "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
-          ],
-          conclusion_kind: "unresolved_branch",
-        } satisfies NormalizedTextView;
+        return unresolved(
+          "Masked text references a dossier-listed callee or thunk target while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+        );
       return {
         ...projected,
         status: delta.hunks === 0 ? "unchanged" : "changed",

@@ -11,11 +11,17 @@ export interface AddressMask {
   readonly value: string;
 }
 
+/** One matched address-derived identifier and the code segment it was found in. */
+export interface IdentifierOccurrence {
+  readonly code: string;
+  readonly index: number;
+  readonly match: string;
+}
+
 export interface AddressProjection {
-  /** Names are the matched identifier and its spelling with any `ns::` qualifier. */
   readonly maskIdentifier: (
     address: bigint,
-    names: readonly string[],
+    occurrence: IdentifierOccurrence,
   ) => AddressMask | null;
   readonly maskTextAddress: (
     address: bigint,
@@ -67,8 +73,8 @@ export const createFunctionAddressProjection = (
   };
   return {
     isCalleeAddress: (address) => calleeAddresses.has(address),
-    maskIdentifier: (address, names) =>
-      names.some((name) => namedSymbols.has(name))
+    maskIdentifier: (address, occurrence) =>
+      isNamedOccurrence(namedSymbols, occurrence)
         ? null
         : observedAddress(address),
     maskTextAddress: (address, location) => {
@@ -187,21 +193,45 @@ const corroboratedAddresses = (snapshot: FunctionSnapshot): Set<bigint> => {
   return addresses;
 };
 
-/** Typed calls and jumps into another procedure name callees the callees facet may omit. */
+/**
+ * Typed calls and jumps into another procedure name callees the callees facet
+ * may omit. A partial call classification counts even without reference flags.
+ */
 const outgoingCallTargets = (
   snapshot: FunctionSnapshot,
 ): (string | null | undefined)[] => {
   const entry = parseAddress(snapshot.dossier.procedure.address.toLowerCase());
   return snapshot.dossier.outgoing_references.flatMap((edge) => {
-    if (!edge.kind.available) return [];
     const target = edge.target_procedure;
     const intoOtherProcedure =
       target !== null && parseAddress(target.address.toLowerCase()) !== entry;
-    return edge.kind.call || (edge.kind.jump && intoOtherProcedure)
+    const classifiedCall =
+      edge.call?.classification === "direct" ||
+      edge.call?.classification === "objective_c";
+    const typedCall =
+      edge.kind.available &&
+      (edge.kind.call || (edge.kind.jump && intoOtherProcedure));
+    return classifiedCall || typedCall
       ? [edge.target_address, target?.classification?.thunk_target]
       : [];
   });
 };
+
+/**
+ * Whether the matched identifier spells a named symbol, alone or as the tail of
+ * a qualified name whose exact qualifier precedes it in the same code segment.
+ */
+const isNamedOccurrence = (
+  namedSymbols: ReadonlySet<string>,
+  { code, index, match }: IdentifierOccurrence,
+): boolean =>
+  namedSymbols.has(match) ||
+  [...namedSymbols].some(
+    (name) =>
+      name.length > match.length &&
+      name.endsWith(match) &&
+      code.endsWith(name.slice(0, -match.length), index),
+  );
 
 /** A producer-reported named symbol is an identity even when it looks address-derived. */
 const namedSymbolNames = (snapshot: FunctionSnapshot): Set<string> => {
