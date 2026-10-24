@@ -378,12 +378,13 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-it.skipIf(process.platform !== "linux")(
-  "recovers truncated output with verified detach while leaving the inferior alive",
-  async () => {
+it.skipIf(process.platform !== "linux").each([false, true])(
+  "requires fresh cleanup synchronization for truncated output while leaving the inferior alive (withheld=%s)",
+  async (withheld) => {
     const sessionId = await startFakeInferiorSession({
       overflowPxCommand: true,
-      withholdCleanupSynchronization: true,
+      withholdCleanupSynchronization: withheld,
+      recordCommands: true,
       maxCommandOutputBytes: 1_024,
     });
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -413,8 +414,32 @@ it.skipIf(process.platform !== "linux")(
         if (watchdog !== undefined) clearTimeout(watchdog);
       });
 
-    expect(completed.ok).toBe(true);
-    if (!completed.ok) throw completed.error;
+    expect(
+      completed.ok,
+      completed.ok ? undefined : completed.error.message,
+    ).toBe(!withheld);
+    if (!completed.ok) {
+      expect(completed.error.cleanupIncomplete).toBe(true);
+      expect(completed.error.cleanupResources).toContain(sessionId);
+      expect(completed.error.message).toMatch(
+        /inferior detach (?:was not|could not be) verified/u,
+      );
+      const commands = await readFile(
+        join(testDirectory!, "commands.log"),
+        "utf8",
+      );
+      expect(commands).toContain("!echo __REA_CLEANUP_SYNC_");
+      expect(commands).not.toContain("o- 3\n");
+      expect(
+        evidenceSchema.parse(completed.error.partialObservation)
+          .normalized_result,
+      ).toMatchObject({ output_truncated: true });
+      expect(manager!.status(sessionId)?.state).toBe("closed");
+      expect((await manager!.close(sessionId)).ok).toBe(false);
+      expect(inferiorPid).toBeDefined();
+      expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
+      return;
+    }
     const evidence = evidenceSchema.parse(completed.value.evidence);
     expect(evidence.normalized_result).toMatchObject({
       output_truncated: true,
@@ -542,6 +567,7 @@ async function startFakeInferiorSession(
     readonly truncateCleanupFrame?: boolean;
     readonly overflowPxCommand?: boolean;
     readonly withholdCleanupSynchronization?: boolean;
+    readonly recordCommands?: boolean;
     readonly startupWatchdogMs?: number;
     readonly maxCommandOutputBytes?: number;
   } = {},
@@ -581,6 +607,7 @@ process.stdin.on("data", (chunk) => {
     const end = input.indexOf("\\n");
     if (end < 0) break;
     const line = input.slice(0, end); input = input.slice(end + 1);
+    ${options.recordCommands ? `fs.appendFileSync(${JSON.stringify(join(testDirectory, "commands.log"))}, line + "\\n");` : ""}
     if (line === "olj") {
       oljCalls += 1;
       if (fs.existsSync(${JSON.stringify(repairedInventory)})) process.stdout.write("[]\\0");

@@ -605,16 +605,6 @@ const redirectCapture = (
   const copy = structuredClone(inspection);
   if (!isRecord(copy.network) || !Array.isArray(copy.network.requests))
     throw new Error("Missing network capture");
-  // This normalized comparison fixture explicitly supplies a complete request inventory.
-  if (
-    !isRecord(copy.completeness) ||
-    !Array.isArray(copy.completeness.attach_limited_sections)
-  )
-    throw new Error("Missing capture completeness");
-  copy.completeness.attach_limited_sections =
-    copy.completeness.attach_limited_sections.filter(
-      (section) => section !== "network_requests",
-    );
   const request = copy.network.requests[0];
   if (!isRecord(request)) throw new Error("Missing network request");
   request.redirects = [
