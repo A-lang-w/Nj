@@ -217,6 +217,19 @@ export const echoed = (
   sent: JsonValue,
 ): JsonValue => (rule.sorted === true ? (sortedStrings(sent) ?? sent) : sent);
 
+/** Whether a generated integer retains the exemplar's digit count and JSON kind. */
+export const likeGeneratedInteger = (
+  value: JsonValue | undefined,
+  exemplar: JsonValue | undefined,
+): boolean => {
+  const digits = generatedIntegerDigits(value);
+  return (
+    digits !== undefined &&
+    typeof value === typeof exemplar &&
+    digits.length === generatedIntegerDigits(exemplar)?.length
+  );
+};
+
 /** An integer value as a number, from a JSON number or a string of digits. */
 export const integerOf = (value: JsonValue | undefined): number | undefined =>
   typeof value === "number" && Number.isSafeInteger(value)

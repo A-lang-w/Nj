@@ -34,7 +34,7 @@ const SOURCES: ReadonlySet<FieldRule["rule"]> = new Set([
 ]);
 
 /** The text a part spells from written fields; undefined when its field holds nothing it can spell. */
-const partText = (
+export const composedPartText = (
   part: ComposedPart,
   fields: JsonObject,
 ): string | undefined => {
@@ -52,7 +52,7 @@ export const composedValue = (
 ): string | undefined => {
   let text = "";
   for (const part of parts) {
-    const spelled = partText(part, fields);
+    const spelled = composedPartText(part, fields);
     if (spelled === undefined) return undefined;
     text += spelled;
   }

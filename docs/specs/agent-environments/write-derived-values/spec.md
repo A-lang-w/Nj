@@ -47,6 +47,11 @@ model could not explain, though the application derives it deterministically:
 
 Plans that need none of this are unchanged.
 
+Later creates must retain the exemplar's unique-value family (UUID, integer with
+the same digit count and JSON kind, or opaque token). Their recorded composed
+fields must equal the values the plan rebuilds; simulation cannot replace a
+contradictory captured value and then count that replacement as confirmation.
+
 ## Acceptance
 
 - The prompt-built Linkding, Homebox and Grafana captures serve the creates and renames they withheld, and write

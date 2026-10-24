@@ -4,6 +4,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { compareAnswers } from "./environmentCompareDiff.js";
 import { IdMap, learnIds } from "./environmentCompareIds.js";
+import { bookmark } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 
 const compare = (
   live: unknown,
@@ -32,6 +33,156 @@ describe("early-year clock formats", () => {
       ).toEqual([["clock-format", "/created_at"]]);
     },
   );
+});
+
+describe("composed response values", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "date_added",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    {
+      field: "date_modified",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    {
+      field: "web_archive_snapshot_url",
+      rule: "composed",
+      parts: [
+        { text: "https://web.archive.org/web/" },
+        { from: "date_added", as: "clock", pattern: "YYYYMMDDhhmmss" },
+        { text: "/" },
+        { from: "url", as: "value" },
+      ],
+    },
+  ];
+  const live = bookmark(
+    1,
+    "https://example.test/page",
+    "A bookmark",
+    "2026-10-20T09:00:00Z",
+  );
+  const env = bookmark(
+    1,
+    "https://example.test/page",
+    "A bookmark",
+    "2026-10-17T18:00:00Z",
+  );
+
+  it("compares coherent archive URLs through their clock parts without counting source fields twice", () => {
+    const result = compare(live, env, new IdMap(), [201, 201], rules);
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ clocks: 2, generated: 1 });
+  });
+
+  it("compares a composed ID through the source field's mapping even when the address comes first", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    const result = compare(
+      { url: "/folders/101", id: 101 },
+      { url: "/folders/1", id: 1 },
+      map,
+      [201, 201],
+      [
+        {
+          field: "url",
+          rule: "composed",
+          parts: [{ text: "/folders/" }, { from: "id", as: "value" }],
+        },
+      ],
+    );
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ ids: 1, generated: 1 });
+  });
+
+  it.each(["live", "env", "both"] as const)(
+    "reports an incoherent %s composition, including equal but stale URLs",
+    (side) => {
+      const invalid = "https://web.archive.org/web/stale";
+      const result = compare(
+        side === "env" ? live : { ...live, web_archive_snapshot_url: invalid },
+        side === "live" ? env : { ...env, web_archive_snapshot_url: invalid },
+        new IdMap(),
+        [201, 201],
+        rules,
+      );
+      expect(result.differences).toMatchObject([
+        { category: "value", pointer: "/web_archive_snapshot_url" },
+      ]);
+      expect(result.normalised.generated).toBe(0);
+    },
+  );
+
+  it("preserves actual input differences although each address correctly spells its own response", () => {
+    const different = bookmark(
+      1,
+      "https://example.test/other",
+      "A bookmark",
+      "2026-10-17T18:00:00Z",
+    );
+    const result = compare(live, different, new IdMap(), [201, 201], rules);
+    expect(result.differences.map(({ pointer }) => pointer).sort()).toEqual([
+      "/url",
+      "/web_archive_snapshot_url",
+    ]);
+    expect(result.normalised.generated).toBe(0);
+  });
+
+  it("does not normalize a source's unproven generated-looking business value", () => {
+    const result = compare(
+      { url: "/folders/token00001", token: "token00001" },
+      { url: "/folders/token00002", token: "token00002" },
+      new IdMap(),
+      [201, 201],
+      [
+        {
+          field: "url",
+          rule: "composed",
+          parts: [{ text: "/folders/" }, { from: "token", as: "value" }],
+        },
+      ],
+    );
+    expect(result.differences.map(({ pointer }) => pointer).sort()).toEqual([
+      "/token",
+      "/url",
+    ]);
+  });
+
+  it("compares the projected slug while retaining a difference in its source title", () => {
+    const result = compare(
+      {
+        title: "Hello!",
+        date_added: "2026-10-20T09:00:00Z",
+        url: "/snapshot/20261020/hello",
+      },
+      {
+        title: "Hello",
+        date_added: "2026-10-17T18:00:00Z",
+        url: "/snapshot/20261017/hello",
+      },
+      new IdMap(),
+      [201, 201],
+      [
+        rules[0]!,
+        {
+          field: "url",
+          rule: "composed",
+          parts: [
+            { text: "/snapshot/" },
+            { from: "date_added", as: "clock", pattern: "YYYYMMDD" },
+            { text: "/" },
+            { from: "title", as: "slug" },
+          ],
+        },
+      ],
+    );
+    expect(result.differences).toMatchObject([
+      { category: "value", pointer: "/title" },
+    ]);
+    expect(result.normalised).toMatchObject({ clocks: 1, generated: 1 });
+  });
 });
 
 describe("trimmed response clocks", () => {
