@@ -46,10 +46,14 @@ relation rows), and six need only a better recording. This change addresses the 
   Sort and direction parameters share one vocabulary and are never learned as inert. A create placed by disagreeing
   sorts or a random id falls back to `last`.
 - **Bulk writes.** A write at a type's collection whose body names entities by id, as an id array or objects carrying
-  the id field, deletes or updates each one, all or none; serving refuses it unless every id is held. Body ids are
-  taken as written, and a call naming one entity twice is refused. Each entity's generated values come from that
-  entity, sharing the call's clock and counters. A delete requires the members its exemplar sent besides the ids, with
-  their recorded values. Comparison translates a bulk body's ids with the mapping of the collection the write targets.
+  the id field, deletes or updates each one, all or none; serving refuses it unless every id is held. Body ids are taken
+  as written, and a call naming one entity twice is refused. Each entity's generated values come from that entity,
+  sharing the call's clock and counters. A delete requires the members its exemplar sent besides the ids, with their
+  recorded values. A recorded response is served when it names none of the ids and counts nothing, or is an array with
+  one element per entity the body names, in the body's order, each that entity with the first element's members or its
+  id spelled as the first spells its own; serving renders each element from the entity the call wrote, and any other
+  response naming the ids refuses the tool. Comparison translates a bulk body's ids with the mapping of the collection
+  the write targets.
 - **Item actions.** A write to an item path plus a literal segment that names no collection, whose calls answer
   nothing or the entity (never a 201, and with every field its item read always shows), updates that entity; a scalar
   it changes without sending is set on every call. It is served only once a call found every field it sets already at

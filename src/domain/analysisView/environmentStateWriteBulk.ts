@@ -1,8 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
-  at,
   isObject,
-  locateItem,
   same,
   scalarText,
   segmentsOf,
@@ -27,6 +25,7 @@ import {
   type WriteDraft,
   type WriteStep,
 } from "./environmentStateWriteEffects.js";
+import { responseShapeOf } from "./environmentStateWriteExplain.js";
 import type { WriteBody, WriteResponse } from "./environmentStateWriteRules.js";
 
 /** Whether any scalar in a body passes the test. */
@@ -45,14 +44,59 @@ const holds = (
 };
 
 /**
+ * A bulk response classified by its first element when it is an array with one element per named
+ * entity and that element is the first entity or its id; else as the exemplar entity's write classified it.
+ */
+const elementResponse = (
+  response: WriteResponse,
+  body: JsonValue | undefined,
+  named: readonly NamedEntity[],
+  idField: string,
+): WriteResponse => {
+  const [first] = named;
+  if (
+    response.shape === "empty" ||
+    first === undefined ||
+    !Array.isArray(body) ||
+    body.length !== named.length
+  )
+    return response;
+  const element = responseShapeOf(response.ordinal, body[0], false, {
+    idField,
+    id: first.id,
+  });
+  return element.shape !== "recorded" && element.pointer === ""
+    ? { ...element, pointer: "/0" }
+    : response;
+};
+
+/** Whether serving, rendering each element as the first shows its entity, renders this one as recorded. */
+const rendersLike = (
+  element: JsonValue | undefined,
+  template: JsonValue | undefined,
+  shown: {
+    readonly shape: WriteResponse["shape"];
+    readonly id: string;
+    readonly idField: string;
+  },
+): boolean =>
+  shown.shape === "identity"
+    ? scalarText(element) === shown.id && typeof element === typeof template
+    : isObject(element) &&
+      isObject(template) &&
+      scalarText(element[shown.idField]) === shown.id &&
+      same(Object.keys(element).toSorted(), Object.keys(template).toSorted());
+
+/**
  * Whether serving can answer a bulk call with this response for any ids: no body, one that names
- * none of them and counts nothing it wrote, or an array with one element per named entity, each
- * showing its id where the first does.
+ * none of them and counts nothing it wrote, or an array with one element per named entity, in
+ * order, each showing its entity or id as the first does.
  */
 export const bulkResponseFits = (
   response: WriteResponse,
   body: JsonValue | undefined,
   named: readonly NamedEntity[],
+  idField: string,
 ): boolean => {
   if (response.shape === "empty") return true;
   const ids = new Set(named.map(({ id }) => id));
@@ -61,16 +105,14 @@ export const bulkResponseFits = (
       body,
       (scalar) => ids.has(scalarText(scalar) ?? "") || scalar === named.length,
     );
-  if (response.pointer !== "/0" || !Array.isArray(body)) return false;
-  return (
-    body.length === named.length &&
-    named.every(({ id }, index) => {
-      const element = body[index];
-      if (response.shape === "identity") return scalarText(element) === id;
-      const located =
-        element === undefined ? undefined : locateItem(element, id);
-      return located?.pointer === "" && isObject(at(element!, ""));
-    })
+  if (
+    response.pointer !== "/0" ||
+    !Array.isArray(body) ||
+    body.length !== named.length
+  )
+    return false;
+  return named.every(({ id }, index) =>
+    rendersLike(body[index], body[0], { shape: response.shape, id, idField }),
   );
 };
 
@@ -150,15 +192,18 @@ export const applyBulk = (
     draft.plan.body = deleteBody(options, identity);
     retainFixed(context, draft.plan.body.fixed);
   }
-  // The plan's response is the exemplar's; serving answers any ids with it only in a shape it can render for them.
+  // The plan's response is the exemplar's, read element by element; serving answers any ids with it only in a shape it can render for them.
   const { response } = draft.plan;
-  if (
-    !wasBuilt &&
-    response !== null &&
-    !context.io.withBody(step.record.ordinal, (recorded) =>
-      bulkResponseFits(response, recorded, named),
-    )
-  )
-    refuse(draft, step, "body-unusable");
+  if (!wasBuilt && response !== null) {
+    const idField = context.idField(type);
+    const fitted = context.io.withBody(step.record.ordinal, (recorded) => {
+      const elements = elementResponse(response, recorded, named, idField);
+      return bulkResponseFits(elements, recorded, named, idField)
+        ? elements
+        : undefined;
+    });
+    if (fitted === undefined) refuse(draft, step, "body-unusable");
+    else draft.plan.response = fitted;
+  }
   return results;
 };

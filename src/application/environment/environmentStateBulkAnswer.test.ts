@@ -5,8 +5,10 @@ import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
+  BOTH_BOOKS_RENAMED_ROWS,
   FIRST_BOOK,
   SECOND_BOOK,
+  bothBooksDeleted,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -172,6 +174,41 @@ describe("served bulk write targets", () => {
     expect(store.byteLength()).toBe(
       Buffer.byteLength(JSON.stringify(store.snapshot()), "utf8"),
     );
+  });
+});
+
+describe("served bulk writes whose recordings answered every entity", () => {
+  it("answers an update with each entity it wrote, in the call's order", () => {
+    const books = servedFrom(BOTH_BOOKS_RENAMED_ROWS);
+    const answer = books.answer("patch_books", {
+      body: { ids: [2, 1], name: "Other Book" },
+    });
+    expect(answer).toMatchObject({
+      body: [
+        { id: 2, name: "Other Book", slug: "other-book" },
+        { id: 1, name: "Other Book", slug: "other-book" },
+      ],
+      state: { source: "state", view: "update", ids: ["2", "1"] },
+    });
+    expect(answer.body).toEqual(
+      ["2", "1"].map((id) => books.answer("get_books_by_id", { id }).body),
+    );
+  });
+
+  it("answers a delete with the rows or ids it names, never the recorded ones", () => {
+    const rows = servedFrom(
+      bothBooksDeleted([{ id: 1 }, { id: 2 }], [{ id: 1 }, { id: 2 }]),
+    );
+    expect(rows.answer("delete_books", { body: [{ id: 2 }] }).body).toEqual([
+      { id: 2 },
+    ]);
+    expect(rows.store.ofType("/api/books").map((entry) => entry.id)).toEqual([
+      "1",
+    ]);
+    const ids = servedFrom(bothBooksDeleted([1, 2], { ids: [1, 2] }));
+    expect(ids.answer("delete_books", { body: { ids: [2] } }).body).toEqual([
+      2,
+    ]);
   });
 });
 
