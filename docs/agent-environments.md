@@ -125,8 +125,9 @@ the replayed body is the bytes the browser exposes for each response, with any
 declared secret replaced by its redaction marker (a body that redaction had to
 empty replays no body).
 
-Each record takes its start time from when the scenario observed the request
-and its duration from the browser's timing, so the state orders and overlaps
+Each record takes its start and duration from the browser's timing (the time
+the scenario observed the request where the browser reported no start), so the
+state orders and overlaps
 records as it does a HAR's and learns a write clock: an update the application
 stamps with a modification time can be served. A scenario captured before
 these times were recorded has none; its records keep request order and the

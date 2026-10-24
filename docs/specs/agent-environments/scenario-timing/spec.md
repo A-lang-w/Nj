@@ -16,17 +16,20 @@ scenario capture learns the clock a HAR does.
 ## Requirements
 
 - Each `request` event carries `observed_at`, the ISO wall-clock time the
-  provider observed the request start; Playwright reports no start time until
-  the response.
-- Each `request-finished` and `request-failed` event carries `elapsed_ms`, the
-  browser's time from the request start to the end of its response, when the
-  browser reports one (`timing().responseEnd >= 0`).
-- Both fields are optional in the schema, so Evidence captured before them
-  still parses and is read exactly as before.
-- Scenario records take `startedDateTime` from `observed_at` and `time` from the
-  transaction's single finished or failed event (0 without one), and say so in
-  a limitation; a capture whose requests all carry `observed_at` gets the
-  recorded-start-time timeline and a write clock.
+  provider observed the request start; Playwright reports the browser's start
+  only once a request ends.
+- Each `request-finished` and `request-failed` event carries `started_at`, the
+  browser's wall-clock start (`timing().startTime > 0`), and `elapsed_ms`, its
+  time from that start to the end of the response (`timing().responseEnd >= 0`),
+  when the browser reports them.
+- The fields are optional in the schema, so Evidence captured before them still
+  parses and is read exactly as before. REA versions before them refuse
+  Evidence that carries them.
+- Scenario records take `startedDateTime` from the transaction's single
+  finished or failed event's `started_at`, else from `observed_at`, and `time`
+  from its `elapsed_ms` (0 without one), and say so in a limitation; a capture
+  whose requests are all timed gets the recorded-start-time timeline and a
+  write clock.
 - Scenario comparisons ignore both fields, as a committed built-in rule
   (`ignore_network_request_timing`).
 - The added metadata is charged to the event budgets as other metadata is.
@@ -36,5 +39,6 @@ scenario capture learns the clock a HAR does.
 - No change to HAR captures, to how the state uses times, or to what a
   record's timing means for overlap or clock rules.
 - No retroactive timing of captures made before this change.
-- No browser start times from response timing events: `observed_at` is the
-  provider's observation, a few milliseconds after the browser started.
+- No browser start for a request that never ended: its record starts at
+  `observed_at`, which can trail the browser's start by tens of milliseconds
+  while the provider reads other responses, with no duration.
