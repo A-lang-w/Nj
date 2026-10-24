@@ -54,7 +54,8 @@ export const runSetup = async (
 
   let cleanup: AnalysisError | undefined;
   try {
-    cleanup = await host.close?.();
+    const report = await host.close?.();
+    cleanup = report === undefined ? undefined : setupCleanupError(report);
   } catch (cause: unknown) {
     cleanup = setupCleanupError(cause);
   }

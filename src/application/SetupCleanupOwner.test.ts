@@ -153,31 +153,35 @@ it("keeps finalization cancellation unresolved and still attempts the other chil
   expect(report?.cleanupIncomplete).toBe(false);
 });
 
-it("observes exact concurrent recovery before aggregate binding", async () => {
-  const source = new ProviderCleanupError("fixture", ["/shared"], {});
-  const lease = new AnalysisCleanupLease(async () => {}, ["/shared"]);
-  new AnalysisCleanupLeaseGroup(source, [lease]);
-  let finish: (() => void) | undefined;
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  let sourceCalls = 0;
-  const owner = new SetupCleanupOwner([
-    {
-      close: async () => {
-        sourceCalls++;
-        throw source;
+it.each(["group", "direct"])(
+  "observes exact concurrent recovery before aggregate binding: %s",
+  async (binding) => {
+    const source = new ProviderCleanupError("fixture", ["/shared"], {});
+    const lease = new AnalysisCleanupLease(async () => {}, ["/shared"]);
+    if (binding === "direct") lease.bindCleanupError(source);
+    else new AnalysisCleanupLeaseGroup(source, [lease]);
+    let finish: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let sourceCalls = 0;
+    const owner = new SetupCleanupOwner([
+      {
+        close: async () => {
+          sourceCalls++;
+          throw source;
+        },
       },
-    },
-    { close: () => gate },
-  ]);
-  const closing = owner.close();
-  await lease.release();
-  finish?.();
-  expect(await closing).toBeUndefined();
-  expect(await owner.close()).toBeUndefined();
-  expect(sourceCalls).toBe(1);
-});
+      { close: () => gate },
+    ]);
+    const closing = owner.close();
+    await lease.release();
+    finish?.();
+    expect(await closing).toBeUndefined();
+    expect(await owner.close()).toBeUndefined();
+    expect(sourceCalls).toBe(1);
+  },
+);
 
 it.each(["pending", "already recovered"] as const)(
   "keeps delegated cleanup pending when the next report has an independent owner: %s",

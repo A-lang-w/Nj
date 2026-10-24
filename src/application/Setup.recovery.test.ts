@@ -748,3 +748,29 @@ it.each(["return", "throw"] as const)(
     expect(await runSetup(input, new Host())).toEqual(control);
   },
 );
+
+it.each(["return", "throw"] as const)(
+  "reports ordinary typed host close failures consistently: %s",
+  async (outcome) => {
+    const failure = new ConfigurationError(
+      "Controlled close configuration failure",
+    );
+    class Host extends FakeSetupHost {
+      close = async () => {
+        if (outcome === "throw") throw failure;
+        return failure;
+      };
+    }
+    const input = options(true);
+    const control = await runSetup(input, new FakeSetupHost());
+    const result = await runSetup(input, new Host());
+    expect(result).toMatchObject({
+      status: "needs_human",
+      code: control.code ?? "cleanup_failed",
+      cleanup: { resources: [] },
+    });
+    expect(result.cleanup?.reason).toContain(failure.message);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.hasCleanupOwner).toBe(false);
+  },
+);
