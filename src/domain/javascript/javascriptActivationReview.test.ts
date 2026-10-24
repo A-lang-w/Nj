@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createWebPageInspection } from "../../../tests/support/browser/webPageInspection.js";
-import { analyzeCapturedWebBundle } from "../webBundleAnalyzer.js";
+import { analyzeWebBundleFixture } from "../../../tests/support/browser/analyzeWebBundleFixture.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
@@ -1272,7 +1272,7 @@ for (const consumer of ["source", "captured"] as const) {
           expected,
         );
       } else {
-        const captured = analyzeCapturedWebBundle(
+        const captured = analyzeWebBundleFixture(
           createWebPageInspection([
             {
               source,
