@@ -23,8 +23,10 @@ import {
   at,
   identityCandidates,
   replaceAt,
+  renderStateList,
   type JsonObject,
 } from "./environmentStateRules.js";
+import { environmentStateFields } from "./environmentStateView.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -145,6 +147,18 @@ it("extracts the state the Grafana-shaped capture's reads observed", () => {
       limitation.startsWith("Body shapes"),
     ),
   ).toEqual([]);
+});
+
+it("keeps collections with repeated path separators distinct", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/books", [{ id: 1, title: "Single separator" }]],
+      ["GET", "/api//books", [{ id: 2, title: "Repeated separator" }]],
+    ]),
+  );
+  expect(state.types.map((type) => type.collection_template)).toEqual(
+    expect.arrayContaining(["/api/books", "/api//books"]),
+  );
 });
 
 it("ends a type's state at the first write under its root, not at unrelated writes", () => {
@@ -318,6 +332,25 @@ it("lists the whole collection with its counter only when every recording did", 
     expect.objectContaining({ shape: "list", membership: "recorded" }),
   );
 });
+
+it.each([1, "1", "001"])(
+  "retains item count representation %j in extracted list plans",
+  (total) => {
+    const body = { total, items: [{ id: 1, title: "One" }] };
+    const state = stateOf(captureOf([["GET", "/api/items", body]]));
+    const view = state.views.find((candidate) => candidate.shape === "list");
+    if (view?.shape !== "list") throw new Error("Expected an item list view");
+    expect(view.counters).toEqual(["total"]);
+    expect(renderStateList(view, body, body.items)).toEqual(body);
+    const added = renderStateList(view, body, [
+      ...body.items,
+      { id: 2, title: "Two" },
+    ]);
+    expect(added).toMatchObject({
+      total: typeof total === "string" ? "2".padStart(total.length, "0") : 2,
+    });
+  },
+);
 
 it("leaves recorded the views it cannot reproduce, with the reason", () => {
   const state = stateOf(
@@ -1009,6 +1042,78 @@ it("accepts stable membership across another root's write and changes confined b
   expect(state.entities.map((entity) => entity.id)).toEqual(["1"]);
 });
 
+it.each(["offset", "start", "_start"])(
+  "does not let an empty ?%s=1 page prove membership all",
+  (name) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", "/api/orgs/1/books/1", { id: 1, name: "Alpha" }],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+      ]),
+    );
+    expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
+      shape: "list",
+      membership: "recorded",
+    });
+  },
+);
+
+it("does not let an empty ?page=2 page prove membership all", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/orgs/1/books/1", { id: 1, name: "Alpha" }],
+      ["GET", "/api/orgs/2/books?page=2", []],
+    ]),
+  );
+  expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+  });
+});
+
+it("does not let ?page=2&per_page=1 prove membership all when it lists the collection", () => {
+  const state = stateOf(
+    captureOf([
+      [
+        "GET",
+        "/api/orgs/1/books?page=2&per_page=1",
+        [{ id: 1, name: "Alpha" }],
+      ],
+      ["GET", "/api/orgs/1/books/1", { id: 1, name: "Alpha" }],
+    ]),
+  );
+  expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+  });
+});
+
+it("keeps page 1 membership recorded because the page base is unproven", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/orgs/1/books?page=1", [{ id: 1, name: "Alpha" }]],
+      ["GET", "/api/orgs/1/books/1", { id: 1, name: "Alpha" }],
+    ]),
+  );
+  expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+  });
+});
+
+it("keeps membership all when a zero offset lists the collection", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/orgs/1/books?offset=0", [{ id: 1, name: "Alpha" }]],
+      ["GET", "/api/orgs/1/books/1", { id: 1, name: "Alpha" }],
+    ]),
+  );
+  expect(viewOf(state, "get_orgs_books_by_id")).toMatchObject({
+    shape: "list",
+    membership: "all",
+  });
+});
+
 it("keeps membership checks specific to the full request line", () => {
   const state = stateOf(
     captureOf([
@@ -1135,3 +1240,33 @@ it("keeps a document out of the state when its value changed across a write unde
     { tool: "get_me", value: { credits: 10, plan: "free" }, record_ordinal: 2 },
   ]);
 });
+
+it("refuses a view clock spelling wider than nine fraction digits", () => {
+  const item = stateOf().views.find((view) => view.shape === "item")!;
+  const spelled = (fraction: number) => [
+    {
+      ...item,
+      clock_formats: {
+        created: { kind: "iso", separator: "T", fraction, zone: "Z" },
+      },
+    },
+  ];
+  expect(environmentStateFields.views.safeParse(spelled(9)).success).toBe(true);
+  expect(environmentStateFields.views.safeParse(spelled(10)).success).toBe(
+    false,
+  );
+});
+
+it.each(["+00:60", "+24:00", "+99:99"])(
+  "refuses a view clock spelling with invalid zone %s",
+  (zone) => {
+    const item = stateOf().views.find((view) => view.shape === "item")!;
+    const view = {
+      ...item,
+      clock_formats: {
+        created: { kind: "iso", separator: "T", fraction: 0, zone },
+      },
+    };
+    expect(environmentStateFields.views.safeParse([view]).success).toBe(false);
+  },
+);

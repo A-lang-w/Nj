@@ -1,6 +1,10 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { javaScriptSemanticNodeId } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
+import type {
+  JavaScriptSemanticIr,
+  JavaScriptSemanticProjectedResultBinding,
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -35,6 +39,26 @@ export interface SemanticFlowProjectionContext {
     range: JavaScriptSourceRange,
   ) => JavaScriptSemanticGraphNode | undefined;
 }
+
+/** Project result destructuring consistently for timers, child processes, and requests. */
+export const projectSemanticResultBindings = (
+  context: Pick<SemanticFlowProjectionContext, "state" | "bindingNodes">,
+  source: JavaScriptSemanticGraphNode | undefined,
+  bindings: readonly JavaScriptSemanticProjectedResultBinding[],
+): void => {
+  for (const projected of bindings)
+    addSemanticGraphRelation(context.state, {
+      source,
+      target: context.bindingNodes.get(projected.bindingId),
+      relation: "destructures",
+      resolution:
+        projected.resolution === "complete" ? "resolved" : "candidate",
+      properties: {
+        projection_path: [...projected.projectionPath],
+        projection_resolution: projected.resolution,
+      },
+    });
+};
 
 /** Project explicit static Promise/task ownership without runtime claims. */
 export const projectSemanticPromises = (
@@ -200,9 +224,6 @@ interface ObjectReadIndex {
 
 const objectReadIndexes = new WeakMap<JavaScriptSemanticIr, ObjectReadIndex>();
 
-const objectReadRangeKey = (location: JavaScriptSourceRange): string =>
-  `${String(location.start.line)}:${String(location.start.column)}:${String(location.end.line)}:${String(location.end.column)}`;
-
 /**
  * The object projection owns a member read's occurrence. Index it once per
  * file so return and argument flow can connect that expression without
@@ -229,7 +250,7 @@ const objectReadOccurrences = (
       }),
     );
     if (node !== undefined)
-      nodes.set(objectReadRangeKey(operation.location), node);
+      nodes.set(javascriptSourceRangeKey(operation.location), node);
   }
   objectReadIndexes.set(context.ir, { state: context.state, nodes });
   return nodes;
@@ -242,7 +263,7 @@ export const semanticObjectReadOccurrence = (
 ): JavaScriptSemanticGraphNode | undefined =>
   location === null
     ? undefined
-    : objectReadOccurrences(context).get(objectReadRangeKey(location));
+    : objectReadOccurrences(context).get(javascriptSourceRangeKey(location));
 
 /** Link direct return expressions to their retained semantic references. */
 export const projectSemanticReturnValues = (

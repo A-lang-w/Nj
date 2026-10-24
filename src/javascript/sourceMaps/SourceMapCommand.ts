@@ -6,7 +6,6 @@ import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -22,7 +21,10 @@ import {
   webSourceMapDecodeTimeoutRecovery,
 } from "../../domain/webSourceLocation.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../../process/RuntimeControlUnavailableError.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
@@ -152,6 +154,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
+  #cleanupAnchor: SourceMapCleanupFailure | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
   readonly #onInterruption: () => void;
@@ -310,13 +313,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
         webSourceMapDecodeTimeoutRecovery(this.decodeTimeoutMs),
       );
     if (cause instanceof AnalysisError) return cause;
-    return cause instanceof PrivateRuntimeRootUnavailableError
-      ? new AnalysisCapabilityUnavailableError(
-          PROVIDER,
-          OPERATION,
-          cause.message,
-          { cause, retryable: cause.retryable },
-        )
+    return cause instanceof RuntimeControlUnavailableError
+      ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,
           diagnostics: { map_path: this.path, error_message: message(cause) },
@@ -465,6 +463,14 @@ class OwnedCodec implements SourceMapCleanupOwner {
     );
   }
 
+  /** Current ownership, independent of historical cleanup diagnostics. */
+  get cleanupResources(): readonly string[] {
+    return [
+      ...(this.#supervisor === undefined ? [] : [this.#runId]),
+      ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
+    ];
+  }
+
   async close(
     previousError: string | null,
   ): Promise<ProviderCleanupError | undefined> {
@@ -486,21 +492,20 @@ class OwnedCodec implements SourceMapCleanupOwner {
         failures.push(message(cause));
       }
     }
-    return failures.length === 0
-      ? undefined
-      : new SourceMapCleanupFailure(
-          this,
-          [
-            this.#runId,
-            ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
-          ],
-          {
-            map_path: this.path,
-            cleanup_failures: failures,
-            previous_error: previousError,
-            codec_pid: this.#supervisor?.launch.process.pid ?? null,
-          },
-        );
+    if (failures.length === 0) {
+      this.#cleanupAnchor?.resolveCleanup();
+      this.#cleanupAnchor = undefined;
+      return undefined;
+    }
+    const failure = new SourceMapCleanupFailure(this, this.cleanupResources, {
+      map_path: this.path,
+      cleanup_failures: failures,
+      previous_error: previousError,
+      codec_pid: this.#supervisor?.launch.process.pid ?? null,
+    }).bindCleanupResourceOwner(this);
+    if (this.#cleanupAnchor === undefined) this.#cleanupAnchor = failure;
+    else failure.bindCleanupDependencies([this.#cleanupAnchor], this);
+    return failure;
   }
 }
 const message = (cause: unknown): string =>

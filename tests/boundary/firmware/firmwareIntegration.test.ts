@@ -7,6 +7,7 @@ import {
 } from "../../fixtures/firmware/provider.js";
 import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
+import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -98,6 +99,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
   const normalized = firmwareResultSchemas.inspect_firmware_regions.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "binwalk",
+    version: "3.1.0",
+    executable_path: fixture.commands.binwalk,
+  });
   expect(normalized.regions[0]).toMatchObject({
     offset: 2,
     reported_size: 4,
@@ -109,7 +115,11 @@ it("binds region observations to exact bytes and preserves provider-reported unc
     report: [{ Analysis: { file_map: [{ id: "hit" }] } }],
   });
   expect(fixture.launches[1]?.args).toEqual(
-    expect.arrayContaining(["--as=1073741824", "--threads", "1"]),
+    expect.arrayContaining([
+      `--as=${String(FIRMWARE_LIMITS.addressSpaceBytes)}:${String(FIRMWARE_LIMITS.addressSpaceBytes)}`,
+      "--threads",
+      "1",
+    ]),
   );
   await assertFirmwareCleanup(fixture.launches);
 });
@@ -140,6 +150,11 @@ it("extracts a selected interval with verified file identity and parent-byte lin
   const normalized = firmwareResultSchemas.extract_firmware.parse(
     result.value.normalized_result,
   );
+  expect(normalized.engine).toMatchObject({
+    name: "unblob",
+    version: "26.6.4",
+    executable_path: fixture.commands.unblob,
+  });
   expect(normalized.selection).toMatchObject({ offset: 2, length: 4 });
   expect(normalized.files[0]).toMatchObject({
     relative_path: "rootfs/config",
@@ -509,6 +524,78 @@ it("reports a failed multi-file stage as an extractor-failure gap", async () => 
   );
 });
 
+it.each(["task-error", "task-warning"])(
+  "preserves standalone diagnostic recovery without inventing stage ownership: %s",
+  async (mode) => {
+    const fixture = await firmwareFixture(mode);
+    const result = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const normalized = firmwareResultSchemas.extract_firmware.parse(
+      result.value.normalized_result,
+    );
+    const failures = gapsWithContinuations(normalized).filter(
+      (gap) => gap.kind === "extractor-failure",
+    );
+    expect(normalized.diagnostics).toContainEqual(
+      expect.objectContaining({
+        input_path: "$input",
+        report: expect.objectContaining({
+          __typename__:
+            mode === "task-error"
+              ? "UnknownError"
+              : "ExtractCommandFailedReport",
+        }),
+      }),
+    );
+    if (mode === "task-error") {
+      expect(failures).toEqual([
+        expect.objectContaining({
+          input_path: "$input",
+          handler: null,
+          provider_id: null,
+          range: null,
+          root_file_range: null,
+          dependencies: [],
+          continuation: expect.stringContaining("diagnostics"),
+        }),
+      ]);
+    } else expect(failures).toEqual([]);
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
+
+it("retains independent failures beside dependencies at each extraction owner", async () => {
+  const fixture = await firmwareFixture("mixed-failures");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (!result.ok) throw result.error;
+  const normalized = firmwareResultSchemas.extract_firmware.parse(
+    result.value.normalized_result,
+  );
+  const gaps = gapsWithContinuations(normalized);
+  expect(gaps).toHaveLength(4);
+  for (const provider_id of ["gzip-id", "mixed-id"]) {
+    const owned = gaps.filter((gap) => gap.provider_id === provider_id);
+    expect(owned.map((gap) => gap.kind).sort()).toEqual([
+      "extractor-failure",
+      "missing-extractor-dependency",
+    ]);
+    for (const gap of owned) {
+      expect(gap.input_path).toBe("$input");
+      expect(gap.range).toEqual(
+        provider_id === "mixed-id" ? null : normalized.chunks[0]?.range,
+      );
+    }
+  }
+  expect(normalized.chunks[0]?.extraction_failed).toBe(true);
+  await assertFirmwareCleanup(fixture.launches);
+});
+
 it("carries the owning multi-file stage on a task-level dependency gap", async () => {
   const fixture = await firmwareFixture("multi-file-dependency");
   const result = await fixture.service.execute("extract_firmware", {
@@ -614,6 +701,12 @@ it.each(["depth", "dependency", "link"])(
           continuation: expect.stringContaining("installs nothing"),
         },
       ]);
+    const linkLimitation = expect.stringContaining(
+      "Unblob rewrites absolute targets relative to the extraction root",
+    );
+    if (mode === "link")
+      expect(result.value.limitations).toContainEqual(linkLimitation);
+    else expect(result.value.limitations).not.toContainEqual(linkLimitation);
     if (mode === "link") {
       expect(normalized.unpublished_entries).toEqual([
         {
@@ -694,12 +787,16 @@ it("preserves existing output and rejects invalid intervals before invoking extr
   const previous = fixture.launches.length;
   const invalid = await fixture.service.execute("extract_firmware", {
     path: fixture.path,
-    output_directory: fixture.output,
+    output_directory: `${fixture.output}-invalid-range`,
     range: { offset: 100, length: 1 },
   });
   expect(invalid).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisInputError" },
+  });
+  if (invalid.ok) throw new Error("Expected out-of-file-range rejection");
+  expect(projectAnalysisError(invalid.error)).toMatchObject({
+    details: { issues: [{ path: ["range"], reason: "out_of_range" }] },
   });
   expect(fixture.launches).toHaveLength(previous);
   await assertFirmwareCleanup(fixture.launches);

@@ -110,6 +110,54 @@ const withBrokenHelper = async (app: string): Promise<void> => {
   await writeFiles(app, { "Contents/Helpers/broken": broken });
 };
 
+cliTest.skipIf(process.platform !== "linux")(
+  "keeps unrepresentable bundle entries from establishing complete executable-root coverage",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    await writeFile(
+      Buffer.concat([
+        Buffer.from(`${app}/Contents/Helpers/`),
+        Buffer.from([0xff]),
+      ]),
+      machoImage({}),
+    );
+    const observed = await runFileCli(cli, {
+      arguments: ["trace-dylib-resolution", app, "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(observed.exitCode, observed.stderr).toBe(0);
+    const result = dylibResolutionResultSchema.parse(
+      parseEvidence(observed.json).normalized_result,
+    );
+    expect(result.coverage.status).toBe("partial");
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("not valid UTF-8"),
+    );
+  },
+);
+
+cliTest(
+  "reports skipped executable-root symlink subtrees as partial discovery",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    await symlink("unexamined", join(app, "Contents", "LinkedResources"));
+    const observed = await runFileCli(cli, {
+      arguments: ["trace-dylib-resolution", app, "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(observed.exitCode, observed.stderr).toBe(0);
+    const result = dylibResolutionResultSchema.parse(
+      parseEvidence(observed.json).normalized_result,
+    );
+    expect(result.coverage.status).toBe("partial");
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining(
+        "their root roles and possible descendants are unknown",
+      ),
+    );
+  },
+);
+
 cliTest(
   "does not turn U+FEFF-prefixed strings into dyld path tokens",
   async ({ cli }) => {
@@ -158,6 +206,68 @@ cliTest(
     );
     expect(helper).toBeDefined();
     expect(helper?.resolution.image).toBeNull();
+  },
+);
+
+cliTest(
+  "resolves dependency names and rpaths containing Unicode line separators",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    const library = "lib\u2028core.dylib";
+    const directory = "Libraries\u2029Nested";
+    await writeFiles(app, {
+      "Contents/MacOS/App": machoImage({
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, `@loader_path/${library}`),
+          rpathCommand(`@executable_path/${directory}`),
+          dylibCommand(LC.LOAD_DYLIB, "@rpath/libsearch.dylib"),
+        ],
+      }),
+      [`Contents/MacOS/${library}`]: machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+      [`Contents/MacOS/${directory}/libsearch.dylib`]: machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    });
+    const output = await cli.run({
+      arguments: [
+        "trace-dylib-resolution",
+        app,
+        "--root",
+        "Contents/MacOS/App",
+        "--json",
+      ],
+      environment: ENVIRONMENT,
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    expect(
+      trace.edges.map(({ install_name, resolution }) => ({
+        install_name,
+        resolution,
+      })),
+    ).toEqual([
+      {
+        install_name: `@loader_path/${library}`,
+        resolution: {
+          status: "resolved",
+          image: `Contents/MacOS/${library}`,
+        },
+      },
+      {
+        install_name: "@rpath/libsearch.dylib",
+        resolution: {
+          status: "resolved",
+          image: `Contents/MacOS/${directory}/libsearch.dylib`,
+        },
+      },
+    ]);
   },
 );
 

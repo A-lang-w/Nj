@@ -26,7 +26,12 @@ export const REPLAY_CATALOG_INSTRUCTIONS =
 
 /** JSON Schema advertised for one tool argument. */
 export interface EnvironmentToolProperty {
-  readonly type: "string" | "object";
+  readonly type?: "string" | "object" | "array";
+  readonly items?: { readonly type: "string" };
+  readonly oneOf?: readonly (
+    | { readonly type: "string" }
+    | { readonly type: "array"; readonly items: { readonly type: "string" } }
+  )[];
   readonly description: string;
 }
 
@@ -125,7 +130,7 @@ const describeText = (
 };
 
 /** Sample whole values before joining; keep full lists in the Evidence that owns them. */
-const describeList = <Value>(
+export const describeList = <Value>(
   values: Iterable<Value>,
   count: number,
   display: (value: Value) => string = String,
@@ -156,7 +161,7 @@ const describeList = <Value>(
  * A captured name as a JSON string, so a separator, quote or newline in it cannot read as more of the
  * description. A name too long for a sample is left as it is: the sample refuses it either way.
  */
-const quotedName = (name: string): string =>
+export const quotedName = (name: string): string =>
   name.length > DESCRIPTION_SAMPLE_BYTES ? name : JSON.stringify(name);
 
 /** Field names of the objects in first-seen order; the recorded bodies stay in the capture Evidence. */
@@ -224,6 +229,15 @@ const describeResponses = (
       : `status ${String(found.status)} returns`;
   return `${returns} ${describeJson(found.value)}; ${recorded}`;
 };
+
+/** One tool's description: method, path, response summary, what it does, the records it cites and the Evidence. */
+const toolDescription = (
+  source: EnvironmentSource,
+  tool: EnvironmentManifestTool,
+  describe: EnvironmentCatalogOptions["describe"],
+  answers: string,
+): string =>
+  `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
 
 /** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
 export const MAX_ARGUMENT_NAME_CHARS = 64;
@@ -297,6 +311,18 @@ export const environmentToolArguments = (
   };
 };
 
+/** Whether the caller supplied multiple occurrences for a captured query name. */
+export const hasRepeatedQueryArgument = (
+  tool: EnvironmentManifestTool,
+  args: Readonly<Record<string, unknown>>,
+): boolean => {
+  for (const argument of environmentToolArguments(tool).query.values()) {
+    const value = args[argument];
+    if (Array.isArray(value) && value.length > 1) return true;
+  }
+  return false;
+};
+
 /** Lazily render properties so admission precedes retaining a whole schema. */
 function* environmentToolProperties(
   tool: EnvironmentManifestTool,
@@ -315,8 +341,11 @@ function* environmentToolProperties(
     yield [
       argument,
       {
-        type: "string",
-        description: `Query parameter ${describeText(name, "query name")}; optional, matched against the recorded query on replay.`,
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+        description: `Query parameter ${describeText(name, "query name")}; optional. Supply one string for one occurrence or an array to preserve repeated values in captured order; repeated values replay their recorded request.`,
       },
       false,
     ];
@@ -350,6 +379,8 @@ export type EnvironmentDataPlane = "none" | "state";
 export interface EnvironmentCatalogOptions {
   readonly operation?: string;
   readonly dataPlane?: EnvironmentDataPlane;
+  /** What a served tool does, in place of how it answers; undefined keeps the answering sentence. */
+  readonly describe?: (tool: EnvironmentManifestTool) => string | undefined;
 }
 
 /** Admit complete discovery before binding; six bytes per UTF-16 unit covers JSON escaping and UTF-8 expansion. */
@@ -359,6 +390,7 @@ export const environmentToolDefinitions = (
   {
     operation = ENVIRONMENT_SERVE_OPERATION,
     dataPlane = "none",
+    describe,
   }: EnvironmentCatalogOptions = {},
 ): Result<
   readonly EnvironmentToolDefinition[],
@@ -396,7 +428,7 @@ export const environmentToolDefinitions = (
     return refused();
   const answers =
     dataPlane === "state"
-      ? "answers from the served environment state where the state backs this tool, otherwise replays retained records"
+      ? "answers from the served environment state where the state backs this tool; state.source, not replay.exact_match, identifies state vs recording"
       : "replays retained records";
   const definitions: EnvironmentToolDefinition[] = [];
   for (const tool of source.manifest.tools) {
@@ -414,7 +446,7 @@ export const environmentToolDefinitions = (
     // A lower bound rejects enormous argument lists before constructing their alias map.
     if (!reserve(count * EMPTY_PROPERTY_BYTES)) return refused();
     // The response summary is bounded by its samples and charged with the whole description.
-    const description = `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
+    const description = toolDescription(source, tool, describe, answers);
     if (!text(description)) return refused();
     const args = environmentToolArguments(tool);
     const properties = new Map<string, EnvironmentToolProperty>();
