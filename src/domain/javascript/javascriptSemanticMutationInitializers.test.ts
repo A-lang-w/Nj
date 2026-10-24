@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   semanticBindingAtRead,
+  semanticEffectTimingAtStore,
   semanticMutationInitializers,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -192,3 +193,45 @@ it.each([false, true])(
     expect(facts === undefined).toBe(first);
   },
 );
+
+it("preserves target identity and unknown positions across cached store queries", () => {
+  const parsed = parseJavaScriptSource(
+    "const box={};[box.a,box.b,box.c]=[1,2,3];[box.c,box.b,box.a]=[4,5,6];",
+  );
+  if (parsed === null) throw new Error("Expected ordered pattern fixtures");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const mutations = parsed.program.body.flatMap((statement) =>
+    t.isExpressionStatement(statement) &&
+    t.isAssignmentExpression(statement.expression)
+      ? [statement.expression]
+      : [],
+  );
+  for (const mutation of mutations) {
+    if (!t.isArrayPattern(mutation.left))
+      throw new Error("Expected array targets");
+    const [before, target, after] = mutation.left.elements;
+    if (
+      !t.isMemberExpression(before) ||
+      !t.isMemberExpression(target) ||
+      !t.isMemberExpression(after)
+    )
+      throw new Error("Expected member target identities");
+    const store = { mutation, target };
+    const timing = (storeTarget: t.MemberExpression) =>
+      semanticEffectTimingAtStore(
+        store,
+        { node: mutation, storeTarget },
+        index.bindings,
+      );
+    expect(timing(before)).toBe("before");
+    expect(timing(target)).toBe("after");
+    expect(timing(after)).toBe("after");
+    // A structurally equal member from another occurrence supplies no proof.
+    expect(timing(t.cloneNode(before))).toBe("unknown");
+    expect(
+      semanticEffectTimingAtStore(store, { node: mutation }, index.bindings),
+    ).toBe("unknown");
+  }
+});

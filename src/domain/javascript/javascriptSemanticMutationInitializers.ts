@@ -60,6 +60,10 @@ interface InitializerPositionCache {
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
+  readonly storeTargetPositions: WeakMap<
+    t.AssignmentExpression,
+    ReadonlyMap<t.Node, number>
+  >;
   readonly evaluationChildren: WeakMap<
     t.Node,
     ReadonlyMap<t.Node, number> | null
@@ -85,6 +89,7 @@ const initializerPositionCache = (
     reference: new WeakMap(),
     read: new WeakMap(),
     evaluationChildren: new WeakMap(),
+    storeTargetPositions: new WeakMap(),
     expressionAncestry: undefined,
   };
   initializerPositionCaches.set(parents, created);
@@ -342,12 +347,28 @@ export const semanticEffectTimingAtStore = (
       targets.length > 0 &&
       targets.every((target) => target !== undefined)
     ) {
-      const ordered: readonly t.Node[] = [
-        ...semanticWriteTargets(mutation.left),
-      ];
-      const selected = ordered.indexOf(store.target);
-      const positions = targets.map((target) => ordered.indexOf(target!));
-      if (selected >= 0 && positions.every((position) => position >= 0)) {
+      const cache = initializerPositionCache(
+        state.parentsByNode,
+      ).storeTargetPositions;
+      let ordered = cache.get(mutation);
+      if (ordered === undefined) {
+        const positions = new Map<t.Node, number>();
+        let position = 0;
+        for (const target of semanticWriteTargets(mutation.left)) {
+          // Match indexOf's first occurrence for source-built ASTs that reuse
+          // one node object; ordinary parsed occurrences are distinct nodes.
+          if (!positions.has(target)) positions.set(target, position);
+          position += 1;
+        }
+        ordered = positions;
+        cache.set(mutation, ordered);
+      }
+      const selected = ordered.get(store.target);
+      const positions = targets.map((target) => ordered.get(target!));
+      if (
+        selected !== undefined &&
+        positions.every((position) => position !== undefined)
+      ) {
         if (positions.every((position) => position < selected)) return "before";
         if (positions.every((position) => position >= selected)) return "after";
       }
