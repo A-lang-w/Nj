@@ -210,7 +210,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
 
 class NativeMacOSClient implements AnalysisClient {
   readonly #pendingNativeUiRuntimes = new Set<NativeUiHelperRuntime>();
-  readonly #pendingCommands = new Set<Promise<unknown>>();
+  readonly #pendingCommandOperations = new Set<Promise<unknown>>();
   readonly #signatureResources = new ArtifactResourceScope();
   readonly #plistResources = new ArtifactResourceScope();
   readonly #callResources = new ArtifactResourceScope();
@@ -351,12 +351,12 @@ class NativeMacOSClient implements AnalysisClient {
     ) {
       return this.#observeNativeUi(operation, parameters, options?.signal);
     }
+    const pending = Promise.resolve().then(() =>
+      this.#dispatchCommand(operation, parameters, options?.signal),
+    );
+    this.#pendingCommandOperations.add(pending);
     try {
-      const observation = await this.#dispatch(
-        operation,
-        parameters,
-        options?.signal,
-      );
+      const observation = await pending;
       return observation.ok
         ? ok(
             createAnalysisExecution(observation.value.result, IDENTITY, {
@@ -367,12 +367,14 @@ class NativeMacOSClient implements AnalysisClient {
         : err(resolvedAnalysisError(observation.error));
     } catch (cause: unknown) {
       return err(nativeOutputFailure(operation, cause));
+    } finally {
+      this.#pendingCommandOperations.delete(pending);
     }
   }
 
   async close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
-    await Promise.allSettled(this.#pendingCommands);
+    await Promise.allSettled(this.#pendingCommandOperations);
     const uiCleanupFailures = await this.#serializeNativeUi(() =>
       this.#retryNativeUiCleanup(),
     );
@@ -568,33 +570,6 @@ class NativeMacOSClient implements AnalysisClient {
     partialObservation?: NativeUiObservationResult,
   ): ProviderCleanupError {
     return new NativeUiCleanupError(failures, operation, partialObservation);
-  }
-
-  #dispatch(
-    operation: NativeToolName,
-    parameters: Readonly<Record<string, JsonValue>>,
-    signal?: AbortSignal,
-  ): Promise<Result<NativeObservation, AnalysisError>> {
-    switch (operation) {
-      case "observe_native_ui":
-      case "capture_native_ui_scenario":
-      case "observe_native_calls":
-        return Promise.resolve(
-          err(
-            new AnalysisCapabilityUnavailableError(
-              IDENTITY.id,
-              operation,
-              "UI observation uses its explicit authority boundary",
-            ),
-          ),
-        );
-      case "inspect_macho":
-      case "inspect_signature":
-      case "inspect_plist":
-      case "list_architectures":
-      case "demangle_swift":
-        return this.#dispatchCommand(operation, parameters, signal);
-    }
   }
 
   #dispatchCommand(
@@ -1253,27 +1228,13 @@ class NativeMacOSClient implements AnalysisClient {
         | undefined;
     },
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
-    if (this.#closed)
-      return err(
-        new AnalysisCapabilityUnavailableError(
-          IDENTITY.id,
-          operation,
-          "Native provider client is closed",
-        ),
-      );
-    const command = this.runner.run(tool, arguments_, {
+    // Commands borrow their enclosing operation's admission through finalization.
+    const captured = await this.runner.run(tool, arguments_, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       timeoutMs: options.timeoutMs,
       acceptNonZero:
         options.acceptNonZero ?? options.acceptNonZeroIf !== undefined,
     });
-    this.#pendingCommands.add(command);
-    let captured: Awaited<typeof command>;
-    try {
-      captured = await command;
-    } finally {
-      this.#pendingCommands.delete(command);
-    }
     if (captured.ok) {
       const hasFailedExit =
         captured.value.exitCode !== 0 || captured.value.signal !== null;
