@@ -117,31 +117,39 @@ export const readStableArtifact = async (
       const bytes = Buffer.allocUnsafe(
         Number(initial.size > maximumSize ? maximumSize : initial.size),
       );
+      const overflow = Buffer.allocUnsafe(65536);
       const hash = createHash("sha256");
       let count = 0;
-      for await (const chunk of file.createReadStream({
-        autoClose: false,
-        highWaterMark: 65536,
-      })) {
+      for (;;) {
         assertArtifactReadActive(signal);
-        const value: unknown = chunk;
-        if (!Buffer.isBuffer(value))
+        const inside = count < bytes.length;
+        const target = inside ? bytes : overflow;
+        const offset = inside ? count : 0;
+        const wanted = Math.min(65536, target.length - offset);
+        const { bytesRead } = await file.read(target, offset, wanted, count);
+        // EOF still passes through the original final metadata/cancellation
+        // checks. A rejected physical read remains primary over cancellation.
+        if (bytesRead === 0) break;
+        assertArtifactReadActive(signal);
+        if (
+          !Number.isSafeInteger(bytesRead) ||
+          bytesRead < 0 ||
+          bytesRead > wanted
+        )
           throw new ArtifactReaderFailure(
             "format",
-            `Artifact stream did not return bytes: ${path}`,
+            `Artifact descriptor returned an invalid byte count: ${path}`,
           );
-        const offset = count;
-        count += value.length;
+        count += bytesRead;
         if (count > maximumBytes)
           throw new ArtifactReaderFailure(
             "limit",
             `Selected artifact grew beyond its byte limit: ${path}`,
             { boundary: "file-size" },
           );
-        // Discard growth beyond the expected size while preserving physical
+        // Read growth into bounded scratch space while preserving physical
         // read failures and byte-budget refusal ahead of final integrity checks.
-        if (offset < bytes.length) value.copy(bytes, offset);
-        hash.update(value);
+        hash.update(target.subarray(offset, offset + bytesRead));
       }
       const after = await file.stat({ bigint: true });
       const current = await afterValidation(path, "during read", () =>

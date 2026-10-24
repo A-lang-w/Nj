@@ -62,6 +62,123 @@ it("preserves exact binary bytes and digest across physical chunks and a partial
   expect(snapshot.bytes.equals(bytes)).toBe(true);
 });
 
+it("joins short descriptor reads into the exact snapshot without gaps", async () => {
+  const root = await createTestTempDirectory("rea-stable-short-read-");
+  const path = join(root, "source.bin");
+  const bytes = Buffer.from(Array.from({ length: 1031 }, (_, i) => i % 251));
+  await writeFile(path, bytes);
+  const snapshot = await readStableArtifact(path, bytes.length, undefined, {
+    lstat: (selected) => lstat(selected, { bigint: true }),
+    open: async (...args) => {
+      const handle = await open(...args);
+      const read = handle.read.bind(handle);
+      Object.defineProperty(handle, "read", {
+        value: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => read(buffer, offset, Math.min(length, 17), position),
+      });
+      return handle;
+    },
+  });
+  expect(snapshot.bytes.equals(bytes)).toBe(true);
+  expect(snapshot.sha256).toBe(
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+});
+
+it.each([-1, Number.NaN, "oversized"] as const)(
+  "refuses malformed descriptor byte counts: %s",
+  async (count) => {
+    const root = await createTestTempDirectory("rea-stable-read-count-");
+    const path = join(root, "source.bin");
+    await writeFile(path, "base");
+    await expect(
+      readStableArtifact(path, 64, undefined, {
+        lstat: (selected) => lstat(selected, { bigint: true }),
+        open: async (...args) => {
+          const handle = await open(...args);
+          Object.defineProperty(handle, "read", {
+            value: async (buffer: Buffer, _offset: number, length: number) => ({
+              bytesRead: count === "oversized" ? length + 1 : count,
+              buffer,
+            }),
+          });
+          return handle;
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "format" });
+  },
+);
+
+it.each(["complete", "fail"] as const)(
+  "joins an admitted descriptor read before cancellation finalization: %s",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-stable-read-cancel-");
+    const path = join(root, "source.bin");
+    const bytes = Buffer.from("base");
+    await writeFile(path, bytes);
+    const controller = new AbortController();
+    const reason = { request: "cancelled while descriptor read was pending" };
+    const physical = Object.assign(new Error("pending physical read failed"), {
+      code: "EIO",
+    });
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    let reject!: (cause: unknown) => void;
+    const blocked = new Promise<void>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+    const reading = readStableArtifact(path, 64, controller.signal, {
+      lstat: (selected) => lstat(selected, { bigint: true }),
+      open: async (...args) => {
+        const handle = await open(...args);
+        descriptor = handle;
+        Object.defineProperty(handle, "read", {
+          value: async (buffer: Buffer, offset: number) => {
+            enter();
+            await blocked;
+            buffer.set(bytes, offset);
+            return { bytesRead: bytes.length, buffer };
+          },
+        });
+        return handle;
+      },
+    });
+    let settled = false;
+    const result = reading
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await entered;
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(descriptor?.fd).toBeGreaterThanOrEqual(0);
+      if (outcome === "fail") reject(physical);
+      else release();
+      const failure = await result;
+      if (outcome === "fail") expect(failure).toBe(physical);
+      else
+        expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      expect(artifactFileCompletion(failure)).toBeUndefined();
+      expect(descriptor?.fd).toBe(-1);
+    } finally {
+      release();
+      await result;
+    }
+  },
+);
+
 it.each(["integrity", "limit", "io"] as const)(
   "preserves %s precedence after growth beyond the initial snapshot size",
   async (outcome) => {
@@ -80,21 +197,24 @@ it.each(["integrity", "limit", "io"] as const)(
         lstat: (selected) => lstat(selected, { bigint: true }),
         open: async (...args) => {
           const handle = await open(...args);
-          const createStream = handle.createReadStream.bind(handle);
-          handle.createReadStream = (options) => {
-            const stream = createStream(options);
-            const iterate = stream[Symbol.asyncIterator].bind(stream);
-            stream[Symbol.asyncIterator] = async function* () {
-              yield* iterate();
-              for (let i = 0; i < 2; i++) {
+          const read = handle.read.bind(handle);
+          let appended = 0;
+          Object.defineProperty(handle, "read", {
+            value: async (
+              buffer: Buffer,
+              offset: number,
+              length: number,
+              position: number,
+            ) => {
+              if (appended < 2 && position >= 4 + appended * extra.length) {
                 await appendFile(path, extra);
-                yield extra;
+                appended += 1;
               }
-              if (outcome === "io") throw physical;
-              return undefined;
-            };
-            return stream;
-          };
+              if (outcome === "io" && position >= 4 + 2 * extra.length)
+                throw physical;
+              return read(buffer, offset, length, position);
+            },
+          });
           return handle;
         },
       },
@@ -134,13 +254,13 @@ it("does not start a read when cancellation arrives during descriptor admission"
   await writeFile(path, "base");
   const controller = new AbortController();
   const reason = { request: "cancelled while admitting descriptor" };
-  let streams = 0;
+  let reads = 0;
   const reading = readStableArtifact(path, 64, controller.signal, {
     lstat: (selected) => lstat(selected, { bigint: true }),
     open: async (...args) => {
       const handle = await open(...args);
       const stat = handle.stat.bind(handle);
-      const createStream = handle.createReadStream.bind(handle);
+      const read = handle.read.bind(handle);
       Object.defineProperty(handle, "stat", {
         value: async () => {
           const facts = await stat({ bigint: true });
@@ -148,10 +268,17 @@ it("does not start a read when cancellation arrives during descriptor admission"
           return facts;
         },
       });
-      handle.createReadStream = (options) => {
-        streams += 1;
-        return createStream(options);
-      };
+      Object.defineProperty(handle, "read", {
+        value: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => {
+          reads += 1;
+          return read(buffer, offset, length, position);
+        },
+      });
       return handle;
     },
   });
@@ -159,7 +286,7 @@ it("does not start a read when cancellation arrives during descriptor admission"
     reason: "cancelled",
     cause: reason,
   });
-  expect(streams).toBe(0);
+  expect(reads).toBe(0);
 });
 
 const checkChange = async (
@@ -238,9 +365,18 @@ it.each(["scoped", "transferred"])(
   "keeps incomplete private bytes unavailable through %s close failure",
   async (ownership) => {
     const file = await heldDescriptor();
-    const createStream = file.handle.createReadStream.bind(file.handle);
-    file.handle.createReadStream = (options) =>
-      createStream({ ...options, start: 0, end: 1 });
+    const read = file.handle.read.bind(file.handle);
+    Object.defineProperty(file.handle, "read", {
+      value: async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) =>
+        position >= 2
+          ? { bytesRead: 0, buffer }
+          : read(buffer, offset, Math.min(length, 2 - position), position),
+    });
     const scope =
       ownership === "scoped" ? new ArtifactResourceScope() : undefined;
     const failure = await readStableArtifact(
