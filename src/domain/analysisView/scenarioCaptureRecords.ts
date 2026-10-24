@@ -14,10 +14,6 @@ import {
   type BrowserScenarioTransactionIndex,
 } from "../browserScenarioTransactions.js";
 import type { JsonValue } from "../jsonValue.js";
-import {
-  iterateUrlQueryParameters,
-  parseRecordedTransportUrl,
-} from "../recordedTransportUrl.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
@@ -28,9 +24,6 @@ import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
 type CapturedBody = Extract<BrowserNetworkBody, { state: "captured" }>;
-
-/** What records keep beyond replay's: `manifest` adds request bodies, and `review` also the header values and URL query pairs HAR records carry. */
-export type ScenarioRecordPurpose = "manifest" | "replay" | "review";
 
 /** Response-byte retention, independent of whether the transaction has a usable request line. */
 export type ScenarioResponseBodyRetention = "absent" | "retained" | "redacted";
@@ -88,72 +81,37 @@ const utf8Text = (body: CapturedBody): string | undefined => {
   }
 };
 
-const mediaType = (content: ContentEvent | undefined): string | undefined =>
+/** A content event's media type: its captured body's, else its retained Content-Type value. */
+export const scenarioContentMediaType = (
+  content: ContentEvent | undefined,
+): string | undefined =>
   captured(content)?.media_type ??
   headerValue(content?.headers, "content-type");
-
-/** Retained header name/value pairs; a value the capture excluded is null. */
-const retainedHeaders = (content: ContentEvent | undefined): JsonValue =>
-  content?.headers.state === "captured" ? content.headers.items : [];
-
-/** The recorded URL's form-decoded query pairs, as a HAR queryString lists them. */
-const queryPairs = (url: string): JsonValue => {
-  const { query } = parseRecordedTransportUrl(url, { includeQuery: true });
-  return query === undefined
-    ? []
-    : Array.from(iterateUrlQueryParameters(query), ([name, value]) => ({
-        name,
-        value,
-      }));
-};
 
 /** The request object HAR readers expect; a redacted URL is withheld so no path is templated from it. */
 const reportedRequest = (
   request: RequestEvent,
   content: ContentEvent | undefined,
-  purpose: ScenarioRecordPurpose,
+  purpose: "manifest" | "replay",
 ): { readonly [key: string]: JsonValue } => {
-  const body = purpose === "replay" ? undefined : captured(content);
+  const body = purpose === "manifest" ? captured(content) : undefined;
   const text = body === undefined ? undefined : utf8Text(body);
-  const mimeType = mediaType(content);
+  const mimeType = scenarioContentMediaType(content);
   return {
     method: request.method,
     bodySize: body !== undefined && !body.redacted ? body.bytes : -1,
     url: request.url.redacted ? null : request.url.url,
-    ...(purpose === "review"
-      ? {
-          headers: retainedHeaders(content),
-          queryString: queryPairs(request.url.url),
-        }
-      : {}),
-    // Review scans every retained body, so one the capture could not classify keeps its text with an empty media type.
-    ...(text === undefined || (mimeType === undefined && purpose !== "review")
+    ...(text === undefined || mimeType === undefined
       ? {}
-      : { postData: { mimeType: mimeType ?? "", text } }),
+      : { postData: { mimeType, text } }),
   };
 };
-
-/** An unattributable transaction's record: nothing, except the request side review scans because the Evidence ships it. */
-const unattributedReport = (
-  request: RequestEvent,
-  index: BrowserScenarioTransactionIndex,
-  purpose: ScenarioRecordPurpose,
-): { readonly [key: string]: JsonValue } =>
-  purpose === "review"
-    ? {
-        request: reportedRequest(
-          request,
-          onlyContent(index, request.sequence),
-          purpose,
-        ),
-      }
-    : {};
 
 const record = (
   ordinal: number,
   observed: { readonly event: RequestEvent; readonly item: number },
   index: BrowserScenarioTransactionIndex,
-  purpose: ScenarioRecordPurpose,
+  purpose: "manifest" | "replay",
 ): {
   readonly record: WebNetworkCaptureRecord;
   readonly responseBody: ScenarioResponseBodyRetention;
@@ -181,18 +139,13 @@ const record = (
       (index.contents.get(response.sequence)?.length ?? 0) > 1)
   )
     return {
-      record: {
-        ordinal,
-        location,
-        reported: unattributedReport(request, index, purpose),
-        ...empty,
-      },
+      record: { ordinal, location, reported: {}, ...empty },
       responseBody: "absent",
     };
   const requestContent = onlyContent(index, request.sequence);
   const responseContent = onlyContent(index, response?.sequence);
   const body = retainedBody(responseContent);
-  const mimeType = mediaType(responseContent) ?? "";
+  const mimeType = scenarioContentMediaType(responseContent) ?? "";
   return {
     record: {
       ordinal,
@@ -204,9 +157,6 @@ const record = (
           : {
               response: {
                 status: response.status,
-                ...(purpose === "review"
-                  ? { headers: retainedHeaders(responseContent) }
-                  : {}),
                 content:
                   body === undefined
                     ? { mimeType }
@@ -237,7 +187,7 @@ const record = (
 /** Project each network transaction, in request order, as one record; the ordinal is its zero-based position. */
 export const scenarioCaptureRecords = (
   capture: RetainedBrowserScenarioCapture,
-  purpose: ScenarioRecordPurpose,
+  purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];

@@ -65,6 +65,8 @@ export interface EnvironmentExportInput extends EnvironmentExportInputs {
   readonly source: EnvironmentSource;
   /** The state already prepared under `name` from the evidence value; prepared here when absent. */
   readonly served?: PreparedState | undefined;
+  /** Refuse an existing directory and never create its parent; otherwise an empty directory is accepted. */
+  readonly exclusiveDestination?: boolean | undefined;
   /** Absolute bundle root; absent or empty. */
   readonly directory: string;
   readonly name?: string | undefined;

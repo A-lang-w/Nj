@@ -45,19 +45,26 @@ before building.
 - Credential-named header names, query parameter names and JSON or form body
   members that hold a value are reported as a count and the first 20 record
   pointers, never values, and never refuse a build; the scan cannot overflow the
-  stack on deeply nested bodies. A browser scenario's retained header values and
-  the query parameters of its recorded URLs are scanned as a HAR's headers and
-  query strings are, and so are its request bodies recorded without a media
-  type. Each occurrence of a repeated form field counts, as each repeated header
-  or query parameter does. A HAR request recorded with structured form
-  parameters and no text, or the null text mitmproxy's SaveHar records, is
-  scanned by those parameters, and a scenario transaction that cannot be
-  attributed to one response still has its request side scanned. Text bodies
+  stack on deeply nested bodies. A body is read as a form
+  (`application/x-www-form-urlencoded`, by `URLSearchParams`) or as JSON (the
+  media types replay parses as JSON) by its recorded media type; a body with
+  none, or one naming neither, is JSON when it starts with `{` or `[` and a form
+  when it contains `=` and no whitespace, so plain text and empty bodies yield
+  no pointers. A browser scenario is scanned by event rather than by record:
+  every retained request and response network-content event's header values and
+  body, including a response whose request began before the browser was attached
+  and a transaction that cannot be attributed to one request and response, and
+  each transaction URL's query parameters once; its pointers name the event's
+  index in `events.items` (`event 4 response /token`). Each occurrence of a
+  repeated form field counts, as each repeated header or query parameter does. A
+  HAR request recorded with structured form parameters and no text, or the null
+  text mitmproxy's SaveHar records, is scanned by those parameters. Text bodies
   over the 4 MiB scan limit, measured in UTF-8 bytes, including a response body
   decoded only as a prefix, are not scanned; they are reported as a
-  `credential-scan-incomplete` warning with a count and the first 20 record and
-  side pointers (`record 3 response`), never contents, and never refuse a build.
-  Binary bodies hold no JSON or form text and are neither scanned nor reported.
+  `credential-scan-incomplete` warning with a count and the first 20 record or
+  event and side pointers (`record 3 response`, `event 4 response`), never
+  contents, and never refuse a build. Binary bodies hold no JSON or form text
+  and are neither scanned nor reported.
 - The inspected HAR's Evidence and the projected manifest are admitted against
   the live heap headroom for parsing and sealing before either is serialized, as
   a capture Evidence file is before it is read; one that does not fit is refused

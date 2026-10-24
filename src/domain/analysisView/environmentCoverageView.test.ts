@@ -169,6 +169,35 @@ it("summarizes the state the environment-state view derives with the same rules"
   );
 });
 
+it("says an untimed capture learns no clock, and only for an untimed capture", () => {
+  const untimed = /learns no clock/u;
+  const scenarioParent = parentOf(
+    scenarioCaptureEvidence(
+      scenarioCaptureFixture(SCENARIO_EXCHANGES, {
+        request_body: true,
+        response_body: true,
+        header_values: true,
+      }),
+    ),
+  );
+  for (const [parent, timeline] of [
+    [parentOf(), "recorded-start-time"],
+    [scenarioParent, "record-order"],
+  ] as const) {
+    const state = project("environment-state", parent);
+    const coverage = project("environment-coverage", parent);
+    if (
+      state.kind !== "environment-state" ||
+      coverage.kind !== "environment-coverage"
+    )
+      throw new Error("Expected state and coverage views");
+    expect(state.timeline).toBe(timeline);
+    expect(coverage.limitations.some((line) => untimed.test(line))).toBe(
+      timeline === "record-order",
+    );
+  }
+});
+
 it("refuses a browser scenario without response bodies as the state view does", () => {
   const evidence = scenarioCaptureEvidence(
     scenarioCaptureFixture(SCENARIO_EXCHANGES, {

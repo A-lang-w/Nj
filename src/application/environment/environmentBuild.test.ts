@@ -530,14 +530,138 @@ describe("buildEnvironment credential names", () => {
       expect.objectContaining({
         code: "credential-named-members",
         pointers: [
-          "record 0 request header X-Api-Key",
-          "record 0 response header X-Auth-Token",
-          "record 0 request query api_key",
+          "event 0 request query api_key",
+          "event 1 request header X-Api-Key",
+          "event 3 response header X-Auth-Token",
         ],
       }),
     ]);
     const report = JSON.stringify(planned.value);
     for (const value of ["k-123", "t-9"]) expect(report).not.toContain(value);
+  });
+});
+
+/** A scenario capture whose event list `edit` rewrote, with its retained count kept consistent. */
+const editedScenarioEvidence = (
+  capture: ReturnType<typeof scenarioCaptureFixture>,
+  edit: (
+    items: ReturnType<typeof scenarioCaptureFixture>["events"]["items"],
+  ) => ReturnType<typeof scenarioCaptureFixture>["events"]["items"],
+): Evidence => {
+  const items = edit(capture.events.items);
+  return scenarioCaptureEvidence({
+    ...capture,
+    events: { ...capture.events, retained: items.length, items },
+  });
+};
+
+/** Drop a transaction's request event, as a capture attached after the request began records it. */
+const attachedMidFlight =
+  (transaction: string) =>
+  (items: ReturnType<typeof scenarioCaptureFixture>["events"]["items"]) =>
+    items.filter(
+      (event) =>
+        event.kind !== "request" || event.transaction_id !== transaction,
+    );
+
+const plannedScan = async (prefix: string, evidence: Evidence) => {
+  const root = await createTestTempDirectory(prefix);
+  const planned = await buildEnvironment(
+    await buildInput(root, evidence, {
+      dryRun: true,
+      directory: undefined,
+      name: "rota",
+    }),
+  );
+  if (!planned.ok) throw planned.error;
+  return planned.value;
+};
+
+const USERS_EXCHANGE = {
+  method: "GET",
+  url: "/api/users/2",
+  status: 200,
+  mediaType: "application/json",
+  body: '{"id":2,"login":"probe"}',
+} as const;
+
+describe("buildEnvironment credential scan of scenario events", () => {
+  it("scans retained content that no record represents: a response attached mid-flight and an ambiguous transaction", async () => {
+    const capture = scenarioCaptureFixture(
+      [
+        USERS_EXCHANGE,
+        {
+          method: "GET",
+          url: "/api/session?api_key=k-mid",
+          status: 200,
+          mediaType: "application/json",
+          body: '{"token":"t-mid"}',
+          responseHeaders: [{ name: "X-Auth-Token", value: "t-header" }],
+        },
+        {
+          method: "GET",
+          url: "/api/me",
+          status: 200,
+          mediaType: "application/json",
+          body: '{"sessionId":"s-ambiguous"}',
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    const duplicate = capture.events.items.find(
+      (event) =>
+        event.kind === "response" && event.transaction_id === "request-3",
+    );
+    if (duplicate === undefined) throw new Error("Fixture lacks a response");
+    // The session's request began before attachment; the third transaction recorded two responses.
+    const planned = await plannedScan(
+      "rea-environment-build-events-",
+      editedScenarioEvidence(capture, (items) => [
+        ...attachedMidFlight("request-2")(items),
+        { ...duplicate, sequence: 99 },
+      ]),
+    );
+    expect(planned.capture.records).toBe(2);
+    expect(planned.warnings).toEqual([
+      expect.objectContaining({
+        code: "credential-named-members",
+        pointers: [
+          "event 3 response query api_key",
+          "event 4 response header X-Auth-Token",
+          "event 4 response /token",
+          "event 7 response /sessionId",
+        ],
+      }),
+    ]);
+    const report = JSON.stringify(planned);
+    for (const value of ["k-mid", "t-mid", "t-header", "s-ambiguous"])
+      expect(report).not.toContain(value);
+  });
+
+  it("reports a response attached mid-flight that is too large to scan", async () => {
+    const capture = scenarioCaptureFixture([
+      USERS_EXCHANGE,
+      {
+        method: "GET",
+        url: "/api/export",
+        status: 200,
+        mediaType: "application/json",
+        body: JSON.stringify({
+          token: "t-large",
+          pad: "a".repeat(4 * 1024 * 1024),
+        }),
+      },
+    ]);
+    const planned = await plannedScan(
+      "rea-environment-build-events-large-",
+      editedScenarioEvidence(capture, attachedMidFlight("request-2")),
+    );
+    expect(planned.warnings).toEqual([
+      expect.objectContaining({
+        code: "credential-scan-incomplete",
+        pointers: ["event 4 response"],
+      }),
+    ]);
   });
 });
 

@@ -4,10 +4,7 @@ import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
-import {
-  scenarioCaptureRecords,
-  type ScenarioRecordPurpose,
-} from "../../domain/analysisView/scenarioCaptureRecords.js";
+import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import {
   readRecordedResponseBody,
   type RecordedResponseBody,
@@ -19,6 +16,7 @@ import {
   type RecordedRequestLine,
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
+import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -266,6 +264,8 @@ interface CaptureFacts {
   readonly responseBodies: boolean;
   /** Whether the capture recorded request bodies, likewise. */
   readonly requestBodies: boolean;
+  /** A browser scenario's retained events, including those no record represents; null for a HAR. */
+  readonly scenarioEvents: readonly BrowserScenarioEvent[] | null;
 }
 
 /** Issue paths of a capture payload refusal start here. */
@@ -276,7 +276,7 @@ const parseScenarioCapture = (
   operation: string,
   normalized: unknown,
   parameters: unknown,
-  purpose: ScenarioRecordPurpose,
+  purpose: "manifest" | "replay",
 ): Result<CaptureFacts, AnalysisError> => {
   const scenario = retainedBrowserScenarioCaptureSchema.safeParse(normalized);
   if (!scenario.success)
@@ -300,6 +300,7 @@ const parseScenarioCapture = (
     captureSha256: definition.success ? definition.data.scenario_sha256 : null,
     responseBodies: scenario.data.scenario.network_content.response_body,
     requestBodies: scenario.data.scenario.network_content.request_body,
+    scenarioEvents: scenario.data.events.items,
   });
 };
 
@@ -350,6 +351,7 @@ const parseHarCapture = (
     captureSha256: capture.data.artifact.sha256,
     responseBodies: true,
     requestBodies: true,
+    scenarioEvents: null,
   });
 };
 
@@ -357,12 +359,12 @@ const parseHarCapture = (
  * Authenticate the evidence file and require complete capture Evidence of
  * either kind. Only an operation no capture schema owns blames the operation;
  * a recognized operation's payload failures name the payload fields. A browser
- * capture's records keep what the purpose selects; a HAR's keep everything.
+ * capture's request bodies are kept only for the manifest purpose.
  */
 export const parseCaptureEvidence = (
   operation: string,
   value: unknown,
-  purpose: ScenarioRecordPurpose = "replay",
+  purpose: "manifest" | "replay" = "replay",
 ): Result<CaptureFacts & { readonly evidenceId: string }, AnalysisError> => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
