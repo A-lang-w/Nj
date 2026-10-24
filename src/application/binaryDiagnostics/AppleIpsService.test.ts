@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { AppleIpsService } from "./AppleIpsService.js";
-import { APPLE_IPS_PROVIDER } from "../InvestigationProviders.js";
+import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { AppleIps } from "../../domain/native/appleIps.js";
 import { ok } from "../../domain/result.js";
 import {

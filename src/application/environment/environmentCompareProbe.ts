@@ -12,6 +12,13 @@ import {
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import {
+  compareOffsetDateTimeInstants,
+  offsetDateTimeInstantFromEpochMilliseconds,
+  offsetDateTimeSchema,
+  parseOffsetDateTimeInstant,
+  type OffsetDateTimeInstant,
+} from "../../domain/offsetDateTime.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import type { Answer } from "./environmentCompareDiff.js";
 import type { ProbeRequest } from "./environmentCompareMatch.js";
@@ -46,10 +53,20 @@ const postDataSchema = z.object({
 
 const methodSchema = z.object({ request: z.object({ method: z.string() }) });
 
-const startedMs = (record: WebNetworkCaptureRecord): number | undefined => {
+const startedInstant = (
+  record: WebNetworkCaptureRecord,
+): OffsetDateTimeInstant | undefined => {
   const started = startedSchema.safeParse(record.reported);
-  const ms = started.success ? Date.parse(started.data.startedDateTime) : NaN;
-  return Number.isFinite(ms) ? ms : undefined;
+  if (!started.success) return undefined;
+  const timestamp = offsetDateTimeSchema.safeParse(
+    started.data.startedDateTime,
+  );
+  if (timestamp.success) return parseOffsetDateTimeInstant(timestamp.data);
+  // Preserve native-Date admission for legacy spellings, at its original precision.
+  const ms = Date.parse(started.data.startedDateTime);
+  return Number.isFinite(ms)
+    ? offsetDateTimeInstantFromEpochMilliseconds(ms)
+    : undefined;
 };
 
 /** Whether a probe makes calls that carry a request body: a POST, PUT or PATCH. */
@@ -76,10 +93,6 @@ export const requestBody = (
     : text;
 };
 
-/** A body over the replay limit, text or bytes: only a prefix is known, so only the status compares. */
-export const isCut = (body: ReplayedBody): boolean =>
-  body.kind === "cut" || (body.kind === "base64" && !body.whole);
-
 /** The application's answer as an environment answer carries it: JSON, text, or null when it is empty; a body the probe did not record is marked. */
 const liveAnswer = (
   method: string,
@@ -88,16 +101,11 @@ const liveAnswer = (
 ): Answer => {
   if (body.kind === "none")
     return method === "HEAD" || BODYLESS_STATUSES.has(status)
-      ? { status, body: null }
-      : { status, body: null, unobserved: true };
-  if (body.kind === "json") return { status, body: body.value };
-  if (body.kind === "base64")
-    return { status, body: body.encoded, cut: isCut(body) };
-  return {
-    status,
-    body: body.text === "" ? null : body.text,
-    cut: isCut(body),
-  };
+      ? { status, body }
+      : { status, body, unobserved: true };
+  if (body.kind === "text" && body.text === "")
+    return { status, body: { kind: "none" } };
+  return { status, body };
 };
 
 /** The origin a probe calls the application at, chosen as the manifest chooses its own. */
@@ -123,13 +131,17 @@ export const probeRequests = (
   const unobserved: UnobservedRecord[] = [];
   // Without a start time for every record the probe keeps its recorded order, as state extraction does.
   const starts = new Map(
-    records.map((record) => [record.ordinal, startedMs(record)]),
+    records.map((record) => [record.ordinal, startedInstant(record)]),
   );
-  const timed = [...starts.values()].every((ms) => ms !== undefined);
+  const timed = [...starts.values()].every((instant) => instant !== undefined);
   const ordered = [...records].sort(
     (left, right) =>
-      (timed ? starts.get(left.ordinal)! - starts.get(right.ordinal)! : 0) ||
-      left.ordinal - right.ordinal,
+      (timed
+        ? compareOffsetDateTimeInstants(
+            starts.get(left.ordinal)!,
+            starts.get(right.ordinal)!,
+          )
+        : 0) || left.ordinal - right.ordinal,
   );
   const lines = new Map(
     records.map((record) => [
