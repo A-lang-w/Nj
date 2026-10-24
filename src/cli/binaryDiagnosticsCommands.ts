@@ -77,6 +77,8 @@ export const registerBinaryDiagnosticsCommands = (
       maxFrames: inspectAppleIpsInputSchema.shape.max_frames,
       maxImages: inspectAppleIpsInputSchema.shape.max_images,
       maxRegisters: inspectAppleIpsInputSchema.shape.max_registers,
+      maxIntegerTextBytes:
+        inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -95,6 +97,7 @@ export const registerBinaryDiagnosticsCommands = (
                     max_frames: options.maxFrames,
                     max_images: options.maxImages,
                     max_registers: options.maxRegisters,
+                    max_integer_text_bytes: options.maxIntegerTextBytes,
                   },
                   { signal },
                 ),

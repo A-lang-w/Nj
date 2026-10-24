@@ -22,6 +22,9 @@ export const MAX_INSPECT_APPLE_IPS_FRAMES = 65536;
 export const MAX_INSPECT_APPLE_IPS_IMAGES = 4096;
 /** Hard ceiling on threadState register slots across every thread. */
 export const MAX_INSPECT_APPLE_IPS_REGISTERS = 262144;
+/** Conservative retained decimal/hex text capacity, measured as UTF-16 bytes. */
+export const DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES = 8 * 1024 * 1024;
+export const MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES = 64 * 1024 * 1024;
 
 export const APPLE_IPS_IMAGE_SOURCES = [
   "P",
@@ -94,6 +97,15 @@ export const inspectAppleIpsInputSchema = z.strictObject({
     .default(16384)
     .describe(
       "Maximum threadState register slots across every thread; exceeding the budget fails without partial success",
+    ),
+  max_integer_text_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)
+    .default(DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)
+    .describe(
+      "Conservative UTF-16 byte allowance for all retained decimal/hex integer text, including derived addresses (default 8 MiB, maximum 64 MiB); checked before conversion and allocation",
     ),
 });
 export type InspectAppleIpsInput = z.infer<typeof inspectAppleIpsInputSchema>;
@@ -264,3 +276,30 @@ export type AppleIpsImage = z.infer<typeof imageSchema>;
 export type AppleIpsFrame = z.infer<typeof frameSchema>;
 export type AppleIpsTypeMismatch = z.infer<typeof typeMismatchSchema>;
 export type RecordedInteger = z.infer<typeof recordedIntegerSchema>;
+
+/** Count each appearance, including repeated objects serialized at different paths. */
+export const appleIpsIntegerTextBytes = (
+  value: RecordedInteger | null,
+): number =>
+  value === null ? 0 : 2 * (value.decimal.length + (value.hex?.length ?? 0));
+
+/** The named report fields own which observed and derived integers are retained. */
+export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
+  let bytes =
+    appleIpsIntegerTextBytes(report.process.pid) +
+    appleIpsIntegerTextBytes(report.termination?.code ?? null);
+  for (const image of report.images)
+    bytes +=
+      appleIpsIntegerTextBytes(image.base) +
+      appleIpsIntegerTextBytes(image.size);
+  for (const thread of report.threads) {
+    bytes += appleIpsIntegerTextBytes(thread.id);
+    for (const register of thread.registers)
+      bytes += appleIpsIntegerTextBytes(register.value);
+    for (const frame of thread.frames)
+      bytes +=
+        appleIpsIntegerTextBytes(frame.image_offset) +
+        appleIpsIntegerTextBytes(frame.runtime_address);
+  }
+  return bytes;
+};

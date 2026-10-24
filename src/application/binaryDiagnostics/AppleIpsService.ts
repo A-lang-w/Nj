@@ -10,6 +10,7 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   appleIpsSchema,
+  appleIpsReportIntegerTextBytes,
   inspectAppleIpsInputSchema,
   type AppleIps,
 } from "../../domain/native/appleIps.js";
@@ -32,7 +33,9 @@ export class AppleIpsService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectAppleIpsInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -97,6 +100,8 @@ const validReport = (
     report.coverage.frames > input.max_frames ||
     report.coverage.images > input.max_images ||
     report.coverage.registers > input.max_registers ||
+    report.coverage.threads !== report.threads.length ||
+    report.coverage.images !== report.images.length ||
     report.threads.length > input.max_threads ||
     report.images.length > input.max_images
   )
@@ -110,6 +115,7 @@ const validReport = (
   return (
     frames === report.coverage.frames &&
     registers === report.coverage.registers &&
+    appleIpsReportIntegerTextBytes(report) <= input.max_integer_text_bytes &&
     (report.coverage.status === "complete") ===
       (report.coverage.type_mismatches.length === 0)
   );
@@ -121,4 +127,5 @@ type InspectAppleIpsInputLike = {
   readonly max_frames: number;
   readonly max_images: number;
   readonly max_registers: number;
+  readonly max_integer_text_bytes: number;
 };

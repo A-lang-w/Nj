@@ -24,6 +24,8 @@ import {
   MAX_INSPECT_APPLE_IPS_FRAMES,
   MAX_INSPECT_APPLE_IPS_IMAGES,
   MAX_INSPECT_APPLE_IPS_REGISTERS,
+  MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+  DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
@@ -101,36 +103,60 @@ const fileSizeRemediation = (input: InspectAppleIpsInput): string =>
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
 const SELECTED_BUDGETS = {
-  threads: (input) => input.max_threads,
-  frames: (input) => input.max_frames,
-  images: (input) => input.max_images,
-  registers: (input) => input.max_registers,
+  threads: {
+    argument: "max_threads",
+    maximum: MAX_INSPECT_APPLE_IPS_THREADS,
+    unit: "entries",
+  },
+  frames: {
+    argument: "max_frames",
+    maximum: MAX_INSPECT_APPLE_IPS_FRAMES,
+    unit: "entries",
+  },
+  images: {
+    argument: "max_images",
+    maximum: MAX_INSPECT_APPLE_IPS_IMAGES,
+    unit: "entries",
+  },
+  registers: {
+    argument: "max_registers",
+    maximum: MAX_INSPECT_APPLE_IPS_REGISTERS,
+    unit: "entries",
+  },
+  integer_text: {
+    argument: "max_integer_text_bytes",
+    maximum: MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
+    unit: "UTF-16 bytes",
+  },
 } as const satisfies Record<
   AppleIpsSelectedBoundary,
-  (input: InspectAppleIpsInput) => number
+  {
+    readonly argument: keyof InspectAppleIpsInput;
+    readonly maximum: number;
+    readonly unit: string;
+  }
 >;
-
-const SELECTED_CEILINGS: Readonly<Record<AppleIpsSelectedBoundary, number>> = {
-  threads: MAX_INSPECT_APPLE_IPS_THREADS,
-  frames: MAX_INSPECT_APPLE_IPS_FRAMES,
-  images: MAX_INSPECT_APPLE_IPS_IMAGES,
-  registers: MAX_INSPECT_APPLE_IPS_REGISTERS,
-};
 
 const isSelectedBoundary = (
   boundary: AppleIpsResourceFailure["boundary"],
 ): boundary is AppleIpsSelectedBoundary =>
-  Object.hasOwn(SELECTED_CEILINGS, boundary);
+  Object.hasOwn(SELECTED_BUDGETS, boundary);
 
 const budgetRemediation = (
   input: InspectAppleIpsInput,
   boundary: AppleIpsSelectedBoundary,
 ): string => {
-  const selected = SELECTED_BUDGETS[boundary](input);
-  const ceiling = SELECTED_CEILINGS[boundary];
-  return selected >= ceiling
-    ? `The report exceeds the ${String(ceiling)}-entry ${boundary} ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_${boundary} above ${String(selected)} or select a smaller artifact; the limit is the caller-selected ${boundary} budget.`;
+  const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
+  const selected = input[argument];
+  const recovery =
+    selected >= maximum
+      ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller report.`
+      : `Raise ${argument} on the next call, up to ${String(maximum)} ${unit}, or select a smaller report; no restart is required.`;
+  const explanation =
+    boundary === "integer_text"
+      ? ` The default is ${String(DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES)} UTF-16 bytes. Conservative reservation precedes numeric conversion and address expansion; max_file_bytes and row budgets do not raise it.`
+      : "";
+  return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}${explanation}`;
 };
 
 const resourceRecovery = (

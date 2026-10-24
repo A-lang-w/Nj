@@ -69,4 +69,23 @@ allowances bound JSON nesting (64 levels), unlisted key names per object
 truncated crash body, invalid UTF-8, a NUL in the text, and exhausted budgets
 fail without partial success.
 
+`max_integer_text_bytes` (`--max-integer-text-bytes` in the CLI) separately
+bounds retained decimal and hexadecimal integer text, including every derived
+runtime address. Its default is 8 MiB of UTF-16 text storage and its maximum is
+64 MiB. Each appearance counts, even when an object could be shared in memory
+but would be serialized more than once. The parser reserves a conservative
+upper bound before numeric conversion or address expansion, then releases the
+unused reservation after each value. It reuses the parsed source integer when
+the same image base contributes to many frames.
+
+Raise this per-call allowance on the next call when more room is needed; no
+restart is required. File-size and row budgets do not raise it. This allowance
+is separate from JSON wire size, MCP response limits and the client's receive
+buffer. An exhausted allowance reports a typed resource error without partial
+success or truncated integer facts.
+
+```bash
+rea inspect-apple-ips /absolute/path/to/report.ips --max-integer-text-bytes 16777216 --json
+```
+
 This workflow does not execute a target, launch atos, or search for dSYMs.

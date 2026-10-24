@@ -1,19 +1,14 @@
-import type {
-  AppleIpsTypeMismatch,
-  RecordedInteger,
+import {
+  appleIpsIntegerTextBytes,
+  type AppleIpsTypeMismatch,
+  type RecordedInteger,
 } from "../../domain/native/appleIps.js";
+import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
 import type { LosslessJson } from "./losslessJson.js";
 
 export type Members = Readonly<Record<string, LosslessJson>>;
 
-const UINT32_MAX = 0xffffffffn;
-
-export const recordedInteger = (decimal: string): RecordedInteger => {
-  const value = BigInt(decimal);
-  return value < 0n
-    ? { decimal, hex: null }
-    : { decimal, hex: `0x${value.toString(16)}` };
-};
+const UINT32_MAX = 0xffffffff;
 
 const observedType = (value: LosslessJson | undefined): string =>
   value === undefined
@@ -29,6 +24,62 @@ const observedType = (value: LosslessJson | undefined): string =>
  */
 export class FieldReader {
   readonly mismatches: AppleIpsTypeMismatch[] = [];
+  readonly #integers = new WeakMap<RecordedInteger, bigint>();
+  #integerTextBytes = 0;
+
+  constructor(readonly maximumIntegerTextBytes: number) {}
+
+  /** Reserve a safe decimal/hex upper bound before BigInt or string expansion. */
+  #reserve(decimalCharacters: number, hexadecimal: boolean): number {
+    // log16(10) < 5/6. Include the 0x prefix; signs only enlarge this bound.
+    const hexCharacters = hexadecimal
+      ? Math.ceil((decimalCharacters * 5) / 6) + 2
+      : 0;
+    const bytes = 2 * (decimalCharacters + hexCharacters);
+    if (bytes > this.maximumIntegerTextBytes - this.#integerTextBytes)
+      throw new AppleIpsResourceFailure(
+        "integer_text",
+        this.maximumIntegerTextBytes,
+        `IPS integer text reservation exceeds the ${String(this.maximumIntegerTextBytes)}-byte UTF-16 allowance`,
+      );
+    this.#integerTextBytes += bytes;
+    return bytes;
+  }
+
+  #retain(value: bigint, decimal: string, reserved: number): RecordedInteger {
+    const recorded = {
+      decimal,
+      hex: value < 0n ? null : `0x${value.toString(16)}`,
+    };
+    this.#integerTextBytes -= reserved - appleIpsIntegerTextBytes(recorded);
+    return recorded;
+  }
+
+  recordedInteger(decimal: string): RecordedInteger {
+    const hexadecimal = !decimal.startsWith("-") || decimal === "-0";
+    const reserved = this.#reserve(decimal.length, hexadecimal);
+    const value = BigInt(decimal);
+    const recorded = this.#retain(value, decimal, reserved);
+    this.#integers.set(recorded, value);
+    return recorded;
+  }
+
+  add(
+    left: RecordedInteger | null,
+    right: RecordedInteger | null,
+  ): RecordedInteger | null {
+    if (left === null || right === null) return null;
+    const a = this.#integers.get(left);
+    const b = this.#integers.get(right);
+    if (a === undefined || b === undefined)
+      throw new Error("IPS integer facts do not belong to this field reader");
+    const reserved = this.#reserve(
+      Math.max(left.decimal.length, right.decimal.length) + 1,
+      true,
+    );
+    const value = a + b;
+    return this.#retain(value, value.toString(), reserved);
+  }
 
   mismatch(path: string, expected: string, value: LosslessJson | undefined) {
     this.mismatches.push({ path, expected, observed: observedType(value) });
@@ -47,15 +98,18 @@ export class FieldReader {
     path: string,
   ): RecordedInteger | null {
     if (value === undefined || value.kind === "null") return null;
-    if (value.kind === "integer") return recordedInteger(value.decimal);
+    if (value.kind === "integer") return this.recordedInteger(value.decimal);
     this.mismatch(path, "integer", value);
     return null;
   }
 
   index(value: LosslessJson | undefined, path: string): number | null {
     if (value?.kind === "integer") {
-      const index = BigInt(value.decimal);
-      if (index >= 0n && index <= UINT32_MAX) return Number(index);
+      // Every uint32 fits in ten decimal digits, safely below Number's exact
+      // integer limit. Oversized source indices need no BigInt allocation.
+      const index = value.decimal.length <= 10 ? Number(value.decimal) : NaN;
+      if (Number.isInteger(index) && index >= 0 && index <= UINT32_MAX)
+        return index === 0 ? 0 : index;
       this.mismatches.push({
         path,
         expected: "unsigned 32-bit integer",

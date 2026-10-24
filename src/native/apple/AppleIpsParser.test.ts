@@ -22,6 +22,42 @@ const artifact = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
+const integerAmplificationBytes = (): Buffer => {
+  const base = `1${"0".repeat(20000)}`;
+  const frames = Array.from(
+    { length: 512 },
+    () => '{"imageIndex":0,"imageOffset":1}',
+  ).join(",");
+  return Buffer.from(
+    `${appleIpsMetadataLine()}\n{"faultingThread":0,"threads":[{"frames":[${frames}]}],"usedImages":[{"base":${base},"size":4096,"arch":"arm64"}]}`,
+  );
+};
+
+it("refuses integer text amplification before retaining every derived address", () => {
+  const bytes = integerAmplificationBytes();
+  expect(bytes.length).toBeLessThan(input.max_file_bytes);
+  expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
+    expect.objectContaining({
+      boundary: "integer_text",
+      maximum: 8 * 1024 * 1024,
+    }),
+  );
+});
+
+it("honors a larger integer text allowance without changing decimal facts", () => {
+  const bytes = integerAmplificationBytes();
+  const options = inspectAppleIpsInputSchema.parse({
+    path: input.path,
+    max_integer_text_bytes: 64 * 1024 * 1024,
+  });
+  const report = parseAppleIps(bytes, artifact(bytes), options);
+  expect(report.threads[0]?.frames).toHaveLength(512);
+  expect(report.images[0]?.base?.decimal).toBe(`1${"0".repeat(20000)}`);
+  expect(report.threads[0]?.frames[511]?.runtime_address?.decimal).toBe(
+    `1${"0".repeat(19999)}1`,
+  );
+});
+
 it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
   const bytes = appleIpsBytes();
   const report = parseAppleIps(bytes, artifact(bytes), input);

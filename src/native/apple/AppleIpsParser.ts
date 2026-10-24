@@ -7,11 +7,10 @@ import {
   type AppleIpsImageSource,
   type AppleIpsThread,
   type InspectAppleIpsInput,
-  type RecordedInteger,
 } from "../../domain/native/appleIps.js";
 import { AppleIpsFormatFailure } from "./AppleIps.errors.js";
 import { classify } from "./AppleIpsClassification.js";
-import { FieldReader, recordedInteger } from "./AppleIpsFieldReader.js";
+import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   consumeJson,
   ipsBodyShape,
@@ -29,16 +28,6 @@ const IPS_LIMITATIONS = [
 ];
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
-
-const add = (
-  left: RecordedInteger | null,
-  right: RecordedInteger | null,
-): RecordedInteger | null =>
-  left === null || right === null
-    ? null
-    : recordedInteger(
-        (BigInt(left.decimal) + BigInt(right.decimal)).toString(),
-      );
 
 const canonicalUuid = (
   raw: string | null,
@@ -139,7 +128,11 @@ const registerValue = (
 ): AppleIpsThread["registers"][number] | null => {
   if (value.kind === "null") return null;
   if (value.kind === "integer")
-    return { name, value: recordedInteger(value.decimal), description: null };
+    return {
+      name,
+      value: read.recordedInteger(value.decimal),
+      description: null,
+    };
   if (value.kind !== "object") {
     read.mismatch(path, "integer or object with integer value", value);
     return null;
@@ -261,7 +254,7 @@ const threadsOf = (
         image_uuid: image?.uuid ?? null,
         arch: image?.arch ?? null,
         image_offset: imageOffset,
-        runtime_address: add(image?.base ?? null, imageOffset),
+        runtime_address: read.add(image?.base ?? null, imageOffset),
         role,
         inline,
         recorded_symbol: read.text(frameMembers.symbol, `${framePath}.symbol`),
@@ -366,7 +359,7 @@ export const parseAppleIps = (
   input: InspectAppleIpsInput,
 ): AppleIps => {
   const text = crashText(bytes);
-  const read = new FieldReader();
+  const read = new FieldReader(input.max_integer_text_bytes);
   const metadata = metadataOf(text.metadata, read);
   if (text.body.length === 0)
     throw new AppleIpsFormatFailure(

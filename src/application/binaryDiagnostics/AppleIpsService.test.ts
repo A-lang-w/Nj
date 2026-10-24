@@ -52,6 +52,23 @@ const report: AppleIps = {
   limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
 };
 
+it.each([null, { caller: "selected IPS request" }])(
+  "preserves early cancellation cause %j before validation",
+  async (reason) => {
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => {
+        throw new Error(
+          "An already cancelled request must not reach the provider",
+        );
+      },
+    }).inspect(null, { signal: AbortSignal.abort(reason) });
+    if (result.ok) throw new Error("Expected early cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+  },
+);
+
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new AppleIpsService({
@@ -86,6 +103,51 @@ it("records the selected report as a file subject", async () => {
     normalized_result: report,
   });
 });
+
+it.each(["threads", "images"] as const)(
+  "rejects %s coverage counts that disagree with retained rows",
+  async (field) => {
+    const inconsistent: AppleIps = {
+      ...report,
+      coverage: { ...report.coverage, [field]: 1 },
+    };
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(inconsistent)),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (result.ok)
+      throw new Error("Expected contradictory provider output to fail");
+    expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
+
+it.each([
+  [43, false],
+  [44, true],
+] as const)(
+  "checks repeated integer text against %s UTF-16 bytes",
+  async (maximum, accepted) => {
+    const value = { decimal: "12345", hex: "0x3039" };
+    const repeated: AppleIps = {
+      ...report,
+      process: { ...report.process, pid: value },
+      termination: {
+        namespace: null,
+        code: value,
+        indicator: null,
+        reasons: null,
+        unlisted_keys: [],
+      },
+    };
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(repeated)),
+    }).inspect({ path: report.artifact.path, max_integer_text_bytes: maximum });
+    expect(result.ok).toBe(accepted);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
 
 it("discards an observation if the caller cancels while the provider completes", async () => {
   const controller = new AbortController();

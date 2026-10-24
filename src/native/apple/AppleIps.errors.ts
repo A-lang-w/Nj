@@ -14,7 +14,8 @@ export type AppleIpsSelectedBoundary =
   | "threads"
   | "frames"
   | "images"
-  | "registers";
+  | "registers"
+  | "integer_text";
 
 /** Fixed format ceilings that no caller argument raises. */
 export type AppleIpsFixedBoundary =
