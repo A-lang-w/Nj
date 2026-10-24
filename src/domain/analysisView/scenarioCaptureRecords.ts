@@ -81,7 +81,10 @@ const utf8Text = (body: CapturedBody): string | undefined => {
   }
 };
 
-const mediaType = (content: ContentEvent | undefined): string | undefined =>
+/** A content event's media type: its captured body's, else its retained Content-Type value. */
+export const scenarioContentMediaType = (
+  content: ContentEvent | undefined,
+): string | undefined =>
   captured(content)?.media_type ??
   headerValue(content?.headers, "content-type");
 
@@ -93,9 +96,10 @@ const reportedRequest = (
 ): { readonly [key: string]: JsonValue } => {
   const body = purpose === "manifest" ? captured(content) : undefined;
   const text = body === undefined ? undefined : utf8Text(body);
-  const mimeType = mediaType(content);
+  const mimeType = scenarioContentMediaType(content);
   return {
     method: request.method,
+    bodySize: body !== undefined && !body.redacted ? body.bytes : -1,
     url: request.url.redacted ? null : request.url.url,
     ...(text === undefined || mimeType === undefined
       ? {}
@@ -181,7 +185,7 @@ const record = (
   const requestContent = onlyContent(index, request.sequence);
   const responseContent = onlyContent(index, response?.sequence);
   const body = retainedBody(responseContent);
-  const mimeType = mediaType(responseContent) ?? "";
+  const mimeType = scenarioContentMediaType(responseContent) ?? "";
   return {
     record: {
       ordinal,
