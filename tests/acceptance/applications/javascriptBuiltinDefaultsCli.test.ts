@@ -52,8 +52,6 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
      const fs = require('node:fs'); fs.readFileSync('wrong-loader.json');
      require('node:fs').readFileSync('wrong-direct-loader.json');`,
   );
-  // These cases require CommonJS wrapper authority, not an unknown .ts
-  // compiler mode. Match the producer's explicit .cts identity.
   await writeFile(
     join(root, "imports.cts"),
     `import fs = require('node:fs'); const other = require('fs');
