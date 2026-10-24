@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   peImportImage,
   peImportDirectoryAtRva,
+  peImportDirectoryMappingStops,
 } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -55,29 +56,31 @@ mcpTest(
       expect(
         evidence.normalized_result.imports[0]?.functions.map((row) => row.name),
       ).toEqual(["GetProcAddress", "ExitProcess"]);
-      const partialPath = join(root, "invalid-first-descriptor.exe");
-      await writeFile(
-        partialPath,
-        peImportDirectoryAtRva("standard", 0xfffffff0),
-      );
-      const partial = await client.callTool({
-        name: "inspect_pe_imports",
-        arguments: { path: partialPath },
-      });
-      expect(partial.isError, JSON.stringify(partial.content)).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, partial.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
-      const partialReport = toolContract(
-        "inspect_pe_imports",
-      ).outputSchema.parse(partial.structuredContent).normalized_result;
-      expect(partialReport.import_directory).toMatchObject({
-        rva: 0xfffffff0,
-        locations: [],
-      });
-      expect(partialReport.coverage.status).toBe("partial");
-      expect(partialReport.imphash.md5).toBeNull();
+      for (const [label, bytes, rva] of [
+        ["rva", peImportDirectoryAtRva("standard", 0xfffffff0), 0xfffffff0],
+        ["mapping", peImportDirectoryMappingStops("standard", 0), 0x40000000],
+      ] as const) {
+        const partialPath = join(root, `invalid-first-descriptor-${label}.exe`);
+        await writeFile(partialPath, bytes);
+        const partial = await client.callTool({
+          name: "inspect_pe_imports",
+          arguments: { path: partialPath },
+        });
+        expect(partial.isError, JSON.stringify(partial.content)).not.toBe(true);
+        expect(
+          ajv.validate(outputSchema, partial.structuredContent),
+          JSON.stringify(ajv.errors),
+        ).toBe(true);
+        const partialReport = toolContract(
+          "inspect_pe_imports",
+        ).outputSchema.parse(partial.structuredContent).normalized_result;
+        expect(partialReport.import_directory).toMatchObject({
+          rva,
+          locations: [],
+        });
+        expect(partialReport.coverage.status).toBe("partial");
+        expect(partialReport.imphash.md5).toBeNull();
+      }
     } finally {
       await session.close();
     }

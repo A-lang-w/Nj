@@ -10,6 +10,7 @@ import {
   peImportLeadingSectionImage,
   peImportManySectionsImage,
   peImportDirectoryAtRva,
+  peImportDirectoryMappingStops,
   peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
@@ -42,6 +43,40 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
 });
 
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
+
+it.each([
+  ["standard", 0],
+  ["standard", 1],
+  ["delay", 0],
+  ["delay", 1],
+] as const)(
+  "retains %s rows before a descriptor mapping gap after %s rows",
+  async (kind, retained) => {
+    const report = await parse(peImportDirectoryMappingStops(kind, retained));
+    const directory =
+      kind === "standard"
+        ? report.import_directory
+        : report.delay_import_directory;
+    const rows = kind === "standard" ? report.imports : report.delay_imports;
+    const width = kind === "standard" ? 20 : 32;
+    expect(rows).toHaveLength(retained);
+    expect(directory).toMatchObject({
+      rva: 0x40000000,
+      locations: retained === 0 ? [] : [{ offset: 0x1000, bytes: width }],
+    });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "descriptor_unreadable",
+        location: `0x${(0x40000000 + retained * width).toString(16)}`,
+      }),
+    );
+    expect(report.imphash.md5).toBe(
+      kind === "delay" ? "92cef6cc91a85825f3c8a0516517c66f" : null,
+    );
+    expect(peImportsSchema.safeParse(report).success).toBe(true);
+  },
+);
 
 it.each([
   ["standard", 0xffffffec, 1, "0x100000000"],

@@ -230,3 +230,26 @@ waited-child CPU), with a sampled process-family peak of 2,039.3 MiB. Full
 main integration at `7f70797b98c226009163358f91a9cfcedf03b390` includes the
 upstream plist-fixture correction for the three unrelated native-provider
 failures seen in CI run 40055148308.
+
+## Descriptor mapping stops
+
+A later review identified the same partial-result boundary when a descriptor's
+uint32 RVA is legal but lacks a file mapping. Four controls (standard/delay,
+first descriptor/after one row) all threw before correction. Both walks now
+use one descriptor admission function: range failures and mapping failures
+append explicit issues, then preserve the directory declaration, consumed
+spans and preceding rows. Only mapping failures are caught; unrelated failures
+continue to propagate. Standard-table failures withhold imphash; delay-table
+failures preserve an independently complete standard hash.
+
+The public CLI covers all four mapping-stop cases alongside the RVA cases.
+The actual MCP SDK and advertised output schema cover an unmapped first
+descriptor. These later validation changes are outside the pinned performance
+comparisons above; no additional speed or maximum-size claim is made.
+
+Final integration at main `7f70797b` passes **277** selected checks: the
+expanded PE/shared lifecycle selection plus native-provider tests that cover
+the upstream plist-fixture correction. This takes 126.978 s, 127.567 s
+waited-child CPU and 2,061.9 MiB sampled process-family RSS. These are test
+suite costs, not analyst-task costs. Full `npm run check`, `npm run docs:check`
+and test discovery pass; discovery accounts for all 2,323 files exactly once.

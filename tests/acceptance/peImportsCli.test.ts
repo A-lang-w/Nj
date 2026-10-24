@@ -8,6 +8,7 @@ import {
   peImportLeadingSectionImage,
   peImportManySectionsImage,
   peImportDirectoryAtRva,
+  peImportDirectoryMappingStops,
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -63,19 +64,28 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
 });
 
 cliTest(
-  "preserves directory declarations and partial rows at the RVA ceiling",
+  "preserves directory declarations and partial rows at RVA and mapping boundaries",
   async ({ cli }) => {
     const root = await createTestTempDirectory(
       "rea-pe-imports-cli-directory-rva-",
     );
-    for (const [kind, rva, retained] of [
-      ["standard", 0xffffffec, 1],
-      ["standard", 0xfffffff0, 0],
-      ["delay", 0xffffffe0, 1],
-      ["delay", 0xfffffff0, 0],
+    for (const [kind, rva, retained, mappingGap] of [
+      ["standard", 0xffffffec, 1, false],
+      ["standard", 0xfffffff0, 0, false],
+      ["delay", 0xffffffe0, 1, false],
+      ["delay", 0xfffffff0, 0, false],
+      ["standard", 0x40000000, 0, true],
+      ["standard", 0x40000000, 1, true],
+      ["delay", 0x40000000, 0, true],
+      ["delay", 0x40000000, 1, true],
     ] as const) {
-      const path = join(root, `${kind}-${String(rva)}.exe`);
-      await writeFile(path, peImportDirectoryAtRva(kind, rva));
+      const path = join(root, `${kind}-${String(rva)}-${String(retained)}.exe`);
+      await writeFile(
+        path,
+        mappingGap
+          ? peImportDirectoryMappingStops(kind, retained)
+          : peImportDirectoryAtRva(kind, rva),
+      );
       const result = await cli.run({
         arguments: ["inspect-pe-imports", path, "--json"],
       });

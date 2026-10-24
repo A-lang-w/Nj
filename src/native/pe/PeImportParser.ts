@@ -3,6 +3,7 @@ import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import {
   BinaryFormatFailure,
+  BinaryMappingFailure,
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
@@ -190,6 +191,24 @@ export const parsePeImports = async (
     });
     return false;
   };
+  const mapDescriptor = (
+    rva: number,
+    size: number,
+    label: string,
+  ): number | null => {
+    if (!admitRva(rva, size, label)) return null;
+    try {
+      return map(rva, size);
+    } catch (cause) {
+      if (!(cause instanceof BinaryMappingFailure)) throw cause;
+      issues.push({
+        code: "descriptor_unreadable",
+        location: hex(rva),
+        message: `${label}: ${cause.message}`,
+      });
+      return null;
+    }
+  };
   const retain = createRetention();
   let examinedDlls = 0;
   let examinedFunctions = 0;
@@ -376,11 +395,12 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         importDirectory.virtual_address + index * IMPORT_DESCRIPTOR_BYTES;
-      if (
-        !admitRva(descriptorRva, IMPORT_DESCRIPTOR_BYTES, "Import descriptor")
-      )
-        break;
-      const descriptor = map(descriptorRva, IMPORT_DESCRIPTOR_BYTES);
+      const descriptor = mapDescriptor(
+        descriptorRva,
+        IMPORT_DESCRIPTOR_BYTES,
+        "Import descriptor",
+      );
+      if (descriptor === null) break;
       consume(spans, descriptor, IMPORT_DESCRIPTOR_BYTES);
       const originalFirstThunk = reader.u32(descriptor);
       const timeDateStamp = reader.u32(descriptor + 4);
@@ -449,15 +469,12 @@ export const parsePeImports = async (
       await checkpoint();
       const descriptorRva =
         delayDirectory.virtual_address + index * DELAY_DESCRIPTOR_BYTES;
-      if (
-        !admitRva(
-          descriptorRva,
-          DELAY_DESCRIPTOR_BYTES,
-          "Delay-load descriptor",
-        )
-      )
-        break;
-      const descriptor = map(descriptorRva, DELAY_DESCRIPTOR_BYTES);
+      const descriptor = mapDescriptor(
+        descriptorRva,
+        DELAY_DESCRIPTOR_BYTES,
+        "Delay-load descriptor",
+      );
+      if (descriptor === null) break;
       consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
       const attributes = reader.u32(descriptor);
       const nameRva = reader.u32(descriptor + 4);

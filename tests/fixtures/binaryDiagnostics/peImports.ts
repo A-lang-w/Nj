@@ -218,6 +218,19 @@ export const peImportDirectoryAtRva = (
   return bytes;
 };
 
+/** A directory starts in a gap, or its first descriptor is followed by a gap. */
+export const peImportDirectoryMappingStops = (
+  kind: "standard" | "delay",
+  retained: 0 | 1,
+): Buffer => {
+  const bytes = peImportDirectoryAtRva(kind, 0x40000000);
+  const section = 152 + 240 + 40;
+  const size = retained * (kind === "standard" ? 20 : 32);
+  bytes.writeUInt32LE(size, section + 8);
+  bytes.writeUInt32LE(size, section + 16);
+  return bytes;
+};
+
 /** A DLL name whose NUL lies outside the uint32 RVA space. */
 export const peImportNameAtRva = (rva: number): Buffer => {
   const bytes = withHighImportRange(

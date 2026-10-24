@@ -103,6 +103,7 @@ const directorySchema = z
 const peImportIssueSchema = z.strictObject({
   code: z.enum([
     "malformed_entry",
+    "descriptor_unreadable",
     "name_unreadable",
     "thunk_unreadable",
     "unsupported_form",
