@@ -1,4 +1,5 @@
 import { PRODUCT_IDENTITY } from "../../identity.js";
+import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -7,7 +8,7 @@ import { servedCatalog, type PreparedState } from "./environmentState.js";
 import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
-} from "./environmentStateAnswer.js";
+} from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 import type { EnvironmentToolDefinition } from "./environmentTools.js";
 
@@ -15,7 +16,7 @@ import type { EnvironmentToolDefinition } from "./environmentTools.js";
 export const ENVIRONMENT_EXPORT_OPERATION = "environment-export";
 
 /** The image the exported Dockerfile builds from; the agentenv runner builds it with Docker. */
-export const BUNDLE_BASE_IMAGE = "node:24.18.0-bookworm-slim";
+export const BUNDLE_BASE_IMAGE = `node:${PACKAGE_METADATA.pinnedNodeVersion}-bookworm-slim`;
 
 /** The port the agentenv framework maps for an MCP server env; it sets the host but not the port. */
 export const BUNDLE_MCP_PORT = 18765;
@@ -52,7 +53,7 @@ export interface EnvironmentServedCheck {
 export interface EnvironmentBundlePlan {
   readonly name: string;
   readonly packageSource: EnvironmentPackageSource;
-  /** Tools the bundle serves: every manifest tool for replay, the read tools from a state. */
+  /** Tools the bundle serves: every manifest tool for replay; from a state, the read tools and the served write tools. */
   readonly toolCount: number;
   readonly check: EnvironmentServedCheck | null;
   /** Whether the bundle serves from the state, as `environment-serve` reports it. */
@@ -282,7 +283,8 @@ server derives the state the capture observed, the \`environment-state\` view
 of the capture with the manifest's template rules, and serves from it: read
 tools answer from the state where it backs them and from their recordings
 otherwise, \`/agentenv\` serves \`data/reset\`, \`data/add\` and \`data/get\` on
-it, and write tools are not served yet. When the state cannot be derived, or
+it, and write tools are served only where the capture's later reads confirmed
+their effect. When the state cannot be derived, or
 its catalog exceeds the discovery budget, the server logs why and replays
 instead: each MCP tool call selects the retained record whose path and query
 values best match the arguments and returns that record's recorded status,
@@ -332,7 +334,7 @@ export const planEnvironmentBundle = (
   // The catalog and answers the bundle's server will have, so the verifier and README predict them.
   const catalog = servedCatalog(
     source,
-    state !== undefined,
+    state,
     name,
     ENVIRONMENT_EXPORT_OPERATION,
   );
