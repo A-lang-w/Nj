@@ -1,7 +1,7 @@
 import type { Socket } from "node:net";
 
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -62,54 +62,80 @@ const harness = (ceiling: BridgeMaxRequestBytes): WireHarness => {
 };
 
 describe("GhidraWire request ceiling", () => {
-  it("refuses an oversized request before any socket write", async () => {
-    const { writes, wire } = harness(limit(8192));
-
-    const refused = await wire.request(
-      "search_strings",
-      { pattern: "n".repeat(9000) },
-      {},
+  it("refuses escaped oversized input before encoding, pending registration or write", async () => {
+    const { writes, pending, wire } = harness(limit(8192));
+    const params = { pattern: "\u0000".repeat(1500) };
+    const payloadBytes = Buffer.byteLength(
+      JSON.stringify({
+        id: 1,
+        token: "b".repeat(64),
+        method: "search_strings",
+        params,
+      }),
     );
-
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    expect(refused.error.message).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-    expect(refused.error.message).toContain("8192");
-    expect(refused.error.message).toContain("Ghidra request exceeds");
-    expect(refused.error.cause).toBeInstanceOf(AnalysisResourceConstraintError);
-    const constraint = refused.error.cause;
-    if (!(constraint instanceof AnalysisResourceConstraintError)) return;
-    expect(constraint.reportedLimits).toMatchObject({
-      max_request_bytes: 8192,
-      payload_bytes: expect.any(Number),
-    });
-    const payloadBytes = constraint.reportedLimits?.payload_bytes;
-    expect(typeof payloadBytes).toBe("number");
-    expect(payloadBytes as number).toBeGreaterThan(8192);
-    expect(constraint.retryable).toBe(false);
-    expect(writes).toEqual([]);
+    expect(Buffer.byteLength(params.pattern)).toBeLessThan(8192);
+    expect(payloadBytes).toBeGreaterThan(8192);
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const refused = await wire.request("search_strings", params, {});
+      if (refused.ok) throw new Error("Expected a request ceiling refusal");
+      expect(refused.error.message).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+      expect(refused.error.message).toContain("8192");
+      expect(refused.error.message).toContain("Ghidra request exceeds");
+      const constraint = refused.error.cause;
+      if (!(constraint instanceof AnalysisResourceConstraintError))
+        throw new Error("Expected the typed transport constraint");
+      expect(constraint.reportedLimits).toMatchObject({
+        max_request_bytes: 8192,
+        payload_bytes: payloadBytes,
+      });
+      expect(constraint.retryable).toBe(false);
+      expect(writes.length).toBe(0);
+      expect(pending.has(1)).toBe(false);
+      const encodings = stringify.mock.calls.filter(
+        ([value]: readonly unknown[]) =>
+          typeof value === "object" &&
+          value !== null &&
+          "params" in value &&
+          value.params === params,
+      ).length;
+      expect(encodings).toBe(0);
+    } finally {
+      stringify.mockRestore();
+    }
   });
 
-  it("writes a request that stays at or below the ceiling", async () => {
-    const { writes, pending, wire } = harness(limit(16 * 1024 * 1024));
-
-    const dispatched = wire.request(
-      "search_strings",
-      { pattern: "fixture" },
-      {},
-    );
-    expect(writes).toHaveLength(1);
-    expect(writes[0]).toContain('"search_strings"');
-    expect(writes[0]?.endsWith("\n")).toBe(true);
-    pending.settle(1, ok("ok"));
-    await expect(dispatched).resolves.toMatchObject({ ok: true, value: "ok" });
-  });
-
-  it("keeps the refusal out of the pending-operation registry", async () => {
-    const { pending, wire } = harness(limit(7464));
-
-    await wire.request("search_strings", { pattern: "x".repeat(20_000) }, {});
-
-    expect(pending.has(1)).toBe(false);
-  });
+  it.each([true, false])(
+    "enforces the exact UTF-8 JSON payload boundary (admitted: %s)",
+    async (admitted) => {
+      const params = { pattern: '前缀"\\\u0000😀\ud800'.repeat(1024) };
+      const encoded = JSON.stringify({
+        id: 1,
+        token: "b".repeat(64),
+        method: "search_strings",
+        params,
+      });
+      const payloadBytes = Buffer.byteLength(encoded);
+      const { writes, pending, wire } = harness(
+        limit(payloadBytes - (admitted ? 0 : 1)),
+      );
+      const dispatched = wire.request("search_strings", params, {});
+      pending.settle(1, ok("ok"));
+      const result = await dispatched;
+      if (admitted) {
+        if (!result.ok) throw result.error;
+        expect(result.value).toBe("ok");
+        expect(writes.length).toBe(1);
+        expect(Buffer.byteLength(writes[0] ?? "")).toBe(payloadBytes + 1);
+        expect(writes[0] === encoded + "\n").toBe(true);
+      } else {
+        if (result.ok) throw new Error("Expected a request ceiling refusal");
+        expect(result.error.cause).toBeInstanceOf(
+          AnalysisResourceConstraintError,
+        );
+        expect(writes.length).toBe(0);
+      }
+      expect(pending.has(1)).toBe(false);
+    },
+  );
 });

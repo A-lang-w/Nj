@@ -5,6 +5,7 @@ import {
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { err, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { PendingOperations } from "../process/PendingOperations.js";
@@ -62,8 +63,8 @@ export class GhidraWire {
         ),
       );
     const timeoutMs = options.timeoutMs;
-    const payload = JSON.stringify({ id, token, method, params });
-    const payloadBytes = Buffer.byteLength(payload);
+    const payloadValue = { id, token, method, params };
+    const payloadBytes = jsonValueByteLength(payloadValue);
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
     if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
@@ -73,8 +74,11 @@ export class GhidraWire {
         payloadBytes,
         "Ghidra",
       );
-      return err(this.#options.failure("process", oversize.message, oversize));
+      return err(
+        this.#options.failure("admission", oversize.message, oversize),
+      );
     }
+    const payload = JSON.stringify(payloadValue);
     const response = this.#options.pending.wait(id, {
       ...(timeoutMs === undefined
         ? {}
