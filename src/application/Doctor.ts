@@ -55,8 +55,10 @@ import {
   doctorHealthy,
 } from "./DoctorDiagnostics.js";
 import {
+  configuredDoctorScope,
   normalizeDoctorScope,
   scopeDoctorChecks,
+  type DoctorConfiguredScopeReport,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
 
@@ -151,6 +153,8 @@ export interface DoctorReport {
   readonly scope: DoctorScopeReport;
   readonly scope_checks: readonly DoctorCheck[];
   readonly informational_checks: readonly DoctorCheck[];
+  /** Audit-wide reports only: the set-up workflow and the command scoped to it. */
+  readonly configured_scope?: DoctorConfiguredScopeReport;
   readonly hopperPath?: string;
   readonly providerInspections?: readonly DoctorProviderInspection[];
   readonly checks: readonly DoctorCheck[];
@@ -286,13 +290,17 @@ const inspectDoctor = async (
     providerInspections,
   };
   const environmentHealthy = doctorHealthy(checks, providers);
-  const scoped = scopeDoctorChecks({
+  const scopeInput = {
     checks,
     registrations: identity.value.registrations,
     skillState: identity.value.skill.state,
     providers,
-    scope,
-  });
+  };
+  const scoped = scopeDoctorChecks({ ...scopeInput, scope });
+  const configured =
+    scope.mode === "audit-wide"
+      ? configuredDoctorScope({ ...scopeInput, target: scope.target })
+      : undefined;
   return {
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
@@ -300,6 +308,7 @@ const inspectDoctor = async (
     scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
     informational_checks:
       scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
+    ...(configured === undefined ? {} : { configured_scope: configured }),
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,

@@ -36,6 +36,72 @@ interface DoctorScopeInput {
   readonly scope: DoctorScopeReport;
 }
 
+/**
+ * The clients, providers and skill this host has set up, with their readiness
+ * under the explicit-scope rules, so an audit-wide report can tell a failure in
+ * the configured workflow apart from one in components the user never set up.
+ */
+export interface DoctorConfiguredScopeReport {
+  readonly clients: readonly string[];
+  readonly providers: readonly string[];
+  readonly skill: boolean;
+  readonly healthy: boolean;
+  /** The doctor invocation that reports exactly this scope. */
+  readonly command: string;
+}
+
+/**
+ * Select registered clients (any state except missing or manual), configured or
+ * discovered providers, and an installed skill; absent when none is set up.
+ */
+export const configuredDoctorScope = (
+  input: Omit<DoctorScopeInput, "scope"> & { readonly target: string | null },
+): DoctorConfiguredScopeReport | undefined => {
+  const clients = uniqueSorted(
+    input.registrations
+      .filter(({ state }) => state !== "missing" && state !== "manual")
+      .map(({ client }) => client),
+  );
+  const providers = uniqueSorted([
+    ...(input.providers.providerInspections ?? [])
+      .filter(({ configured }) => configured)
+      .map(({ id }) => id),
+    ...(input.providers.hopperConfigured || input.providers.hopperAvailable
+      ? ["hopper"]
+      : []),
+  ]);
+  if (clients.length === 0 && providers.length === 0) return undefined;
+  const skill = input.skillState !== "missing";
+  const scope: DoctorScopeReport = {
+    mode: "explicit",
+    clients,
+    providers,
+    skill,
+    target: input.target,
+  };
+  return {
+    clients,
+    providers,
+    skill,
+    healthy: scopeDoctorChecks({ ...input, scope }).healthy,
+    command: [
+      "rea doctor",
+      ...clients.map((client) => `--client ${client}`),
+      ...providers.map((provider) => `--provider ${provider}`),
+      ...(skill ? ["--skill"] : []),
+      ...(input.target === null
+        ? []
+        : [`--target ${shellArgument(input.target)}`]),
+    ].join(" "),
+  };
+};
+
+/** Quote a caller path for POSIX shells only when it needs it. */
+const shellArgument = (value: string): string =>
+  /^[\w./:@%+=,-]+$/u.test(value)
+    ? value
+    : `'${value.replaceAll("'", "'\\''")}'`;
+
 /** Normalize a caller-selected doctor readiness boundary. */
 export const normalizeDoctorScope = (
   requested: DoctorScope | undefined,

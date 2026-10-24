@@ -6,7 +6,12 @@ import { defaultHopperLauncherPath } from "../config/parseConfig.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+  type DoctorHost,
+  type DoctorProviderInspection,
+} from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
@@ -1254,5 +1259,161 @@ describe("doctor target admission diagnostics", () => {
       }),
     );
     expect(result.checks).toContainEqual(targetCheck);
+  });
+});
+
+describe("doctor configured scope", () => {
+  const registration = (
+    client: string,
+    state: "aligned" | "stale" | "missing",
+  ): ClientRegistrationStatus =>
+    state === "missing"
+      ? {
+          client,
+          config_path: `/home/user/.${client}/config`,
+          command: [],
+          state,
+          remediation: "Run rea setup to refresh this registration.",
+        }
+      : state === "stale"
+        ? {
+            client,
+            config_path: `/home/user/.${client}/config`,
+            command: ["/old/rea", "mcp"],
+            state,
+            remediation: "Run rea setup to refresh this registration.",
+          }
+        : {
+            client,
+            config_path: `/home/user/.${client}/config`,
+            command: ["/current/rea", "mcp"],
+            state,
+            remediation: null,
+          };
+  const unconfigured = (
+    id: "ida" | "jadx" | "kuna",
+  ): DoctorProviderInspection => ({
+    id,
+    configured: false,
+    available: false,
+    providerVersion: null,
+    registrationEnvironment: {},
+    checks: [
+      {
+        name: "configuration",
+        ok: false,
+        code: "not_configured",
+        detail: `${id} is not configured.`,
+        remediation: `Configure ${id}.`,
+        classification: "missing_analysis_engine",
+      },
+    ],
+  });
+  const ghidra = (available: boolean): DoctorProviderInspection => ({
+    id: "ghidra",
+    configured: true,
+    available,
+    providerVersion: available ? "12.1.4" : null,
+    registrationEnvironment: { GHIDRA_INSTALL_DIR: "/tools/ghidra" },
+    checks: available
+      ? []
+      : [
+          {
+            name: "java",
+            ok: false,
+            code: "runtime_unavailable",
+            detail: "JAVA_HOME is not a JDK.",
+            remediation: "Set JAVA_HOME to a JDK 21 installation.",
+            classification: "missing_analysis_engine",
+          },
+        ],
+  });
+  const workstation = (
+    ghidraAvailable: boolean,
+    registrations: readonly ClientRegistrationStatus[] = [
+      registration("cursor", "aligned"),
+      registration("codex", "missing"),
+      registration("vscode", "missing"),
+    ],
+  ) =>
+    host({
+      installationPaths: () => Promise.resolve([]),
+      clientRegistrations: () => Promise.resolve(registrations),
+      providerInspections: () =>
+        Promise.resolve([
+          ghidra(ghidraAvailable),
+          unconfigured("ida"),
+          unconfigured("jadx"),
+          unconfigured("kuna"),
+        ]),
+    });
+
+  it("reports the configured workflow and its command beside an unhealthy audit", async () => {
+    const audit = await runDoctor(undefined, workstation(true));
+    expect(audit.healthy).toBe(false);
+    expect(audit.environment_healthy).toBe(false);
+    expect(audit.configured_scope).toEqual({
+      clients: ["cursor"],
+      providers: ["ghidra", "hopper"],
+      skill: true,
+      healthy: true,
+      command:
+        "rea doctor --client cursor --provider ghidra --provider hopper --skill",
+    });
+
+    const scoped = await runDoctor(undefined, workstation(true), {
+      clients: ["cursor"],
+      providers: ["ghidra", "hopper"],
+      skill: true,
+    });
+    expect(scoped.healthy).toBe(true);
+    expect(scoped).not.toHaveProperty("configured_scope");
+  });
+
+  it("keeps a configured provider's failure in the configured workflow", async () => {
+    const audit = await runDoctor(undefined, workstation(false));
+    expect(audit.configured_scope).toMatchObject({
+      providers: ["ghidra", "hopper"],
+      healthy: false,
+    });
+  });
+
+  it("keeps a stale registration in the configured workflow", async () => {
+    const audit = await runDoctor(
+      undefined,
+      workstation(true, [
+        registration("cursor", "aligned"),
+        registration("codex", "stale"),
+      ]),
+    );
+    expect(audit.configured_scope).toMatchObject({
+      clients: ["codex", "cursor"],
+      healthy: false,
+    });
+  });
+
+  it("quotes a target path in the suggested command", async () => {
+    const audit = await runDoctor(
+      "/Applications/My App's.app",
+      workstation(true),
+    );
+    expect(audit.configured_scope?.command).toBe(
+      "rea doctor --client cursor --provider ghidra --provider hopper --skill --target '/Applications/My App'\\''s.app'",
+    );
+  });
+
+  it("omits the configured workflow when nothing is set up", async () => {
+    const audit = await runDoctor(
+      undefined,
+      host({
+        installationPaths: () => Promise.resolve([]),
+        executable: () => Promise.resolve(false),
+        clientRegistrations: () =>
+          Promise.resolve([registration("codex", "missing")]),
+        providerInspections: () =>
+          Promise.resolve([unconfigured("ida"), unconfigured("jadx")]),
+      }),
+    );
+    expect(audit).not.toHaveProperty("configured_scope");
   });
 });
