@@ -426,8 +426,12 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. Malformed recognized FAT declarations retain
-their format-specific reasons.
+prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
+checks complete JVM framing within the same 16 MiB class identity bound as the
+Mach-O image reader. A complete class remains unsupported even if its constant
+pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
+malformed FAT interpretation remains unresolved. Malformed recognized FAT
+declarations retain their format-specific reasons.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -726,9 +730,10 @@ complete observation.
   examined type records and fully decoded declarations. Class vtable recovery
   reads the same descriptors, so an unreadable type record also keeps
   `swift_class_vtable_descriptors` partial.
-  Nominal declarations, conformance type references and class vtables share one
-  snapshot-scoped name/context reader. Conformance `type_name` and dispatch
-  `owner` retain enclosing named types; conformances carry the known module.
+  Nominal declarations, conformance type and protocol references, and class
+  vtables share one snapshot-scoped name/context reader. Conformance `type_name`,
+  `protocol_name`, and dispatch `owner` retain enclosing named types;
+  conformances carry the known module.
   Unresolved parents preserve the leaf name and a partial identity reason,
   while independently readable witness implementations remain available.
   Protocol instance properties use the same property-list reader as classes.
