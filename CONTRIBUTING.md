@@ -10,10 +10,18 @@ and maintenance cost. Keep cosmetic polish with useful fixes; confusing or
 incorrect user instructions warrant standalone corrections. Collect other
 cosmetic-only suggestions in an issue rather than separate PRs.
 
-For capability organization and provider composition, use the
-[architecture map](docs/architecture.mermaid). Production factories in
-`src/composition/` construct fresh providers without starting engines or acquiring
-targets; optional adapter failures must preserve successful peers. Run
+For selected architectural owners and dependency paths, use the
+[architecture map](docs/architecture.mermaid). It is not a complete directory or
+import inventory. For current provider wiring, start with
+[`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
+the other `src/composition/` factories for tool services, including
+[`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
+Live Frida and Cutter adapters are constructed directly in
+[`src/cli/fridaCommands.ts`](src/cli/fridaCommands.ts),
+[`src/cli/cutterCommands.ts`](src/cli/cutterCommands.ts), and
+[`src/server/createServer.ts`](src/server/createServer.ts).
+Production factories construct fresh providers without starting engines or
+acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 
@@ -21,8 +29,13 @@ For analysis workflows and agent interfaces, follow the
 [performance priorities](AGENTS.md#performance). Explain the selected output
 scope, reuse/cache decisions, and relevant before/after measurements when these
 costs change.
+Use the [analysis optimization skill](.agents/skills/rea-analysis-optimization/SKILL.md)
+to locate provider and shared-workflow bottlenecks, preserve Evidence, and
+compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
+When adding or changing an admission ceiling, budget, or deadline, follow
+[admission limits and recovery](docs/design/limits-and-recovery.md).
 
 ## Reporting issues
 
@@ -225,13 +238,29 @@ manifest. A source checkout does not: `native/windows/build/` is ignored by
 Git, and neither `npm ci` nor `npm run build:cached` (or `npm run build`)
 produces `rea-windows-x64.node` or `manifest.json` in that directory.
 Windows workflows and tests that require native controls need these artifacts;
-without them, those controls are unavailable even after a successful runtime build.
+this includes `run-exclusive` commands, which use the native Job Object to keep
+the artifact lock until every command descendant has exited. Without the
+artifacts, those controls are unavailable even after a successful runtime
+build.
 
 Follow the [Windows native build guide](native/windows/README.md#build) before
 running those workflows from source. The artifact build requires Linux,
 MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
 for the build and artifact-verification commands and the separate real Windows
 verification prerequisites. Keep the generated addon and manifest uncommitted.
+
+The general source suite (`npm run test:fast`, `npm run test:changed`, and
+`npm run test:local`) runs on Linux in CI, and Windows CI runs a curated lane.
+On a Windows checkout, some source tests fail because fixtures use POSIX paths,
+`#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
+base revision, or run the suite on Linux or WSL, before attributing them to a
+change. See [testing](docs/testing.md#developer-commands) for command scopes
+and lane selection.
+
+`git submodule update --init --recursive` fails at the pinned Unblob submodule
+on Windows and can leave later submodules unchecked out. Apply the
+[Unblob checkout workaround](docs/firmware-analysis.md#windows-submodule-checkout),
+then rerun the command.
 
 ## Documentation website
 
@@ -254,6 +283,23 @@ The separate GitHub Pages host uses only the manual
 `.github/workflows/website-pages.yml` workflow on `main`. The repository's
 **Settings → Pages → Build and deployment → Source** must be set to
 **GitHub Actions** before deploying there.
+
+### Translation corrections
+
+README editions and website editions have separate translation sources:
+
+- Find the language's `readme` path in the
+  [language inventory](website/locales/languages.json) and edit that file.
+  Locale codes and README suffixes can differ. Use the
+  [English README](README.md) to check commands, requirements, and analysis claims.
+- Edit `msgstr` values in `website/locales/<language>/messages.po` for website
+  text. Follow the [website translation guide](website/locales/README.md) for
+  the Python environment, catalog validation, and local preview. Preserve source
+  strings, contexts, placeholders, commands, paths, and recorded evidence.
+
+Before submitting a website translation, run the catalog and website checks in
+that guide. Translated HTML in `website/_site/` is generated; edit the PO catalog
+rather than the generated pages.
 
 ## Development feedback and PR verification
 

@@ -4,13 +4,13 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import type {
   JavaScriptRuntimeObservation,
   JavaScriptRuntimeTargetList,
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
 } from "../../domain/javascript/javascriptRuntimeObservation.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 type RuntimeObservationOperation =
   | "list_javascript_runtime_targets"

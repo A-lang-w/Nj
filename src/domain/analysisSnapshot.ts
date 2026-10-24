@@ -17,6 +17,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
 import {
@@ -69,6 +70,7 @@ const formatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "godot-pck",
   "dmg",
   "pkg",
   "plist",
@@ -88,12 +90,15 @@ const subjectFormatSchema = z.enum([
   "unknown",
   "javascript-bundle",
   "entitlements",
+  "pyinstaller",
 ]);
 // Snapshot entries retain the same raw-only architecture boundary as targets.
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
     format: subjectFormatSchema.exclude(["raw-binary"]),
-    architecture: architectureSchema.exclude(["6502"]).nullable(),
+    architecture: architectureSchema
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
   }),
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
@@ -110,7 +115,9 @@ const targetSchema = z.discriminatedUnion("format", [
     format: z.enum(
       formatSchema.options.filter((format) => format !== "raw-binary"),
     ),
-    architecture: architectureSchema.exclude(["6502"]).nullable(),
+    architecture: architectureSchema
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
   }),
   targetIdentitySchema.extend({
     format: z.literal("raw-binary"),
@@ -145,7 +152,7 @@ const entrySchema = z.object({
     raw_result: jsonValueSchema.nullable(),
     provider: committedProviderSchema,
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
+    relationship_coverage: relationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     subject: subjectSchema.nullable(),
   }),
@@ -160,7 +167,7 @@ const workflowEntrySchema = z.object({
     provider: committedProviderSchema,
     analysis_profile: analysisProfileSchema,
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
+    relationship_coverage: relationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     subject: subjectSchema.nullable(),
   }),
@@ -305,9 +312,7 @@ const snapshotContentDigest = (
             format: execution.subject.format,
             architecture: execution.subject.architecture,
           },
-    ...(execution.relationship_coverage === null
-      ? {}
-      : { relationship_coverage: execution.relationship_coverage }),
+    relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
     ...metadata,
@@ -338,6 +343,37 @@ interface SnapshotExecution {
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
 }
+
+type SnapshotExecutionProjection = Pick<
+  AnalysisSnapshotEntry["execution"],
+  | "result"
+  | "raw_result"
+  | "provider"
+  | "limitations"
+  | "relationship_coverage"
+  | "locations"
+  | "subject"
+>;
+
+/** Project one authenticated execution into the shared persisted snapshot shape. */
+const snapshotExecutionProjection = (
+  execution: SnapshotExecution,
+  provider: AnalysisSnapshotEntry["execution"]["provider"],
+): SnapshotExecutionProjection => ({
+  result: execution.result,
+  raw_result: execution.rawResult,
+  provider,
+  limitations: [...execution.limitations],
+  relationship_coverage: execution.relationshipCoverage ?? null,
+  locations: [...execution.locations],
+  subject:
+    execution.subject === null
+      ? null
+      : subjectSchema.parse({
+          ...execution.subject,
+          architecture: execution.subject.architecture ?? null,
+        }),
+});
 
 const canonicalJson = (value: unknown): string => {
   const json = jsonValueSchema.parse(value);
@@ -484,25 +520,17 @@ export const createAnalysisSnapshotWorkflowEntry = (input: {
     operation,
     parameters: jsonObjectSchema.parse(parameters),
     execution: {
-      result: execution.result,
-      raw_result: execution.rawResult,
-      provider: execution.analysisProfile.provider,
+      ...snapshotExecutionProjection(
+        execution,
+        execution.analysisProfile.provider,
+      ),
       analysis_profile: execution.analysisProfile,
-      limitations: [...execution.limitations],
-      relationship_coverage: execution.relationshipCoverage ?? null,
-      locations: [...execution.locations],
-      subject:
-        execution.subject === null
-          ? null
-          : subjectSchema.parse({
-              ...execution.subject,
-              architecture: execution.subject.architecture ?? null,
-            }),
     },
   };
 };
 
-const evidenceMatchesEntry = (
+/** Match an authenticated Evidence record to one exact provider cache binding. */
+export const evidenceMatchesEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotEntry,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -547,21 +575,7 @@ export const createAnalysisSnapshotEntry = (input: {
     query_id: analysisQueryId(target, binding, operation, parameters),
     operation,
     parameters: jsonObjectSchema.parse(parameters),
-    execution: {
-      result: execution.result,
-      raw_result: execution.rawResult,
-      provider: binding.provider,
-      limitations: [...execution.limitations],
-      relationship_coverage: execution.relationshipCoverage ?? null,
-      locations: [...execution.locations],
-      subject:
-        execution.subject === null
-          ? null
-          : subjectSchema.parse({
-              ...execution.subject,
-              architecture: execution.subject.architecture ?? null,
-            }),
-    },
+    execution: snapshotExecutionProjection(execution, binding.provider),
   };
 };
 
@@ -858,7 +872,8 @@ const isWorkflowEvidence = (
   evidence.provider.name === entry.execution.provider.name &&
   evidence.provider.version === entry.execution.provider.version;
 
-const evidenceMatchesWorkflowEntry = (
+/** Match an authenticated Evidence record to one exact composed cache binding. */
+export const evidenceMatchesWorkflowEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotWorkflowEntry,
   snapshot: Pick<AnalysisSnapshot, "target">,
@@ -872,9 +887,7 @@ const evidenceMatchesWorkflowEntry = (
 const evidenceContentMetadata = (evidence: Evidence) => {
   return {
     limitations: evidence.limitations,
-    ...(evidence.relationship_coverage === null
-      ? {}
-      : { relationship_coverage: evidence.relationship_coverage }),
+    relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
     subject:
       evidence.subject === null
