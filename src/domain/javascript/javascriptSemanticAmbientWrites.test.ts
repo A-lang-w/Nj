@@ -8,6 +8,27 @@ import {
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
+it.each([
+  ["localStorage", "", 2],
+  ["sessionStorage", "", 2],
+  ["window.localStorage", "", 2],
+  ["localStorage", "localStorage.setItem=custom;", 0],
+  ["localStorage", "expose(localStorage);", 0],
+  ["localStorage", "localStorage.custom();", 0],
+] as const)(
+  "keeps native storage receivers distinct from opaque escapes: %s %s",
+  (receiver, prefix, count) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${prefix}
+      function first() { ${receiver}.setItem("a", "value"); }
+      function second() { ${receiver}.setItem("b", "value"); }
+    `);
+    expect(analysis.storage).toHaveLength(count);
+    if (count !== 0)
+      expect(analysis.storage.map(({ name }) => name)).toEqual(["a", "b"]);
+  },
+);
+
 it("retains opaque escapes in the canonical ordered ambient effect stream", () => {
   const parsed = parseJavaScriptSource(
     "const root=globalThis;mutate(root);",

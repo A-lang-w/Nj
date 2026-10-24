@@ -621,6 +621,11 @@ export const semanticAmbientCallKeepsReceiver = (
         "withResolvers",
       ].includes(path[2]!)) ||
     (path.length === 3 && path[1] === "indexedDB" && path[2] === "open") ||
+    (path.length === 3 &&
+      ["localStorage", "sessionStorage"].includes(path[1]!) &&
+      ["getItem", "setItem", "removeItem", "clear", "key"].includes(
+        path[2]!,
+      )) ||
     (path.length === 2 && ["open", "fetch"].includes(path[1]!)));
 
 /**
