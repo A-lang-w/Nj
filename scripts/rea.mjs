@@ -68,14 +68,30 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runMcpHttpEntrypoint(args.slice(1));
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
+  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
+  // token consumed by --format as a value, even when it looks like a flag.
+  const outputValues = new Set(
+    builtinArguments
+      .splitIncurBuiltinArguments(doctorArguments)
+      .outputValues.map(({ index }) => index),
+  );
+  const doctorCliArguments = doctorArguments.filter(
+    (argument, index) => argument !== "--timings" || outputValues.has(index),
+  );
+  const timingRequested = doctorCliArguments.length !== doctorArguments.length;
+  const started = performance.now();
   const { runProductionMcpDoctorCli } =
     await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(doctorArguments, {
+  const result = await runProductionMcpDoctorCli(doctorCliArguments, {
     dispatcherPath: fileURLToPath(import.meta.url),
     packageRoot,
     stdoutIsTerminal: process.stdout.isTTY === true,
   });
   writeStdout(result.output);
+  if (timingRequested)
+    process.stderr.write(
+      `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
+    );
   process.exitCode = result.exitCode;
 } else {
   const {
