@@ -1,4 +1,4 @@
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -592,7 +592,7 @@ describe("opt-in function comparison normalized views", () => {
         arguments: { left, right },
       });
       const evidence = parseEvidence(response.structuredContent);
-      const exactResult = toolContract("compare_functions").outputSchema.parse(
+      const exactResult = sessionOutputSchemas.compare_functions.parse(
         (await exact).structuredContent,
       ).normalized_result;
       expect(evidence.parameters).toMatchObject({
