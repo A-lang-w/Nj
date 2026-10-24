@@ -31,13 +31,13 @@ const BULK_RENAME_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books", [RENAMED_AT_3, SECOND_BOOK]],
 ];
 
-describe("bulk response records and rendering", () => {
-  const deletedReads: TimedCaptureRow[] = [
-    ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
-    ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
-    ["GET", "/api/books", []],
-  ];
+const DELETED_READS: TimedCaptureRow[] = [
+  ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+  ["GET", "/api/books", []],
+];
 
+describe("bulk response records and rendering", () => {
   it.each([1, 2])(
     "serves a multi-entity delete recording for %s caller targets",
     (count) => {
@@ -50,7 +50,7 @@ describe("bulk response records and rendering", () => {
           200,
           [{ id: 1 }, { id: 2 }],
         ],
-        ...deletedReads,
+        ...DELETED_READS,
       ]);
       expect(books.state.writes.get("delete_books")).toMatchObject({
         served: true,
@@ -71,7 +71,7 @@ describe("bulk response records and rendering", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,
       ["DELETE", "/api/books", [1, 2], 200, { ids: [1, 2] }],
-      ...deletedReads,
+      ...DELETED_READS,
     ]);
     expect(books.state.writes.get("delete_books")).toMatchObject({
       served: true,
@@ -109,7 +109,9 @@ describe("bulk response records and rendering", () => {
       name: "Changed",
     });
   });
+});
 
+describe("bulk response proof and refusals", () => {
   it("withholds delete responses whose values differ from the held entities", () => {
     const held = [FIRST_BOOK, SECOND_BOOK].map((entry) => ({
       ...entry,
@@ -126,7 +128,7 @@ describe("bulk response records and rendering", () => {
         200,
         { ids: [1, 2] },
       ],
-      ...deletedReads,
+      ...DELETED_READS,
     ]);
     expect(books.state.writes.get("delete_books")).toMatchObject({
       served: false,
@@ -144,7 +146,7 @@ describe("bulk response records and rendering", () => {
         200,
         { ids: [1, 2] },
       ],
-      ...deletedReads,
+      ...DELETED_READS,
     ]);
     expect(books.state.writes.get("delete_books")).toMatchObject({
       served: false,
@@ -156,7 +158,7 @@ describe("bulk response records and rendering", () => {
     const books = servedFrom([
       ...BOOK_INIT_ROWS,
       ["DELETE", "/api/books", { ok: true }, 200, { ids: [1, 2] }],
-      ...deletedReads,
+      ...DELETED_READS,
     ]);
     expect(books.state.writes.get("delete_books")).toMatchObject({
       served: true,
@@ -178,7 +180,7 @@ describe("bulk response records and rendering", () => {
       const books = servedFrom([
         ...BOOK_INIT_ROWS,
         ["DELETE", "/api/books", response, 200, [{ id: 1 }, { id: 2 }]],
-        ...deletedReads,
+        ...DELETED_READS,
       ]);
       expect(books.state.writes.get("delete_books")).toMatchObject({
         served: false,
