@@ -135,19 +135,27 @@ const validReport = (
 ): boolean => {
   const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
     offset <= report.artifact.bytes - bytes;
-  const functionCount =
-    report.imports.reduce((count, dll) => count + dll.functions.length, 0) +
-    report.delay_imports.reduce(
-      (count, dll) => count + dll.functions.length,
-      0,
-    );
+  const dllCount = report.imports.length + report.delay_imports.length;
   if (
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.examined_dlls > input.max_dlls ||
-    report.imports.length + report.delay_imports.length > input.max_dlls ||
-    report.coverage.imports > input.max_functions ||
-    report.coverage.delay_imports > input.max_functions ||
-    functionCount > input.max_functions
+    dllCount > report.coverage.examined_dlls ||
+    (report.coverage.status === "complete" &&
+      (dllCount !== report.coverage.examined_dlls || report.issues.length > 0))
+  )
+    return false;
+  const importCount = report.imports.reduce(
+    (count, dll) => count + dll.functions.length,
+    0,
+  );
+  const delayImportCount = report.delay_imports.reduce(
+    (count, dll) => count + dll.functions.length,
+    0,
+  );
+  if (
+    importCount !== report.coverage.imports ||
+    delayImportCount !== report.coverage.delay_imports ||
+    importCount + delayImportCount > input.max_functions
   )
     return false;
   for (const directory of [

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { PeImports } from "../../domain/native/peImports.js";
+import { peImportsSchema } from "../../domain/native/peImports.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -75,6 +76,24 @@ it("records the selected PE and an absent import table", async () => {
   });
 });
 
+it.each(["imports", "delay_imports", "examined_dlls"] as const)(
+  "rejects contradictory complete %s coverage",
+  async (field) => {
+    const result = await new PeImportsService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...report,
+            coverage: { ...report.coverage, [field]: 1 },
+          }),
+        ),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  },
+);
+
 it.each(["import_directory", "delay_import_directory"] as const)(
   "accepts unexamined %s declarations only with partial coverage",
   async (field) => {
@@ -139,6 +158,22 @@ it("publishes every consumed directory span as its own Evidence location", async
         { offset: 0x1e0, bytes: 20 },
       ],
     },
+    imports: [
+      {
+        index: 0,
+        name: "KERNEL32.dll",
+        name_rva: 0x1100,
+        original_first_thunk_rva: 0x1120,
+        first_thunk_rva: 0x1128,
+        time_date_stamp: 0,
+        forwarder_chain: 0,
+        location: { offset: 0x100, bytes: 20 },
+        functions: [],
+      },
+    ],
+    coverage: { ...report.coverage, examined_dlls: 1 },
+    imphash: { ...report.imphash, reason: "The descriptor has no functions." },
+    limitations: ["Loaded import state remains unobserved."],
   };
   const result = await new PeImportsService({
     identity,
@@ -169,4 +204,39 @@ it("publishes every consumed directory span as its own Evidence location", async
   }).inspect({ path: report.artifact.path });
   expect(outside.ok).toBe(false);
   if (!outside.ok) expect(outside.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("retains examined unsupported descriptors without inventing DLL rows", async () => {
+  const partial: PeImports = {
+    ...report,
+    delay_import_directory: {
+      rva: 0x1000,
+      size: 64,
+      locations: [{ offset: 0x100, bytes: 64 }],
+    },
+    coverage: {
+      ...report.coverage,
+      status: "partial",
+      reason: "An unsupported descriptor was examined.",
+      examined_dlls: 1,
+    },
+    issues: [
+      {
+        code: "unsupported_form",
+        location: "0x1000",
+        message: "Delay descriptor uses virtual addresses.",
+      },
+    ],
+  };
+  const result = await new PeImportsService({
+    identity,
+    inspect: () => Promise.resolve(ok(partial)),
+  }).inspect({ path: report.artifact.path });
+  if (!result.ok) throw result.error;
+  const normalized = peImportsSchema.parse(result.value.normalized_result);
+  expect(normalized.coverage).toMatchObject({
+    status: "partial",
+    examined_dlls: 1,
+  });
+  expect(normalized.delay_imports).toEqual([]);
 });

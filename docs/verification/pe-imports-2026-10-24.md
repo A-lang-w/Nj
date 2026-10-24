@@ -212,3 +212,14 @@ RSS increases about 6.1 MiB (1.6%). Shared-host variance dominates the apparent
 elapsed improvement. This validates the measured completed tasks, not a maximum
 format-size or transport-buffer qualification. Later main changes remain
 outside these pinned measurements.
+
+## Coverage consistency
+
+Three new service controls reject contradictory standard-import, delay-import,
+and complete descriptor counts; all three fail before the correction. The
+service now compares counts with the retained rows before issuing Evidence.
+Partial results may still report more examined descriptors than retained DLLs,
+as verified with an unsupported delay descriptor. Complete results must agree
+and carry no issues. Existing function-count traversals are reused; the change
+adds no further row scan. These validation checks postdate the pinned cost
+measurements above.
