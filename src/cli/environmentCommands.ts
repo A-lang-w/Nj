@@ -354,9 +354,9 @@ const inspectBuildHar = async (
   const { createWebNetworkCaptureService } =
     await import("../composition/webNetworkCaptures.js");
   const { parseEvidence } = await import("../domain/evidence.js");
-  const { environmentExportFile } =
+  const { environmentExportEvidenceFile } =
     await import("../application/environment/environmentExport.js");
-  const { evidenceFileBytes, ENVIRONMENT_BUILD_OPERATION } =
+  const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
   const inspected = await finishAnalysisCommand(
@@ -381,10 +381,10 @@ const inspectBuildHar = async (
       error: "Application workflow failed",
       ...(inspected as Record<string, JsonValue>),
     });
-  const file = await environmentExportFile(
+  const file = await environmentExportEvidenceFile(
     "evidence",
     capturePath,
-    evidenceFileBytes(parseEvidence(inspected)),
+    parseEvidence(inspected),
     ENVIRONMENT_BUILD_OPERATION,
   );
   return file.ok ? ok(file.value) : err(cliError(file.error));

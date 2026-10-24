@@ -42,6 +42,9 @@ const record = (
     binary_fields: [],
   }) as unknown as WebNetworkCaptureRecord;
 
+/** Every body of these records was small enough to scan. */
+const NONE_SKIPPED = { count: 0, pointers: [] };
+
 describe("credentialNamed", () => {
   it("matches whole name segments, not substrings", () => {
     for (const name of [
@@ -67,41 +70,6 @@ describe("credentialNamed", () => {
 });
 
 describe("scanCredentialNames", () => {
-  it("reports request and response bodies beyond the scan limit, including cut base64", () => {
-    const large = record(
-      2,
-      { token: "x".repeat(4 * 1024 * 1024) },
-      { token: "x".repeat(4 * 1024 * 1024) },
-    );
-    expect(scanCredentialNames([large])).toEqual({
-      count: 0,
-      pointers: [],
-      skipped: {
-        count: 2,
-        pointers: ["record 2 request", "record 2 response"],
-      },
-    });
-    const encoded = Buffer.from(
-      JSON.stringify({ token: "x".repeat(4 * 1024 * 1024) }),
-    ).toString("base64");
-    const binary = {
-      ...record(3, undefined, undefined),
-      reported: {
-        response: { content: { text: encoded, encoding: "base64" } },
-      },
-      binary_fields: [
-        {
-          pointer: "/response/content/text",
-          state: "retained",
-          content_base64: encoded,
-        },
-      ],
-    } as unknown as WebNetworkCaptureRecord;
-    expect(scanCredentialNames([binary])).toMatchObject({
-      skipped: { count: 1, pointers: ["record 3 response"] },
-    });
-  });
-
   it("counts string values under credential names in request and response bodies, by pointer and never by value", () => {
     const scanned = scanCredentialNames([
       record(
@@ -118,6 +86,7 @@ describe("scanCredentialNames", () => {
         "record 3 response /data/0/sessionId",
         "record 4 response /a~1b/apiKey",
       ],
+      skipped: NONE_SKIPPED,
     });
     expect(JSON.stringify(scanned)).not.toContain("s3cr3t");
   });
@@ -164,6 +133,7 @@ describe("scanCredentialNames", () => {
         "record 7 request /password",
         "record 7 response /tokens",
       ],
+      skipped: NONE_SKIPPED,
     });
   });
 
@@ -182,10 +152,12 @@ describe("scanCredentialNames", () => {
     expect(scanCredentialNames([form("api_key=secret&api_key=")])).toEqual({
       count: 1,
       pointers: ["record 3 request /api_key"],
+      skipped: NONE_SKIPPED,
     });
     expect(scanCredentialNames([form("token=a&page=1&token=b")])).toEqual({
       count: 2,
       pointers: ["record 3 request /token", "record 3 request /token"],
+      skipped: NONE_SKIPPED,
     });
   });
 
@@ -205,7 +177,11 @@ describe("scanCredentialNames", () => {
     );
     expect(
       scanCredentialNames(scenarioCaptureRecords(capture, "review").records),
-    ).toEqual({ count: 1, pointers: ["record 0 request /password"] });
+    ).toEqual({
+      count: 1,
+      pointers: ["record 0 request /password"],
+      skipped: NONE_SKIPPED,
+    });
   });
 
   it("walks bodies nested deeper than the call stack allows", () => {
@@ -220,24 +196,29 @@ describe("scanCredentialNames", () => {
 });
 
 describe("scanCredentialNames over structured and unattributed records", () => {
-  it("scans each structured form parameter a HAR records without text", () => {
-    const structured = record(4, undefined, undefined);
-    (
-      structured.reported as { request: { postData?: unknown } }
-    ).request.postData = {
-      mimeType: "multipart/form-data",
-      params: [
-        { name: "api_key", value: "secret" },
-        { name: "api_key", value: "" },
-        { name: "user", value: "a" },
-        { name: "token", value: "t" },
-      ],
-    };
-    expect(scanCredentialNames([structured])).toEqual({
-      count: 2,
-      pointers: ["record 4 request /api_key", "record 4 request /token"],
-    });
-  });
+  it.each([undefined, null])(
+    "scans each structured form parameter with absent text: %s",
+    (text) => {
+      const structured = record(4, undefined, undefined);
+      (
+        structured.reported as { request: { postData?: unknown } }
+      ).request.postData = {
+        mimeType: "multipart/form-data",
+        text,
+        params: [
+          { name: "api_key", value: "secret" },
+          { name: "api_key", value: "" },
+          { name: "user", value: "a" },
+          { name: "token", value: "t" },
+        ],
+      };
+      expect(scanCredentialNames([structured])).toEqual({
+        count: 2,
+        pointers: ["record 4 request /api_key", "record 4 request /token"],
+        skipped: NONE_SKIPPED,
+      });
+    },
+  );
 
   it("scans the request side of a scenario transaction with duplicate responses", () => {
     const capture = scenarioCaptureFixture(
@@ -275,7 +256,78 @@ describe("scanCredentialNames over structured and unattributed records", () => {
         "record 0 request query api_key",
         "record 0 request /password",
       ],
+      skipped: NONE_SKIPPED,
     });
+  });
+});
+
+describe("scanCredentialNames coverage", () => {
+  it("measures the scan limit in UTF-8 bytes for multibyte text", () => {
+    const multibyte = record(
+      9,
+      { token: "界".repeat(2 * 1024 * 1024) },
+      undefined,
+    );
+    expect(scanCredentialNames([multibyte])).toMatchObject({
+      count: 0,
+      skipped: { count: 1, pointers: ["record 9 request"] },
+    });
+  });
+  it("reports text bodies too large to scan by record and side, never by content", () => {
+    const large = JSON.stringify({
+      token: "t-large",
+      pad: "a".repeat(4 * 1024 * 1024),
+    });
+    const oversized = record(5, undefined, undefined);
+    const reported = oversized.reported as {
+      request: { postData?: unknown };
+      response: { content: { text: string } };
+    };
+    reported.request.postData = { mimeType: "application/json", text: large };
+    reported.response.content.text = large;
+    const base64 = (ordinal: number, bytes: Buffer): WebNetworkCaptureRecord =>
+      ({
+        ...record(ordinal, undefined, undefined),
+        reported: {
+          request: { method: "GET", url: "http://127.0.0.1/api" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: "",
+              encoding: "base64",
+            },
+          },
+        },
+        binary_fields: [
+          {
+            pointer: "/response/content/text",
+            state: "retained",
+            content_base64: bytes.toString("base64"),
+          },
+        ],
+      }) as unknown as WebNetworkCaptureRecord;
+    const scanned = scanCredentialNames([
+      oversized,
+      // Decoded only as a prefix, so its end is never read.
+      base64(6, Buffer.from(large)),
+      // Binary bytes hold no JSON or form text, so nothing was left unscanned.
+      base64(7, Buffer.alloc(5 * 1024 * 1024, 0xff)),
+      record(8, { token: "t-small" }, {}),
+    ]);
+    expect(scanned).toEqual({
+      count: 1,
+      pointers: ["record 8 request /token"],
+      skipped: {
+        count: 3,
+        pointers: [
+          "record 5 request",
+          "record 5 response",
+          "record 6 response",
+        ],
+      },
+    });
+    expect(JSON.stringify(scanned)).not.toContain("t-large");
   });
 });
 

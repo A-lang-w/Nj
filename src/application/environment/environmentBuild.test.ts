@@ -1,3 +1,4 @@
+import { evidenceFileBytes } from "./environmentEvidenceBytes.js";
 import {
   chmod,
   mkdir,
@@ -34,7 +35,6 @@ import {
   buildEnvironment,
   canonicalTemplateRules,
   classifyBuildCapture,
-  evidenceFileBytes,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
 import {
@@ -541,6 +541,43 @@ describe("buildEnvironment credential names", () => {
   });
 });
 
+describe("buildEnvironment credential scan coverage", () => {
+  it("warns that a body too large to scan was not scanned", async () => {
+    const root = await createTestTempDirectory("rea-environment-build-large-");
+    const [entry] = environmentManifestHar().log.entries;
+    const text = JSON.stringify({
+      token: "t-large",
+      pad: "a".repeat(4 * 1024 * 1024),
+    });
+    const evidence = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture([
+        {
+          ...entry!,
+          response: {
+            ...entry!.response,
+            content: { ...entry!.response.content, text },
+          },
+        },
+      ]),
+    );
+    const planned = await buildEnvironment(
+      await buildInput(root, evidence, {
+        dryRun: true,
+        directory: undefined,
+        name: "large",
+      }),
+    );
+    if (!planned.ok) throw planned.error;
+    expect(planned.value.warnings).toEqual([
+      expect.objectContaining({
+        code: "credential-scan-incomplete",
+        pointers: ["record 0 response"],
+      }),
+    ]);
+    expect(JSON.stringify(planned.value.warnings)).not.toContain("t-large");
+  });
+});
+
 describe("buildEnvironment dry-run package tarball", () => {
   it("refuses a tarball whose descriptor stats successfully but fails to read", async () => {
     const root = await createTestTempDirectory("rea-environment-build-read-");
@@ -680,7 +717,6 @@ describe("buildEnvironment dry-run package tarball", () => {
     }
   });
 });
-
 describe("evidenceFileBytes", () => {
   it("writes the bytes --format json writes, into one buffer", async () => {
     // A long multibyte body with a surrogate pair across the serializer's first part boundary.

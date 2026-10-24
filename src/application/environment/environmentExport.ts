@@ -12,6 +12,8 @@ import {
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { evidenceFileBytes } from "./environmentEvidenceBytes.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import {
@@ -205,7 +207,7 @@ const NOT_A_FILE_CODES = new Set([
 ]);
 
 /** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
-export const environmentExportHeadroomRefusal = (
+const headroomRefusal = (
   operation: string,
   path: string,
   inputBytes: number,
@@ -229,6 +231,25 @@ export const environmentExportHeadroomRefusal = (
       );
 };
 
+/** Measure and admit every serialized copy before allocating its buffer. */
+export const environmentExportEvidenceFile = async (
+  role: "manifest" | "evidence",
+  path: string,
+  evidence: Evidence,
+  operation: string = ENVIRONMENT_EXPORT_OPERATION,
+): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  try {
+    const bytes = evidenceFileBytes(evidence, (size) => {
+      const refused = headroomRefusal(operation, path, size);
+      if (refused !== undefined) throw refused;
+    });
+    return environmentExportFile(role, path, bytes, operation);
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError) return err(cause);
+    throw cause;
+  }
+};
+
 /** Parse and seal bytes the bundle will copy, so authentication reads exactly what ships. */
 export const environmentExportFile = async (
   role: "manifest" | "evidence",
@@ -236,6 +257,8 @@ export const environmentExportFile = async (
   bytes: Buffer,
   operation: string = ENVIRONMENT_EXPORT_OPERATION,
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const refusal = headroomRefusal(operation, path, bytes.length);
+  if (refusal !== undefined) return err(refusal);
   let parsed: ReturnType<typeof parseUtf8Json>;
   try {
     parsed = parseUtf8Json(bytes, operation, path);
@@ -275,7 +298,7 @@ export const readEnvironmentExportFile = async (
     bytes = await readRegularFile(path, {
       resources,
       admit: (state) => {
-        const refused = environmentExportHeadroomRefusal(
+        const refused = headroomRefusal(
           operation,
           path,
           state.size,

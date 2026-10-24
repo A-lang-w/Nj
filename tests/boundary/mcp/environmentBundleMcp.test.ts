@@ -7,8 +7,8 @@ import { expect, it, onTestFinished } from "vitest";
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  evidenceFileBytes,
 } from "../../../src/application/environment/environmentBuild.js";
+import { evidenceFileBytes } from "../../../src/application/environment/environmentEvidenceBytes.js";
 import { environmentExportFile } from "../../../src/application/environment/environmentExport.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { Evidence } from "../../../src/domain/evidence.js";

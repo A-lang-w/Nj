@@ -4,7 +4,6 @@ import { getHeapStatistics } from "node:v8";
 
 import { expect, it, vi } from "vitest";
 
-import { evidenceFileBytes } from "../../src/application/environment/environmentBuild.js";
 import { exportEnvironmentBundleTool } from "../../src/application/environment/environmentBundleTool.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
@@ -14,9 +13,8 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 vi.mock("node:v8", { spy: true });
-vi.mock("../../src/application/environment/environmentBuild.js", { spy: true });
 
-it("refuses retained export before serialization when its expanded copies cannot fit", async () => {
+it("refuses retained export before allocation when its expanded copies cannot fit", async () => {
   const capture = analysisViewCaptureEvidence(
     environmentManifestCaptureFixture(),
   );
@@ -26,6 +24,7 @@ it("refuses retained export before serialization when its expanded copies cannot
     ...statistics,
     total_available_size: 1,
   });
+  const allocation = vi.spyOn(Buffer, "allocUnsafe");
   try {
     const result = await exportEnvironmentBundleTool(
       {
@@ -40,9 +39,10 @@ it("refuses retained export before serialization when its expanded copies cannot
       code: "resource_constraint",
       details: { operation: "export_environment_bundle", resource: "memory" },
     });
-    expect(evidenceFileBytes).not.toHaveBeenCalled();
+    expect(allocation).not.toHaveBeenCalled();
     expect(await readdir(root)).toEqual([]);
   } finally {
+    allocation.mockRestore();
     vi.mocked(getHeapStatistics).mockReset();
   }
 });

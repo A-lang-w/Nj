@@ -6,7 +6,6 @@ import type {
   ExportEnvironmentBundleInput,
 } from "../../domain/environmentBundleExport.js";
 import { err, type Result } from "../../domain/result.js";
-import { jsonByteLength } from "../../domain/jsonSerialization.js";
 import {
   resolveEvidenceInput,
   type EvidenceLookup,
@@ -14,11 +13,9 @@ import {
 import {
   DEFAULT_BUILD_TEMPLATE_RULES,
   buildEnvironment,
-  evidenceFileBytes,
 } from "./environmentBuild.js";
 import {
-  environmentExportFile,
-  environmentExportHeadroomRefusal,
+  environmentExportEvidenceFile,
   readEnvironmentExportFile,
   type EnvironmentExportFile,
 } from "./environmentExport.js";
@@ -39,16 +36,10 @@ const captureFile = async (
     );
   const retained = resolveEvidenceInput(source, lookup);
   if (!retained.ok) return retained;
-  const refusal = environmentExportHeadroomRefusal(
-    EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
-    source.evidence_id,
-    jsonByteLength(retained.value) + 1,
-  );
-  if (refusal !== undefined) return err(refusal);
-  return environmentExportFile(
+  return environmentExportEvidenceFile(
     "evidence",
     source.evidence_id,
-    evidenceFileBytes(retained.value),
+    retained.value,
     EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
   );
 };
