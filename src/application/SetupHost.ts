@@ -45,7 +45,10 @@ import {
   inspectClientConfiguration,
 } from "./SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "./SetupClients.js";
-import { setupInstallFailure } from "./SetupInstallFailure.js";
+import {
+  setupInstallFailure,
+  type SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   explicitSetupRegistrationEnvironment,
@@ -156,25 +159,28 @@ export const systemSetupHost = (
     linuxDistribution,
   );
   const pendingLinuxHopperCleanup = new LinuxHopperTemporaryCleanupOwner();
-  const cleanup = new SetupCleanupOwner([
-    {
-      rejectedPrefix: "Hopper host cleanup failed",
-      close: async () => macHopperHost?.close?.(),
+  const macCleanup = {
+    rejectedPrefix: "Hopper host cleanup failed",
+    close: async () => macHopperHost?.close?.(),
+  };
+  const temporaryCleanup = {
+    rejectedPrefix: "Linux Hopper cleanup retry failed",
+    close: () => pendingLinuxHopperCleanup.retry(linuxHopperHost.cleanup),
+  };
+  const publisherCleanup = {
+    rejectedPrefix: "Linux Hopper publisher cleanup failed",
+    close: async () => {
+      await linuxHopperHost.close?.();
     },
+  };
+  const cleanup = new SetupCleanupOwner([
+    macCleanup,
     {
       rejectedPrefix: "Doctor host cleanup failed",
       close: async () => doctorHost.close?.(),
     },
-    {
-      rejectedPrefix: "Linux Hopper cleanup retry failed",
-      close: () => pendingLinuxHopperCleanup.retry(linuxHopperHost.cleanup),
-    },
-    {
-      rejectedPrefix: "Linux Hopper publisher cleanup failed",
-      close: async () => {
-        await linuxHopperHost.close?.();
-      },
-    },
+    temporaryCleanup,
+    publisherCleanup,
     { close: () => resources.close() },
   ]);
   return {
@@ -228,62 +234,74 @@ export const systemSetupHost = (
         doctor: diagnosis,
       };
     },
-    installHopper: async (replaceExisting) => {
-      if (platform === "linux") {
-        const result = await installLinuxHopper(linuxHopperHost);
-        if (result.cleanupFailure !== undefined)
-          pendingLinuxHopperCleanup.retain(result.cleanupFailure);
-        if (result.status === "installed")
-          return { status: "installed", launcherPath: result.launcherPath };
-        const failure = setupInstallFailure(
-          result.reason,
-          result.packageFailure,
-          "linux",
-        );
-        const detail =
-          result.verificationFailure?.message ??
-          result.pythonRuntimeFailure?.message ??
-          (result.operationFailure === undefined
-            ? undefined
-            : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`);
-        return detail !== undefined
-          ? {
-              ...failure,
-              remediation: `${detail} ${failure.remediation}`,
+    installHopper: (replaceExisting) =>
+      resources.run<SetupHopperInstallResult>(async () => {
+        const publisher = platform === "linux" ? publisherCleanup : macCleanup;
+        cleanup.admit(publisher);
+        try {
+          if (platform === "linux") {
+            const result = await installLinuxHopper(linuxHopperHost);
+            if (result.cleanupFailure !== undefined) {
+              pendingLinuxHopperCleanup.retain(result.cleanupFailure);
+              cleanup.admit(temporaryCleanup);
             }
-          : failure;
-      }
-      if (macHopperHost === undefined)
-        return setupInstallFailure("unsupported_host");
-      const result = await installMacHopper({ replaceExisting }, macHopperHost);
-      if (result.status === "installed")
-        return {
-          status: "installed",
-          launcherPath: result.launcherPath,
-          ...(result.openFailure === undefined
-            ? {}
-            : {
-                warning: `Hopper was installed, but macOS could not open it: ${result.openFailure}. Open ${result.launcherPath} manually to complete first-run setup.`,
-              }),
-          ...(result.cleanupFailure === undefined
-            ? {}
-            : { cleanupFailure: result.cleanupFailure }),
-        };
-      const failure = setupInstallFailure(result.reason);
-      const diagnostic = setupInstallerDiagnostic(result.diagnostic);
-      return {
-        ...failure,
-        remediation: [
-          failure.remediation,
-          ...(diagnostic === undefined
-            ? []
-            : [`Installer detail: ${diagnostic}`]),
-          ...(result.cleanupFailure === undefined
-            ? []
-            : [result.cleanupFailure]),
-        ].join(" "),
-      };
-    },
+            if (result.status === "installed")
+              return { status: "installed", launcherPath: result.launcherPath };
+            const failure = setupInstallFailure(
+              result.reason,
+              result.packageFailure,
+              "linux",
+            );
+            const detail =
+              result.verificationFailure?.message ??
+              result.pythonRuntimeFailure?.message ??
+              (result.operationFailure === undefined
+                ? undefined
+                : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`);
+            return detail !== undefined
+              ? {
+                  ...failure,
+                  remediation: `${detail} ${failure.remediation}`,
+                }
+              : failure;
+          }
+          if (macHopperHost === undefined)
+            return setupInstallFailure("unsupported_host");
+          const result = await installMacHopper(
+            { replaceExisting },
+            macHopperHost,
+          );
+          if (result.status === "installed")
+            return {
+              status: "installed",
+              launcherPath: result.launcherPath,
+              ...(result.openFailure === undefined
+                ? {}
+                : {
+                    warning: `Hopper was installed, but macOS could not open it: ${result.openFailure}. Open ${result.launcherPath} manually to complete first-run setup.`,
+                  }),
+              ...(result.cleanupFailure === undefined
+                ? {}
+                : { cleanupFailure: result.cleanupFailure }),
+            };
+          const failure = setupInstallFailure(result.reason);
+          const diagnostic = setupInstallerDiagnostic(result.diagnostic);
+          return {
+            ...failure,
+            remediation: [
+              failure.remediation,
+              ...(diagnostic === undefined
+                ? []
+                : [`Installer detail: ${diagnostic}`]),
+              ...(result.cleanupFailure === undefined
+                ? []
+                : [result.cleanupFailure]),
+            ].join(" "),
+          };
+        } finally {
+          cleanup.admit(publisher);
+        }
+      }),
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>
       Promise.resolve(supportedClients(homeDirectory, platform, environment)),

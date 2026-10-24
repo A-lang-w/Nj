@@ -8,7 +8,7 @@ import {
 } from "../../../src/application/LinuxHopper.js";
 import { systemSetupHost } from "../../../src/application/SetupHost.js";
 import { runSetup } from "../../../src/application/Setup.js";
-import type { DoctorHost } from "../../../src/application/Doctor.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -26,78 +26,107 @@ vi.mock("../../../src/application/LinuxHopper.js", async (load) => {
 
 afterEach(() => vi.resetAllMocks());
 
-it("retains and releases the actual temporary directory through setup's Linux cleanup task", async () => {
-  const home = await createTestTempDirectory("rea-setup-linux-cleanup-");
-  const temporary = join(home, "owned-installer-staging");
-  await mkdir(temporary);
-  let allowCleanup = false;
-  const actual = await vi.importActual<
-    typeof import("../../../src/application/LinuxHopper.js")
-  >("../../../src/application/LinuxHopper.js");
-  const child = actual.systemLinuxHopperInstallHost(
-    { HOME: home },
-    async () => undefined,
-  );
-  vi.mocked(systemLinuxHopperInstallHost).mockReturnValue({
-    ...child,
-    cleanup: async (path) => {
-      expect(path).toBe(temporary);
-      if (!allowCleanup)
-        throw new Error("Controlled owned temporary directory cleanup failure");
-      await rm(path, { recursive: true });
-    },
-  });
-  // Only the installer outcome is simulated; no package/download action runs.
-  vi.mocked(installLinuxHopper).mockResolvedValue({
-    status: "failed",
-    reason: "cleanup_failed",
-    cleanupFailure: { path: temporary, reason: "Controlled cleanup failure" },
-  });
-  const host = systemSetupHost(
-    { platform: "linux", homeDirectory: home } as DoctorHost,
-    { HOME: home },
-  );
-  try {
-    expect(await host.installHopper(false)).toMatchObject({ status: "failed" });
-    const primary = new ConfigurationError("Controlled state failure", {
-      settings: [{ setting: "fixture", constraint: "controlled" }],
-    });
-    const failure = await runSetup(
-      { approved: true, structured: true, installHopper: false },
-      {
-        ...host,
-        initialSetupState: async () => {
-          throw primary;
-        },
+it.each(["settled", "late"] as const)(
+  "retains and releases the actual temporary directory through setup's Linux cleanup task: %s",
+  async (timing) => {
+    const home = await createTestTempDirectory("rea-setup-linux-cleanup-");
+    const temporary = join(home, "owned-installer-staging");
+    await mkdir(temporary);
+    let allowCleanup = false;
+    const actual = await vi.importActual<
+      typeof import("../../../src/application/LinuxHopper.js")
+    >("../../../src/application/LinuxHopper.js");
+    const child = actual.systemLinuxHopperInstallHost(
+      { HOME: home },
+      async () => undefined,
+    );
+    vi.mocked(systemLinuxHopperInstallHost).mockReturnValue({
+      ...child,
+      cleanup: async (path) => {
+        expect(path).toBe(temporary);
+        if (!allowCleanup)
+          throw new Error(
+            "Controlled owned temporary directory cleanup failure",
+          );
+        await rm(path, { recursive: true });
       },
-    ).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-    expect(failure).toBeInstanceOf(AnalysisError);
-    if (!(failure instanceof AnalysisError))
-      throw new Error("Expected typed cleanup failure");
-    expect(projectAnalysisError(failure)).toMatchObject({
-      code: "cleanup_incomplete",
-      details: { resources: [temporary] },
     });
-    expect((await stat(temporary)).isDirectory()).toBe(true);
-    allowCleanup = true;
-    expect(await host.close?.()).toBeUndefined();
-    expect(failure.cleanupIncomplete).toBe(false);
-    expect(projectAnalysisError(failure)).toMatchObject(
-      projectAnalysisError(primary),
+    // Only the installer outcome is simulated; no package/download action runs.
+    let completeInstall: (() => void) | undefined;
+    const installGate = new Promise<void>((resolve) => {
+      completeInstall = resolve;
+    });
+    vi.mocked(installLinuxHopper).mockImplementation(async () => {
+      if (timing === "late") await installGate;
+      return {
+        status: "failed",
+        reason: "cleanup_failed",
+        cleanupFailure: {
+          path: temporary,
+          reason: "Controlled cleanup failure",
+        },
+      };
+    });
+    const closeDoctor = vi.fn(async () => undefined);
+    const host = systemSetupHost(
+      createDoctorHostFixture({
+        platform: "linux",
+        homeDirectory: home,
+        close: closeDoctor,
+      }),
+      { HOME: home },
     );
-    expect(projectAnalysisError(failure).details).not.toHaveProperty("cleanup");
-    expect(projectAnalysisError(failure).details).not.toHaveProperty(
-      "resources",
-    );
-    expect(projectAnalysisError(failure).details).toHaveProperty(
-      "cleanup_history",
-    );
-    await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    allowCleanup = true;
-    await host.close?.();
-  }
-});
+    try {
+      const installing = host.installHopper(false);
+      const closing = timing === "late" ? host.close?.() : undefined;
+      completeInstall?.();
+      expect(await installing).toMatchObject({ status: "failed" });
+      if (closing !== undefined)
+        expect((await closing)?.cleanupResources).toEqual([temporary]);
+      const primary = new ConfigurationError("Controlled state failure", {
+        settings: [{ setting: "fixture", constraint: "controlled" }],
+      });
+      const failure = await runSetup(
+        { approved: true, structured: true, installHopper: false },
+        {
+          ...host,
+          initialSetupState: async () => {
+            throw primary;
+          },
+        },
+      ).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed cleanup failure");
+      expect(projectAnalysisError(failure)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: [temporary] },
+      });
+      expect((await stat(temporary)).isDirectory()).toBe(true);
+      allowCleanup = true;
+      expect(await host.close?.()).toBeUndefined();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(closeDoctor).toHaveBeenCalledTimes(1);
+      expect(projectAnalysisError(failure)).toMatchObject(
+        projectAnalysisError(primary),
+      );
+      expect(projectAnalysisError(failure).details).not.toHaveProperty(
+        "cleanup",
+      );
+      expect(projectAnalysisError(failure).details).not.toHaveProperty(
+        "resources",
+      );
+      expect(projectAnalysisError(failure).details).toHaveProperty(
+        "cleanup_history",
+      );
+      await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      completeInstall?.();
+      allowCleanup = true;
+      await host.close?.();
+    }
+  },
+);
