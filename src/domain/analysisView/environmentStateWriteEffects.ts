@@ -47,9 +47,10 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
-import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
+import { readClock } from "./environmentStateWriteValues.js";
 import {
   fittedClockFormat,
+  matchesClockFormat,
   noteFixedWidths,
 } from "./environmentStateWriteClockFormats.js";
 import {
@@ -449,6 +450,8 @@ const buildUpdate = (
     rules: evidence.explained.rules,
   });
   draft.observed = evidence.after.object;
+  for (const entity of context.state.ofType(draft.plan.target!))
+    noteFixedWidths(draft.fixedWidth, entity.fields);
 };
 
 /**
@@ -624,10 +627,6 @@ const fitUpdateClocks = (
   readonly rules: FieldRule[];
 } => {
   if (!built(draft)) return { explained, rules: draft.plan.rules };
-  const fits = (format: ClockFormat, field: string): boolean =>
-    JSON.stringify(
-      fittedClockFormat(format, after[field], clockEvidence(draft, field)),
-    ) === JSON.stringify(format);
   const rules = draft.plan.rules.map((rule) => {
     const later = explained.rules.find((other) => other.field === rule.field);
     if (
@@ -657,7 +656,7 @@ const fitUpdateClocks = (
         const held = planned.get(rule.field);
         return rule.rule === "clock" &&
           held?.rule === "clock" &&
-          fits(held.format, rule.field)
+          matchesClockFormat(held.format, readClock(after[rule.field]))
           ? { ...rule, format: held.format }
           : rule;
       }),

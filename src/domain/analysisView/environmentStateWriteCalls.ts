@@ -142,7 +142,7 @@ export const contradictsEarlierCalls = (
       if (rule.rule === "composed") {
         const value = composedValue(rule.parts, shownScalars(shown));
         return (
-          value !== undefined &&
+          value === undefined ||
           !sameObserved(observation, observedValue(value))
         );
       }

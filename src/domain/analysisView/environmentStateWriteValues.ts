@@ -14,7 +14,7 @@ export type ClockFormat =
     }
   | { readonly kind: "epoch"; readonly unit: "s" | "ms" };
 
-interface ClockReading {
+export interface ClockReading {
   readonly ms: number;
   /** Nanoseconds after the floored millisecond, so distinct recorded instants stay distinct. */
   readonly subMillisecond: number;
