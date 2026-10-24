@@ -5,23 +5,30 @@ import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
-/** Return one settled dyld diagnostic without discarding other output. */
+const dyldFailureDiagnostics = (
+  capture: NativeCommandCapture,
+  outputs: readonly string[],
+): readonly string[] =>
+  capture.tool !== "dyld_info" ||
+  capture.exitCode === null ||
+  capture.exitCode === 0 ||
+  capture.signal !== null
+    ? []
+    : outputs.flatMap((output) =>
+        withoutEchoedPathHeader(output, capture.arguments.at(-1))
+          .split(/\r?\n/u)
+          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
+          .filter(Boolean),
+      );
+
+/** Admit the observed refusal only when it is the sole settled diagnostic. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
 ): string | null => {
-  if (
-    capture.tool !== "dyld_info" ||
-    capture.exitCode === null ||
-    capture.exitCode === 0 ||
-    capture.signal !== null
-  )
-    return null;
-  const diagnostics = [capture.stdout, capture.stderr]
-    .flatMap((output) =>
-      withoutEchoedPathHeader(output, capture.arguments.at(-1)).split(/\r?\n/u),
-    )
-    .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-    .filter(Boolean);
+  const diagnostics = dyldFailureDiagnostics(capture, [
+    capture.stdout,
+    capture.stderr,
+  ]);
   return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
 };
 
@@ -38,6 +45,24 @@ export const isUnbackedTextDyldFailure = (
 ): boolean =>
   dyldFailureDiagnostic(capture) ===
   "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
+
+/** Reported CORE/FVMLIB refusals still require an independently matching header. */
+export const parseDyldFileTypeRefusal = (
+  capture: NativeCommandCapture,
+): {
+  readonly fileType: "3" | "4";
+  readonly diagnostic: string;
+} | null => {
+  for (const line of dyldFailureDiagnostics(capture, [
+    capture.stdout,
+    capture.stderr,
+  ])) {
+    const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(line)?.[1];
+    if (fileType === "3" || fileType === "4")
+      return { fileType, diagnostic: line };
+  }
+  return null;
+};
 
 /** Complete captures come from the settled native command owner. */
 export const nativeMachoCapturedOutput = (

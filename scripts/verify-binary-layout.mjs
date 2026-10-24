@@ -992,6 +992,8 @@ try {
   );
   const memoryHeavyPath = join(root.path, "memory-zero-tail");
   await writeFile(memoryHeavyPath, memoryHeavy);
+  // Resource limits are result-affecting inputs: upstream PLT emulation may be
+  // incomplete under this address-space budget. Compare adapters at that budget.
   const memoryEnvironment = limitedEnvironment("--as=100663296");
   const memoryClient = new Client({
     name: "memory-layout-verifier",
@@ -1005,6 +1007,7 @@ try {
   });
   try {
     await memoryClient.connect(memoryTransport);
+    let boundedMemoryReference;
     for (const mode of ["cli", "mcp"]) {
       const value = await inspect(
         mode,
@@ -1021,7 +1024,17 @@ try {
       assert.deepEqual(value.sections, protectedReport.sections);
       assert.deepEqual(value.symbols, protectedReport.symbols);
       assert.deepEqual(value.relocations, protectedReport.relocations);
-      assert.deepEqual(value.linkage, protectedReport.linkage);
+      if (mode === "cli") boundedMemoryReference = value;
+      else assert.deepEqual(value, boundedMemoryReference);
+      assert.ok(
+        value.limitations.some((item) =>
+          item.includes('"address_space_bytes": 100663296'),
+        ),
+      );
+      assert.equal(value.linkage.convenience_maps_completeness, "unknown");
+      const { plt: _originalPlt, ...originalLinkage } = protectedReport.linkage;
+      const { plt: _mutatedPlt, ...mutatedLinkage } = value.linkage;
+      assert.deepEqual(mutatedLinkage, originalLinkage);
       assert.deepEqual(value.mitigations, protectedReport.mitigations);
       assert.equal(
         value.artifact.sha256,

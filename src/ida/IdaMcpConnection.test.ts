@@ -322,18 +322,20 @@ it("bounds a stalled health poll by the remaining readiness deadline", async () 
     expect(pendingCalls).toBe(2);
     expect(failure).toBeInstanceOf(AnalysisTimeoutError);
     expect(failure).toMatchObject({
-      operation: "server_health: headless worker still busy in config_json_get",
+      operation: "server_health",
       timeoutMs,
       userMessage: expect.stringContaining("800 ms"),
       remediationAction: expect.stringContaining("timeoutMs"),
       cause: busy,
       diagnostics: {
+        busy_tool: "config_json_get",
         health_request_operation: "server_health",
         health_request_timeout_ms: 250,
       },
     });
     if (!(failure instanceof AnalysisTimeoutError))
       throw new Error("Expected the readiness deadline to expire");
+    expect(failure.userMessage).toContain("config_json_get");
     expect(failure.capturedOutput).toBeDefined();
   } finally {
     await connection.close();

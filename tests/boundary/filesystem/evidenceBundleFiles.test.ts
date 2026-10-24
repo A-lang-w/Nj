@@ -23,11 +23,15 @@ import {
   deliverAnalysisEvidence,
 } from "../../../src/application/EvidenceBundleCommands.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
-import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  withEvidenceCallerInputPath,
+} from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
 import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
@@ -48,6 +52,30 @@ const bundle = (result = true) =>
       { operation: "health", parameters: {}, result },
     ),
   ]);
+
+it.each([undefined, "../selected-link/./artifact"])(
+  "keeps same-invocation caller input on delivered summary and saved parent (%s)",
+  async (callerInputPath) => {
+    const root = await createTestTempDirectory("rea-delivery-input-path-");
+    const path = join(root, "bundle.json");
+    const original = analysisViewLayoutEvidence();
+    const parent =
+      callerInputPath === undefined
+        ? original
+        : withEvidenceCallerInputPath(original, callerInputPath);
+    const delivered = await deliverAnalysisEvidence(parent, path, "summary");
+    if (!delivered.ok) throw delivered.error;
+    expect(delivered.value.caller_input_path).toBe(callerInputPath);
+    expect(delivered.value.evidence_links).toContain(parent.evidence_id);
+    expect(original.caller_input_path).toBeUndefined();
+    const saved = await readEvidenceBundle(path);
+    if (!saved.ok) throw saved.error;
+    const savedParent = saved.value.records.find(
+      (record) => record.evidence_id === parent.evidence_id,
+    );
+    expect(savedParent?.caller_input_path).toBe(callerInputPath);
+  },
+);
 
 it.each([0, 9 * 1024 * 1024])(
   "preserves the format owner's BOM recovery with %i bytes of padding",
@@ -210,27 +238,38 @@ it("preserves the failed-close owner when import is also cancelled", async () =>
   const cancellationReason = new JsonInputPhysicalReadFailure(
     new Error("opaque cancellation reason"),
   );
+  let owner: OwnedFileHandle | undefined;
+  const resources = new ArtifactResourceScope();
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementationOnce(async () => {
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owner = this;
       controller.abort(cancellationReason);
       throw cleanupCause;
     });
-  let failure: unknown;
   try {
-    try {
-      await readImmutableEvidenceBundle(path, controller.signal);
-    } catch (cause: unknown) {
-      failure = cause;
-    }
-    expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
-    if (!(failure instanceof RegularFileCleanupFailure))
-      throw new Error("Expected the retained file handle owner");
-    expect(failure.cleanupCause).toBe(cleanupCause);
+    const result = await readImmutableEvidenceBundle(
+      path,
+      controller.signal,
+      resources,
+    );
+    if (result.ok) throw new Error("Expected failed finalization");
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      cleanupIncomplete: true,
+      cleanupPrimary: {
+        _tag: "AnalysisCancelledError",
+        cause: cancellationReason,
+      },
+    });
+    expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+    close.mockRestore();
+    await resources.close();
+    expect(owner?.handle.fd).toBe(-1);
+    expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
     close.mockRestore();
-    if (failure instanceof RegularFileCleanupFailure)
-      await failure.owner.close();
+    await resources.close();
   }
   expect(await readEvidenceBundle(path)).toMatchObject({ ok: true });
 });
