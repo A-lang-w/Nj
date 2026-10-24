@@ -196,25 +196,29 @@ describe("scanCredentialNames", () => {
 });
 
 describe("scanCredentialNames over structured and unattributed records", () => {
-  it("scans each structured form parameter a HAR records without text", () => {
-    const structured = record(4, undefined, undefined);
-    (
-      structured.reported as { request: { postData?: unknown } }
-    ).request.postData = {
-      mimeType: "multipart/form-data",
-      params: [
-        { name: "api_key", value: "secret" },
-        { name: "api_key", value: "" },
-        { name: "user", value: "a" },
-        { name: "token", value: "t" },
-      ],
-    };
-    expect(scanCredentialNames([structured])).toEqual({
-      count: 2,
-      pointers: ["record 4 request /api_key", "record 4 request /token"],
-      skipped: NONE_SKIPPED,
-    });
-  });
+  it.each([undefined, null])(
+    "scans each structured form parameter with absent text: %s",
+    (text) => {
+      const structured = record(4, undefined, undefined);
+      (
+        structured.reported as { request: { postData?: unknown } }
+      ).request.postData = {
+        mimeType: "multipart/form-data",
+        text,
+        params: [
+          { name: "api_key", value: "secret" },
+          { name: "api_key", value: "" },
+          { name: "user", value: "a" },
+          { name: "token", value: "t" },
+        ],
+      };
+      expect(scanCredentialNames([structured])).toEqual({
+        count: 2,
+        pointers: ["record 4 request /api_key", "record 4 request /token"],
+        skipped: NONE_SKIPPED,
+      });
+    },
+  );
 
   it("scans the request side of a scenario transaction with duplicate responses", () => {
     const capture = scenarioCaptureFixture(
@@ -258,6 +262,17 @@ describe("scanCredentialNames over structured and unattributed records", () => {
 });
 
 describe("scanCredentialNames coverage", () => {
+  it("measures the scan limit in UTF-8 bytes for multibyte text", () => {
+    const multibyte = record(
+      9,
+      { token: "界".repeat(2 * 1024 * 1024) },
+      undefined,
+    );
+    expect(scanCredentialNames([multibyte])).toMatchObject({
+      count: 0,
+      skipped: { count: 1, pointers: ["record 9 request"] },
+    });
+  });
   it("reports text bodies too large to scan by record and side, never by content", () => {
     const large = JSON.stringify({
       token: "t-large",

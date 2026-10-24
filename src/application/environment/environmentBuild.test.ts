@@ -1,3 +1,4 @@
+import { evidenceFileBytes } from "./environmentEvidenceBytes.js";
 import {
   chmod,
   mkdir,
@@ -34,7 +35,6 @@ import {
   buildEnvironment,
   canonicalTemplateRules,
   classifyBuildCapture,
-  evidenceFileBytes,
   type EnvironmentBuildInput,
 } from "./environmentBuild.js";
 import {

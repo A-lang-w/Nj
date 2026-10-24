@@ -96,7 +96,8 @@ type ScannedBody =
 /** A recorded body as JSON or form fields, skipped when it is cut or over the limit, or undefined when it is neither. */
 const parsedBody = (text: unknown, cut = false): ScannedBody | undefined => {
   if (typeof text !== "string") return undefined;
-  if (cut || text.length > SCAN_BODY_LIMIT_BYTES) return { kind: "skipped" };
+  if (cut || Buffer.byteLength(text, "utf8") > SCAN_BODY_LIMIT_BYTES)
+    return { kind: "skipped" };
   const start = text.trimStart()[0];
   if (start === "{" || start === "[") {
     try {
@@ -203,7 +204,7 @@ export const scanCredentialNames = (
     const text = member(postData, "text");
     // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
     scanBody(
-      text === undefined
+      typeof text !== "string"
         ? {
             kind: "form",
             fields: namedValues(member(postData, "params")).flatMap(

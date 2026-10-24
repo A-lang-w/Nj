@@ -14,7 +14,6 @@ import {
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { jsonByteLength, jsonParts } from "../../domain/jsonSerialization.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -32,7 +31,7 @@ import {
   type EnvironmentBuildWarning,
 } from "./environmentBuildReport.js";
 import {
-  environmentExportFile,
+  environmentExportEvidenceFile,
   exportEnvironmentBundle,
   packageTarballBytes,
   type EnvironmentExportFile,
@@ -82,18 +81,6 @@ export const classifyBuildCapture = (
       ],
     ),
   );
-};
-
-/** An Evidence file's bytes as `--format json` writes the Evidence to a file: compact JSON and a newline. */
-export const evidenceFileBytes = (evidence: Evidence): Buffer => {
-  // Measured first, so the document is written into one exactly sized buffer.
-  const bytes = Buffer.allocUnsafe(jsonByteLength(evidence) + 1);
-  let offset = 0;
-  for (const part of jsonParts(evidence)) offset += bytes.write(part, offset);
-  if (offset !== bytes.length - 1)
-    throw new Error("Evidence serialized to a different length than measured");
-  bytes[offset] = 0x0a;
-  return bytes;
 };
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
@@ -315,10 +302,10 @@ export const buildEnvironment = async (
   if (!projected.ok) return projected;
   const stopped = await cancelled(input.signal);
   if (stopped !== undefined) return err(stopped);
-  const manifest = await environmentExportFile(
+  const manifest = await environmentExportEvidenceFile(
     "manifest",
     "manifest.json",
-    evidenceFileBytes(projected.value),
+    projected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
   if (!manifest.ok) return manifest;
