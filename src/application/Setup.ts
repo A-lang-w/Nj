@@ -378,6 +378,14 @@ const runSetupWorkflow = async (
       return withHopperFailure(await failSkill(skillFailure));
     }
   }
+  const prewarm = await host.prewarmRegistrationRunner?.();
+  if (prewarm?.status === "failed")
+    emitProgress(options, {
+      actionId: "prewarm_registration_runner",
+      label: "REA package-runner cache",
+      state: "warning",
+      detail: prewarm.reason,
+    });
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
     hopperFailure?.remediation ??
@@ -400,6 +408,7 @@ const runSetupWorkflow = async (
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
     ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
+    ...(prewarm === undefined ? {} : { prewarm }),
   };
 };
 
