@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import {
   anonymousOrigin,
   credentialNamed,
+  credentialScanWarnings,
   nameFromCaptureFile,
   scanCredentialNames,
 } from "./environmentBuildReport.js";
@@ -438,3 +440,71 @@ it("keeps JSON interpretation before an untyped form fallback and honors explici
     skipped: NONE_SKIPPED,
   });
 });
+
+it.each(["duplicate response", "duplicate content", "duplicate request"])(
+  "reports retained response content the review cannot attribute: %s",
+  (variant) => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session",
+          status: 200,
+          mediaType: "application/json",
+          body: '{"token":"response-secret"}',
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    const request = capture.events.items.find(
+      (event) => event.kind === "request",
+    );
+    const response = capture.events.items.find(
+      (event) => event.kind === "response",
+    );
+    const content = capture.events.items.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    if (
+      request === undefined ||
+      response === undefined ||
+      content === undefined
+    )
+      throw new Error("Missing fixture transaction");
+    const extra = {
+      ...(variant === "duplicate response"
+        ? response
+        : variant === "duplicate request"
+          ? request
+          : content),
+      sequence: 99,
+    };
+    const items = [...capture.events.items, extra];
+    const admitted = retainedBrowserScenarioCaptureSchema.parse({
+      ...capture,
+      events: { ...capture.events, retained: items.length, items },
+    });
+    const projected = scenarioCaptureRecords(admitted, "review");
+    const warnings = credentialScanWarnings(
+      projected.records,
+      projected.unreviewedContent,
+    );
+    expect(
+      credentialScanWarnings(projected.records, projected.unreviewedContent),
+    ).toEqual(warnings);
+    const contentIndex = capture.events.items.indexOf(content);
+    const omitted =
+      variant === "duplicate content"
+        ? [contentIndex, capture.events.items.length]
+        : [contentIndex];
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        code: "credential-scan-incomplete",
+        pointers: omitted.map(
+          (index) => `/normalized_result/events/items/${String(index)}`,
+        ),
+      }),
+    );
+    expect(JSON.stringify(warnings)).not.toContain("response-secret");
+  },
+);

@@ -348,3 +348,80 @@ it.each([
     }
   },
 );
+
+it("withholds create variations whose nested references cannot follow the sent identity", () => {
+  const collectionA = { id: 10, name: "A" };
+  const collectionB = { id: 20, name: "B" };
+  const first = { ...FIRST_BOOK, collection_id: 10, collection: collectionA };
+  const second = { ...SECOND_BOOK, collection_id: 20, collection: collectionB };
+  const third = {
+    ...book(3, "Third", bookClock(3)),
+    collection_id: 10,
+    collection: collectionA,
+  };
+  const fourth = {
+    ...book(4, "Fourth", bookClock(5)),
+    collection_id: 20,
+    collection: collectionB,
+  };
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["POST", "/api/books", third, 201, { name: "Third", collection_id: 10 }],
+    ["GET", "/api/books/3", third],
+    ["POST", "/api/books", fourth, 201, { name: "Fourth", collection_id: 20 }],
+  ]);
+  expect(books.state.writes.get("post_books")).toMatchObject({ served: false });
+});
+
+it("withholds an update when later reads invalidate the sort that confirmed it", () => {
+  const first = { ...FIRST_BOOK, tags: ["alpha", "beta"] };
+  const second = { ...SECOND_BOOK, tags: ["gamma", "zeta"] };
+  const changed = { ...first, tags: ["omega", "delta"] };
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["PATCH", "/api/books/1", changed, 200, { tags: changed.tags }],
+    ["GET", "/api/books/1", { ...changed, tags: ["delta", "omega"] }],
+    ["GET", "/api/books/1", changed],
+  ]);
+  expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+    served: false,
+  });
+});
+
+it("withholds varied create states whose dependent fields still copy the first create", () => {
+  const first = { ...FIRST_BOOK, status: "draft", closed_at: null };
+  const second = {
+    ...SECOND_BOOK,
+    status: "closed",
+    closed_at: SECOND_BOOK.created_at!,
+  };
+  const third = {
+    ...book(3, "Third", SECOND_BOOK.created_at!),
+    status: "closed",
+    closed_at: SECOND_BOOK.created_at!,
+  };
+  const fourth = {
+    ...book(4, "Fourth", bookClock(4)),
+    status: "draft",
+    closed_at: null,
+  };
+  const fifth = {
+    ...book(5, "Fifth", bookClock(6)),
+    status: "closed",
+    closed_at: bookClock(6),
+  };
+  const books = servedFrom([
+    ["GET", "/api/books", [first, second, third]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["GET", "/api/books/3", third],
+    ["POST", "/api/books", fourth, 201, { name: "Fourth", status: "draft" }],
+    ["GET", "/api/books/4", fourth],
+    ["POST", "/api/books", fifth, 201, { name: "Fifth", status: "closed" }],
+  ]);
+  expect(books.state.writes.get("post_books")).toMatchObject({ served: false });
+});

@@ -28,6 +28,7 @@ import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisView.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
+import { browserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
@@ -753,5 +754,57 @@ describe("evidenceFileBytes", () => {
     } finally {
       concat.mockRestore();
     }
+  });
+});
+
+describe("buildEnvironment review coverage", () => {
+  it("reports copied ambiguous response content through the authenticated build workflow", async () => {
+    const root = await createTestTempDirectory("rea-build-ambiguous-review-");
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "GET",
+          url: "/api/items",
+          status: 200,
+          mediaType: "application/json",
+          body: '[{"id":1,"name":"First"},{"id":2,"name":"Second"}]',
+        },
+        {
+          method: "POST",
+          url: "/api/session",
+          status: 200,
+          mediaType: "application/json",
+          body: '{"token":"response-secret"}',
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    const response = capture.events.items
+      .filter((event) => event.kind === "response")
+      .at(-1);
+    if (response === undefined) throw new Error("Missing session response");
+    const items = [...capture.events.items, { ...response, sequence: 99 }];
+    const evidence = scenarioCaptureEvidence(
+      browserScenarioCaptureSchema.parse({
+        ...capture,
+        events: { ...capture.events, retained: items.length, items },
+      }),
+    );
+    const input = await buildInput(root, evidence, { name: "review-capture" });
+    const built = await buildEnvironment(input);
+    if (!built.ok) throw built.error;
+    expect(built.value.warnings).toContainEqual(
+      expect.objectContaining({ code: "credential-scan-incomplete" }),
+    );
+    expect(JSON.stringify(built.value.warnings)).not.toContain(
+      "response-secret",
+    );
+    const copy = built.value.files.find((file) =>
+      file.path.endsWith("/evidence.json"),
+    );
+    if (copy === undefined) throw new Error("Missing copied Evidence");
+    expect(await readFile(join(input.directory!, copy.path))).toEqual(
+      input.capture.bytes,
+    );
   });
 });

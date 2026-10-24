@@ -161,6 +161,7 @@ export class EnvironmentStateWriteSimulation {
       state: this.#state,
       io: input.io,
       idField: (type) => this.#types.get(type)?.id_field,
+      volatileOf: input.volatileOf,
     });
     this.#taint = new WriteTaint(
       [...this.#types.keys()],
@@ -221,9 +222,15 @@ export class EnvironmentStateWriteSimulation {
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
-    return [...this.#drafts.values()].map((draft) =>
-      writeVerdict(draft, this.#input),
-    );
+    return [...this.#drafts.values()].map((draft) => {
+      let kept = 0;
+      for (const ordinal of draft.confirmed)
+        if (this.#sorted.invalidatedReads.has(ordinal))
+          draft.contradictedBy ??= ordinal;
+        else draft.confirmed[kept++] = ordinal;
+      draft.confirmed.length = kept;
+      return writeVerdict(draft, this.#input);
+    });
   }
 
   #step(record: StateRecordFacts, index: number): void {

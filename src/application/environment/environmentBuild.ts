@@ -333,7 +333,12 @@ export const buildEnvironment = async (
     "review",
   );
   if (!records.ok) return records;
-  warnings.push(...credentialScanWarnings(records.value.records));
+  warnings.push(
+    ...credentialScanWarnings(
+      records.value.records,
+      records.value.unreviewedContent,
+    ),
+  );
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined
       ? registryPackageSource()

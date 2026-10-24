@@ -238,6 +238,7 @@ export const scanCredentialNames = (
 /** The credential-name scan's warnings: what it found, and the bodies it could not scan. */
 export const credentialScanWarnings = (
   records: readonly WebNetworkCaptureRecord[],
+  unreviewedContent: Iterable<string> = [],
 ): EnvironmentBuildWarning[] => {
   const scanned = scanCredentialNames(records);
   const warnings: EnvironmentBuildWarning[] = [];
@@ -252,6 +253,15 @@ export const credentialScanWarnings = (
       code: "credential-scan-incomplete",
       message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
       pointers: scanned.skipped.pointers,
+    });
+  const unattributed: ScanTally = { count: 0, pointers: [] };
+  for (const pointer of unreviewedContent)
+    tallied(unattributed, `/normalized_result${pointer}`);
+  if (unattributed.count > 0)
+    warnings.push({
+      code: "credential-scan-incomplete",
+      message: `${String(unattributed.count)} retained scenario content events could not be attributed and were not scanned; review their bodies and headers in evidence.json before sharing.`,
+      pointers: unattributed.pointers,
     });
   return warnings;
 };

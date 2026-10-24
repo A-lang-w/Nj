@@ -260,6 +260,8 @@ export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
 /** What replay needs from a parent capture once its payload has been validated. */
 interface CaptureFacts {
   readonly records: readonly WebNetworkCaptureRecord[];
+  /** Scenario content the review projection could not attribute, relative to normalized_result. */
+  readonly unreviewedContent?: Iterable<string>;
   readonly captureKind: EnvironmentCaptureKind;
   readonly captureSha256: string | null;
   /** Whether the capture recorded response bodies: a browser scenario does only when they were selected. */
@@ -294,8 +296,10 @@ const parseScenarioCapture = (
   const definition = z
     .object({ scenario_sha256: z.string() })
     .safeParse(parameters);
+  const projected = scenarioCaptureRecords(scenario.data, purpose);
   return ok({
-    records: scenarioCaptureRecords(scenario.data, purpose).records,
+    records: projected.records,
+    unreviewedContent: projected.unreviewedContent,
     captureKind: "browser-scenario",
     captureSha256: definition.success ? definition.data.scenario_sha256 : null,
     responseBodies: scenario.data.scenario.network_content.response_body,
