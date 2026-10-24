@@ -11,7 +11,7 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "./PeResourceLayout.js";
+import { readPeImageLayout } from "./PeImageLayout.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -54,10 +54,14 @@ export const parsePeCertificates = (
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
-  const { pe, optional, magic, directoriesAt, directoryCount, headerSize } =
-    readPeHeaders(bytes);
-  const machine = bytes.readUInt16LE(pe + 4);
-  const format = magic === 0x20b ? "pe32-plus" : "pe32";
+  const parsed = readPeImageLayout(bytes);
+  if (!parsed.ok)
+    throw new ArtifactReaderFailure("format", parsed.error.reason);
+  const layout = parsed.value;
+  const { peOffset: pe, optionalOffset: optional, directoryCount } = layout;
+  const machine = layout.machine;
+  const format = layout.format;
+  const headerSize = layout.sizeOfHeaders;
   const securityIndex = 4;
   if (directoryCount <= securityIndex) {
     return {
@@ -70,7 +74,7 @@ export const parsePeCertificates = (
       limitations: [...ABSENT_LIMITATIONS],
     };
   }
-  const directoryAt = optional + directoriesAt + securityIndex * 8;
+  const directoryAt = layout.directoryOffset(securityIndex);
   requireRange(bytes, directoryAt, 8);
   const tableOffset = bytes.readUInt32LE(directoryAt);
   const tableSize = bytes.readUInt32LE(directoryAt + 4);

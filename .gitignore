@@ -77,3 +77,11 @@ Thumbs.db
 website/_site/
 # Temporary translation output prepared before replacing the complete site.
 website/.i18n-*/
+
+# Harness-managed FM26 session transcript and empty capture logs.
+vault/lance-chat/
+vault/evidences/*.err
+
+# Local reverse-engineering evidence and investigation artifacts (local-only)
+/vault/
+pi-session-*.html
