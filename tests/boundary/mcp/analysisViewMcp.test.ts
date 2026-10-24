@@ -294,22 +294,24 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
     const retained = session.recordEvidence(record);
     if (!retained.ok) throw retained.error;
   }
-  const unsupportedSummary = await client.callTool({
+  // The summary stays compact however large the retained pseudocode is.
+  const summary = await client.callTool({
     name: "inspect_analysis_view",
     arguments: {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
       view: { kind: "summary" },
     },
   });
-  expect(parseMcpToolError(unsupportedSummary).error).toMatchObject({
-    code: "invalid_request",
-    details: {
-      issues: [
-        {
-          path: ["view"],
-          message: "analyze_function Evidence requires a native view.",
-        },
-      ],
+  expect(summary.isError, JSON.stringify(summary.content)).not.toBe(true);
+  expect(
+    toolContract("inspect_analysis_view").outputSchema.parse(
+      summary.structuredContent,
+    ).normalized_result,
+  ).toMatchObject({
+    kind: "summary",
+    parent_evidence_id: parent.evidence_id,
+    summary: {
+      pseudocode: { available: true, code_units: 6 * 1024 * 1024 },
     },
   });
   const broad = await client.callTool({
@@ -340,9 +342,10 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
   const result = toolContract("get_evidence_bundle").outputSchema.parse(
     response.structuredContent,
   ).result;
+  // Two analyze_function records plus the retained summary view.
   expect(result).toMatchObject({
     kind: "evidence-bundle-summary",
-    total_retained_records: 2,
+    total_retained_records: 3,
     matching_records: 1,
     records: [
       {
@@ -528,6 +531,58 @@ it("reports a tampered inline Evidence ID at its full MCP source path", async ()
       ],
     },
   });
+});
+
+it("locates malformed PCAP results within inline and retained view sources", async () => {
+  const { client, session } = await connect();
+  const cases = [
+    { result: {}, path: ["target"], reason: "missing_argument" },
+    { result: { target: false }, path: ["target"], reason: "invalid_type" },
+    {
+      result: { target: { sha256: "c".repeat(64), bytes: 24 } },
+      path: ["target", "path"],
+      reason: "missing_argument",
+    },
+  ] as const;
+  for (const { result, path, reason } of cases) {
+    // Authenticated fixture Evidence can still contain malformed operation data.
+    const evidence = createEvidence(
+      {
+        path: "/recordings/input.pcap",
+        format: "file",
+        sha256: "c".repeat(64),
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_pcap_capture",
+        parameters: { path: "/recordings/input.pcap" },
+        result,
+        authority: "historical-reference",
+      },
+    );
+    const recorded = session.recordEvidence(evidence);
+    if (!recorded.ok) throw recorded.error;
+    for (const source of [
+      { kind: "inline", evidence },
+      { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+    ]) {
+      const response = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: { source, view: { kind: "summary" } },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: ["source", "normalized_result", ...path],
+              reason,
+            }),
+          ]),
+        },
+      });
+    }
+  }
 });
 
 it("rejects self-contained WASM and EVM Evidence views when the subject format differs", async () => {
@@ -906,9 +961,10 @@ it("reads successive native source pages directly from a completed-result transp
   );
   onTestFinished(() => harness.close());
   const { mcp: client, session, calls } = harness;
+  // Complete delivery of an oversized dossier fails transport and points at the retained parent.
   const failed = await client.callTool({
     name: "analyze_function",
-    arguments: { procedure: "0x401000" },
+    arguments: { procedure: "0x401000", detail: "complete" },
   });
   expect(failed.isError).toBe(true);
   const limits = z
