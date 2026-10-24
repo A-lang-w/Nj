@@ -67,10 +67,17 @@ const locatedHandler = {
   ]),
   handler_location: range,
 };
+const ipcReceiver = z
+  .strictObject({
+    kind: z.enum(["web-contents", "main-frame"]),
+    owner_location: range,
+  })
+  .exactOptional();
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -79,6 +86,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     }),
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -296,6 +304,8 @@ const electron = z
   }));
 const referenceShape = {
   ...findingContext,
+  operation: z.enum(["load", "resolve"]),
+  resolution_base_path: z.string().exactOptional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",
@@ -627,6 +637,7 @@ const callable = z.strictObject({
   containerScopeId: z.string(),
   bodyScopeId: z.string().nullable(),
   location: range,
+  computedKeyLocation: range.nullable(),
   returnSites: z.array(
     z.strictObject({
       returnSiteId: z.string(),

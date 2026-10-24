@@ -36,8 +36,7 @@ export const registerFunctionComparisonTool = (
         async () => {
           const resolved = resolvePairedEvidenceRequest(
             input,
-            (id) =>
-              session.evidenceForAnalysis?.(id) ?? session.evidenceById(id),
+            session.evidenceForAnalysis.bind(session),
           );
           if (!resolved.ok)
             return server.delivery.toCallToolResult(resolved, contract);

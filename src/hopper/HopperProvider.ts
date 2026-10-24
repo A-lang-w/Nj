@@ -16,10 +16,7 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
-import {
-  isElfMetadataArchitecture,
-  type BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -41,6 +38,7 @@ import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import {
   hopperDeclinedArchitectureReason,
   hopperLoaderArgsForTarget,
+  isHopperDeclinedArchitecture,
   resolveHopperAnalysisProfile,
 } from "./HopperAnalysisProfile.js";
 import { mapHopperFileOffset } from "./HopperFileOffset.js";
@@ -159,10 +157,15 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (
-      isElfMetadataArchitecture(target.architecture) ||
-      target.architecture === "hexagon"
-    )
+    if (target.format === "gamecube-dol")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "GameCube DOL analysis requires the Ghidra adapter with a caller-selected gamecube-dol format.",
+        diagnostics,
+      };
+    if (isHopperDeclinedArchitecture(target.architecture))
       return {
         status: "unsupported",
         code: "architecture_unsupported",
@@ -289,6 +292,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
         launcherPath: this.config.hopperLauncherPath,
         targetPath: target.path,
         targetKind: target.kind,
+        ...(target.kind === "executable"
+          ? { targetSha256: target.sha256 }
+          : {}),
         ...(preparedImage === undefined
           ? {}
           : {
@@ -304,6 +310,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/hopper_bridge.py", import.meta.url),
         ),
+        bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
         ...(this.platform === "linux"
           ? {
               launchMode: "verified_linux_demo" as const,
@@ -315,6 +322,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       }),
       ...(context === undefined ? {} : { runId: context.runId }),
       startupTimeoutMs: this.config.hopperStartupTimeoutMs,
+      bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
       logger: this.logger.child({ layer: "bridge" }),
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),
@@ -347,13 +355,27 @@ export class HopperProvider implements AnalysisProviderCandidate {
         ...(operation === "procedure_callers" ||
         operation === "procedure_callees" ||
         operation === "analyze_function"
-          ? { relationshipCoverage: { status: "complete" as const } }
+          ? {
+              relationshipCoverage: {
+                status: "unknown" as const,
+                limited_directions:
+                  operation === "procedure_callers"
+                    ? (["callers"] as const)
+                    : operation === "procedure_callees"
+                      ? (["callees"] as const)
+                      : (["callers", "callees"] as const),
+                reason:
+                  "Hopper reports caller and callee procedures through independent public API inventories. Their completeness, including resolved tail calls and agreement between reverse and forward relationships, has not been established. Observed relationships are retained.",
+              },
+            }
           : {}),
         limitations: [
-          ...(preparedImage === undefined
+          ...(target.kind !== "executable"
             ? []
             : [
-                "REA loaded a verified thin Mach-O image prepared from the original source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
+                preparedImage === undefined
+                  ? "REA loaded a digest-verified private executable copy. Evidence identifies the selected original source; Hopper document names describe the private image. The owned image and its Hopper document close together."
+                  : "REA loaded a verified thin Mach-O image prepared from the original source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
               ]),
           ...(this.#capabilities.find(
             (descriptor) => descriptor.operation === operation,

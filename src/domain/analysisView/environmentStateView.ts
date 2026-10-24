@@ -8,6 +8,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import { isClockZone } from "./environmentStateWriteValues.js";
 import {
   groupCaptureRecords,
   templateRulesSchema,
@@ -35,7 +36,7 @@ const queryParameterSchema = z.discriminatedUnion("role", [
     fields: z
       .array(z.string())
       .describe(
-        "Entities with a string field containing a plain substring value, ignoring case; an empty value matches every entity. Syntax-like operators replay instead.",
+        "Entities with a string field containing a plain substring value, ignoring case using Unicode simple case folding; an empty value matches every entity. Syntax-like operators replay instead.",
       ),
   }),
   z
@@ -82,7 +83,7 @@ const listQuerySchema = z.strictObject({
   totals: z
     .array(z.string())
     .describe(
-      "Observed envelope members with reproducible counts of every match before paging; absent or unknown representations stay recorded.",
+      "Observed envelope members with reproducible counts of every match before paging, named as counters are; absent or unknown representations stay recorded.",
     ),
 });
 const checkedSchema = z
@@ -95,10 +96,16 @@ const clockFormatSchema = z.discriminatedUnion("kind", [
     kind: z.literal("iso"),
     separator: z.enum(["T", " "]),
     fraction: z.number().int().nonnegative().max(9),
-    zone: z.string(),
+    zone: z.string().refine(isClockZone),
   }),
   z.strictObject({ kind: z.literal("epoch"), unit: z.enum(["s", "ms"]) }),
 ]);
+const perResponseSchema = z
+  .array(z.string())
+  .optional()
+  .describe(
+    "Top-level members minted per response, such as a request id: a UUID or clock that differed on every repeat of every concrete path the view answers with no write between. Checks leave them out; serving keeps the recorded value, so a served response repeats it.",
+  );
 const entityViewFields = {
   tool: z.string(),
   type: z.string(),
@@ -112,11 +119,38 @@ const entityViewFields = {
     .describe("Ordered fields the view shows of each entity."),
   required_fields: z.array(z.string()),
   checked_record_ordinals: checkedSchema,
+  per_response_members: perResponseSchema,
   clock_formats: z
     .record(z.string(), clockFormatSchema)
     .optional()
     .describe(
       "How the view spells clock fields it always spells otherwise than the entities' stored values; a stored value the view never recorded is spelled this way.",
+    ),
+  sorted_arrays: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Fields whose string arrays the view lists in code-point order, whatever order they were written in; learned from a read that shows a written array sorted.",
+    ),
+};
+const replayedReadFields = {
+  projected_record_ordinals: z
+    .array(z.number().int().nonnegative())
+    .optional()
+    .describe(
+      "Recorded reads left to replay: they asked for some fields only (`fields`, `select`), or show the entities in another representation than the checked lines (an augmenting or reducing query). Replayed calls do not show served writes.",
+    ),
+  projected_query_keys: z
+    .array(
+      z.strictObject({
+        name: z.string(),
+        value: z.string().optional(),
+        absent: z.literal(true).optional(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Query keys that pick calls of the replayed reads out: a parameter only they name, a value only they give a parameter, or (absent) a parameter every checked line names and they leave out. A call matching any key replays; a projection parameter's value is tested on its own: a call replays unless every value it gives is `*` or one a checked line gave, and no replayed read gave it.",
     ),
 };
 const viewSchema = z.discriminatedUnion("shape", [
@@ -130,12 +164,7 @@ const viewSchema = z.discriminatedUnion("shape", [
       .describe(
         "Record whose response, with the entity object replaced, every item response shares.",
       ),
-    projected_record_ordinals: z
-      .array(z.number().int().nonnegative())
-      .optional()
-      .describe(
-        "Recorded reads that asked for some fields only (`fields`, `select`) and did not return the item; calls naming a projection replay.",
-      ),
+    ...replayedReadFields,
   }),
   z.strictObject({
     ...entityViewFields,
@@ -153,17 +182,21 @@ const viewSchema = z.discriminatedUnion("shape", [
       ),
     counters: z
       .array(z.string())
-      .describe("Envelope members that count the listed entities."),
+      .describe(
+        "Envelope members that count the listed entities: a top-level member's name, or a JSON pointer to one in a top-level object beside the list (`/pageInfo/totalRows`); a top-level name starting with `/` is written as its pointer (`/~1total`).",
+      ),
     query: listQuerySchema
       .optional()
       .describe(
         "How the view's other checked lines select and order entities, when filters, a search, a sort or paging explain them; absent when none does.",
       ),
+    ...replayedReadFields,
   }),
   z.strictObject({
     tool: z.string(),
     shape: z.literal("document"),
     checked_record_ordinals: checkedSchema,
+    per_response_members: perResponseSchema,
   }),
   z.strictObject({
     tool: z.string(),
@@ -207,6 +240,17 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     rule: z.literal("clock"),
     format: clockFormatSchema,
   }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("nested-clock"),
+    members: z.array(z.string()).min(1),
+    format: clockFormatSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("held-clock"),
+    format: clockFormatSchema,
+  }),
   z.strictObject({ ...ruled, rule: z.literal("echo") }),
   z.strictObject({ ...ruled, rule: z.literal("copy"), from: z.string() }),
   z.strictObject({ ...ruled, rule: z.literal("path"), from: z.string() }),
@@ -218,6 +262,19 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     rule: z.literal("constant"),
     value: jsonValueSchema,
   }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("stamp"),
+    value: jsonValueSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("derived"),
+    value: jsonValueSchema,
+    from: jsonValueSchema,
+    member: z.string(),
+  }),
+  z.strictObject({ ...ruled, rule: z.literal("set"), value: jsonValueSchema }),
 ]);
 const insertRuleSchema = z.union([
   z.strictObject({ rule: z.enum(["first", "last"]) }),
@@ -280,10 +337,11 @@ const writePlanSchema = z.strictObject({
           kind: z.enum(["array", "boolean", "number", "object", "string"]),
         }),
       ),
+      envelope: z.string().optional(),
     })
     .nullable()
     .describe(
-      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), and the JSON type a later call stored an accepted member as when the observation does not show it (kinds).",
+      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), and the member a call wraps its object in as a one-element array (envelope).",
     ),
   rules: z
     .array(fieldRuleSchema)
@@ -302,6 +360,23 @@ const writePlanSchema = z.strictObject({
     .array(ordinalSchema)
     .describe("Later reads that reproduced from the state after this write."),
   contradicted_by: ordinalSchema.nullable(),
+  address: z
+    .discriminatedUnion("by", [
+      z.strictObject({ by: z.literal("action"), segment: z.string() }),
+      z.strictObject({
+        by: z.literal("ids"),
+        member: z.string().nullable(),
+        kind: z.enum(["number", "string"]),
+      }),
+      z.strictObject({
+        by: z.literal("elements"),
+        member: z.string().nullable(),
+      }),
+    ])
+    .optional()
+    .describe(
+      "How a call names its entities when its path does not end in one: the action segment after the item's id, or the body's ids as an array of one JSON `kind` or as objects carrying the id field, at the root or under `member`.",
+    ),
 });
 
 export const environmentStateFields = {
@@ -386,12 +461,24 @@ export const environmentStateFields = {
   ),
 };
 
+/** State extraction and coverage share the same budget and template-rule policy. */
+export const createEnvironmentStateAccumulator = (
+  view: Extract<
+    AnalysisViewRequest,
+    { kind: "environment-state" | "environment-coverage" }
+  >,
+): EnvironmentStateAccumulator =>
+  new EnvironmentStateAccumulator(undefined, view.template_rules);
+
 /** Extract the init state a capture's reads observed and each read tool's render plan; types and identity are inferences. */
 export const projectEnvironmentStateView = (
   parent: AnalysisViewParent,
   view: Extract<AnalysisViewRequest, { kind: "environment-state" }>,
-  accumulator = new EnvironmentStateAccumulator(undefined, view.template_rules),
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  accumulator = createEnvironmentStateAccumulator(view),
+): Result<
+  Extract<UnsignedAnalysisView, { kind: "environment-state" }>,
+  AnalysisError
+> => {
   const grouped = groupCaptureRecords(parent, view.kind, view.template_rules, {
     accumulator,
     noun: "state",

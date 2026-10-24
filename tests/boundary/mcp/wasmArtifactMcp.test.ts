@@ -60,6 +60,10 @@ const assertFirstSummaryDelivery = async (
     code_units: value.wat.text.length,
   });
   expect(summary.summary.wat).not.toHaveProperty("text");
+  expect(summary.summary).toMatchObject({
+    debug_name_metadata: value.debug_name_metadata,
+    custom_section_warnings: value.custom_section_warnings,
+  });
   const retained = harness.session.evidenceById(summary.parent_evidence_id);
   if (retained === undefined) throw new Error("Summary lost original Evidence");
   expect(retained.normalized_result).toEqual(value);
@@ -234,72 +238,91 @@ it("advertises exact valid schemas and records inline WASM interface evidence wi
   expect(close).toHaveBeenCalled();
 });
 
-it("records complete WASM Evidence when an MCP request is cancelled during provider work", async () => {
-  const value = wasmArtifactFixture();
-  let releaseProvider: (() => void) | undefined;
-  let providerStarted: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    providerStarted = resolve;
-  });
-  const providerGate = new Promise<void>((resolve) => {
-    releaseProvider = resolve;
-  });
-  const service = new WasmArtifactService({
-    close: () => Promise.resolve(),
-    inspect: async (_input, options) => {
-      providerStarted?.();
-      await providerGate;
-      expect(options?.signal?.aborted).toBe(true);
-      return ok(wasmArtifactExecution(value));
-    },
-  });
-  const inspect = vi.spyOn(service, "inspect");
-  const session = createTestBinarySession(() => {
-    throw new Error("deep provider must not start");
-  });
-  const harness = await createApplicationMcpHarness({
-    session,
-    serverOptions: { wasmArtifact: service },
-  });
-  onTestFinished(harness.close);
-  const controller = new AbortController();
-  const cancellation = harness.client.callTool(
-    {
-      name: "inspect_wasm_artifact",
-      arguments: { path: value.artifact.path },
-    },
-    { signal: controller.signal },
-  );
-  await started;
-  controller.abort(new Error("cancel after provider work starts"));
-  releaseProvider?.();
-  await expect(cancellation).rejects.toThrow();
-  expect(inspect).toHaveBeenCalledOnce();
-  const result = await inspect.mock.results[0]?.value;
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCancelledError",
-      partialObservation: {
-        operation: "inspect_wasm_artifact",
-        normalized_result: value,
-        confidence: "observed",
+it.each([undefined, "summary"] as const)(
+  "records complete WASM Evidence when an MCP request is cancelled during provider work (detail=%s)",
+  async (detail) => {
+    const value = wasmArtifactFixture();
+    let releaseProvider: (() => void) | undefined;
+    let providerStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      providerStarted = resolve;
+    });
+    const providerGate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let serverSignal: AbortSignal | undefined;
+    const service = new WasmArtifactService({
+      close: () => Promise.resolve(),
+      inspect: async (_input, options) => {
+        serverSignal = options?.signal;
+        providerStarted?.();
+        await providerGate;
+        expect(options?.signal?.aborted).toBe(true);
+        return ok(wasmArtifactExecution(value));
       },
-    },
-  });
-  await harness.client.ping();
-  await vi.waitFor(() => {
-    expect(session.exportEvidenceBundle().records).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
+    });
+    const inspect = vi.spyOn(service, "inspect");
+    const session = createTestBinarySession(() => {
+      throw new Error("deep provider must not start");
+    });
+    const harness = await createApplicationMcpHarness({
+      session,
+      serverOptions: { wasmArtifact: service },
+    });
+    onTestFinished(harness.close);
+    const controller = new AbortController();
+    const cancellation = harness.client.callTool(
+      {
+        name: "inspect_wasm_artifact",
+        arguments: {
+          path: value.artifact.path,
+          ...(detail === undefined ? {} : { detail }),
+        },
+      },
+      { signal: controller.signal },
+    );
+    const rejected = expect(cancellation).rejects.toThrow();
+    await started;
+    controller.abort(new Error("cancel after provider work starts"));
+    let serverReason: unknown;
+    try {
+      await harness.client.ping();
+      serverReason = serverSignal?.reason;
+    } finally {
+      releaseProvider?.();
+    }
+    await rejected;
+    expect(inspect).toHaveBeenCalledOnce();
+    const result = await inspect.mock.results[0]?.value;
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        partialObservation: {
           operation: "inspect_wasm_artifact",
           normalized_result: value,
           confidence: "observed",
-        }),
-      ]),
-    );
-  });
-});
+        },
+      },
+    });
+    if (result === undefined || result.ok)
+      throw new Error("Expected cancelled WASM Evidence");
+    expect(serverSignal?.aborted).toBe(true);
+    expect(result.error.cause).toBe(serverReason);
+    const partial = parseEvidence(result.error.partialObservation);
+    expect(partial.parameters).toEqual({
+      path: value.artifact.path,
+      glue_paths: [],
+      candidate_paths: [],
+    });
+    await harness.client.ping();
+    await vi.waitFor(() => {
+      // Failed summary delivery retains the complete producer, without a derived view.
+      expect(session.exportEvidenceBundle().records).toEqual([partial]);
+    });
+    expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+  },
+);
 
 it("attributes rejected WASM paths to their selected fields before provider work", async () => {
   const value = wasmArtifactFixture();
@@ -424,6 +447,13 @@ it("reads an oversized completed WASM result through its reported retained refer
     ...wasmArtifactFixture(),
     imports: ['(import "env" "memory.with punctuation" (memory 1))'],
     exports: ['(export "first" (func 0))', '(export "second" (func 1))'],
+    debug_name_metadata: "uninterpretable" as const,
+    custom_section_warnings: [
+      {
+        tool: "wasm-validate" as const,
+        text: "0000011: warning: invalid sub-section size: extends past end\n",
+      },
+    ],
     wat: {
       text,
       sha256: createHash("sha256").update(text, "utf8").digest("hex"),
