@@ -197,6 +197,14 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+Reassignments connect retained right-hand reads to the binding or property
+write. Compound assignments also retain the previous-value input; logical
+assignments keep conditional inputs as candidates. These edges describe
+influence without evaluating arithmetic or establishing execution order or the
+resulting value. Deferred callback bodies do not become inputs to the enclosing
+assignment. Computed method keys belong to the enclosing callable; parameter
+defaults and method bodies belong to the method. Uncertain later property reads
+remain opt-in through `include_ambiguous_dynamic_edges`.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
 these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not
@@ -419,8 +427,11 @@ value. Earlier `break`/`continue` paths can leave a var initializer unexecuted.
 Legacy non-strict block-function copies are indexed on their outer variable
 owner, while strict/module and lexical-shadowing boundaries keep their values.
 A catch-shadowed var declaration keeps declaration ownership separate from its
-initializer's lexical assignment. Ordinary functions own an implicit arguments
-object; arrows retain lexical arguments lookup. Promise source identity uses
+initializer's lexical assignment, including object and array destructuring slots.
+Projected initializer facts retain their source and alias identity on the lexical
+recipient, so a later mutation through that alias prevents reporting the original
+object field as an unchanged constant. Ordinary functions own an implicit
+arguments object; arrows retain lexical arguments lookup. Promise source identity uses
 the same read-position selection and requires an unmodified intrinsic factory.
 
 Rebound values are evaluated at their read position: saving an incoming parameter
