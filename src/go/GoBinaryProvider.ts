@@ -4,7 +4,8 @@ import {
   completedStableArtifact,
 } from "../artifacts/readStableArtifact.js";
 import {
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -53,13 +54,26 @@ const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
 
-const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+const failureForPrimary = (
+  facts: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
       cause,
     });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
@@ -93,7 +107,10 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
             message: `Selected artifact ${path}: ${cause.message}`,
           },
         ]);
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -134,9 +151,11 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
 };
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
-  const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
+  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
   const snapshot = completedStableArtifact(cause);
   if (snapshot !== undefined) {
+    // This inspect boundary acquires exactly one StableArtifactSnapshot before
+    // metadata decoding. Completion describes that read, not a decoded report.
     primary.retainPartialObservation(
       fileSnapshotPartialObservationSchema.parse({
         kind: "file-snapshot-hash",

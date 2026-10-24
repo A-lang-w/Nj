@@ -4098,6 +4098,7 @@ describe("Ghidra SIGKILL projection", () => {
     async (kind) => {
       const projected = await projectFailure(kind, {
         ...killed,
+        stop_requested: false,
         memory_cgroup: cgroup(1, 3_221_225_472),
       });
       expect(projected).toMatchObject({
@@ -4127,6 +4128,7 @@ describe("Ghidra SIGKILL projection", () => {
   ] as const)("reports %s as observed", async (_name, memoryMax) => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       memory_cgroup: cgroup(2, memoryMax),
     });
     expect(projected).toMatchObject({
@@ -4135,23 +4137,26 @@ describe("Ghidra SIGKILL projection", () => {
     });
   });
 
-  it("does not attribute a SIGKILL sent while REA was stopping Ghidra", async () => {
-    const projected = await projectFailure("process", {
-      ...killed,
-      stop_requested: true,
-      memory_cgroup: cgroup(1, 3_221_225_472),
-    });
-    expect(projected.code).toBe("execution_failure");
-    expect(projected.message).toContain("SIGKILL");
-    expect(projected.message).toContain("does not establish its cause");
-    expect(projected.message).not.toContain("before REA stopped it");
-    expect(projected.message).not.toContain("oom_kill");
-    expect(projected.details?.diagnostics).toMatchObject({
-      ...killed,
-      stop_requested: true,
-      memory_cgroup: cgroup(1, 3_221_225_472),
-    });
-  });
+  it.each([
+    { state: "unreported", stop: {} },
+    { state: "requested", stop: { stop_requested: true } },
+  ] as const)(
+    "does not attribute a SIGKILL when the stop request is $state",
+    async ({ stop }) => {
+      const diagnostics = {
+        ...killed,
+        ...stop,
+        memory_cgroup: cgroup(1, 3_221_225_472),
+      };
+      const projected = await projectFailure("process", diagnostics);
+      expect(projected.code).toBe("execution_failure");
+      expect(projected.message).toContain("SIGKILL");
+      expect(projected.message).toContain("does not establish its cause");
+      expect(projected.message).not.toContain("before REA stopped it");
+      expect(projected.message).not.toContain("oom_kill");
+      expect(projected.details?.diagnostics).toMatchObject(diagnostics);
+    },
+  );
 
   it.each([
     ["without cgroup evidence", {}],
@@ -4162,6 +4167,7 @@ describe("Ghidra SIGKILL projection", () => {
   ])("names the signal instead of doctor advice %s", async (_name, extra) => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       ...extra,
     });
     expect(projected.code).toBe("execution_failure");
@@ -4174,6 +4180,7 @@ describe("Ghidra SIGKILL projection", () => {
   it("keeps an observed OOME primary over the kill", async () => {
     const projected = await projectFailure("process", {
       ...killed,
+      stop_requested: false,
       failure_output: failureOutput(issueOutput),
       memory_cgroup: cgroup(1, 3_221_225_472),
     });
@@ -4185,6 +4192,7 @@ describe("Ghidra SIGKILL projection", () => {
     async (kind) => {
       const projected = await projectFailure(kind, {
         ...killed,
+        stop_requested: false,
         memory_cgroup: cgroup(1, 3_221_225_472),
       });
       expect(projected.code).not.toBe("resource_constraint");
