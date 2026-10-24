@@ -426,8 +426,12 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. Malformed recognized FAT declarations retain
-their format-specific reasons.
+prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
+checks complete JVM framing within the same 16 MiB class identity bound as the
+Mach-O image reader. A complete class remains unsupported even if its constant
+pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
+malformed FAT interpretation remains unresolved. Malformed recognized FAT
+declarations retain their format-specific reasons.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -453,17 +457,37 @@ markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
-Binary plist inspection reads the original bytes through an owned file descriptor,
-so conversion cannot erase control characters, fractional dates, negative zero,
-or the high word of a 128-bit integer. It accepts at most 64 MiB of input and
-reserves an estimated 64 MiB decode budget before parsing; this estimate is not
-a hard process-memory bound. A refused input reports non-retryable
-`resource_constraint` with `reported_limits.maximum_input_bytes`,
-`maximum_decoded_bytes` or, for nesting deeper than 128 levels,
-`maximum_nesting_depth`. These are fixed allowances: worker limits and host
-memory do not raise them, and the unchanged request fails the same way.
-Binary-source provenance records the `file` classification without claiming a
-`plutil` conversion.
+Plist inspection reads bounded original bytes through an owned file descriptor.
+Binary and UTF-8/BOM-marked UTF-16 XML sources decode directly, retaining scalar
+facts without a mandatory `plutil` conversion. UTF-8 JSON containers also decode
+directly when their number facts need no further classification; explicitly
+identified JSON sources can have scalar roots. Unidentified primitive text keeps
+its existing conversion route, so OpenStep `123` remains a string. OpenStep,
+unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
+numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+encoding-declaration mismatches remain explicit failures. Direct-source
+provenance records `file` without claiming conversion; conversion limitations
+and invocations appear only when conversion actually ran.
+XML sources must also pass native format validation, with native refusals retaining
+their diagnostics and successful validation recorded in provenance. Original
+unknown scalar text, reasons and limitations survive successful validation;
+output-budget omissions remain omissions.
+
+Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
+estimated 64 MiB decode budget before parsing; this is not a hard process-memory
+bound. JSON decode memory has not been measured and has no equivalent decode
+estimate. A refused input reports non-retryable `resource_constraint` with
+`reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
+Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
+derived from the existing 1000-level JSON result capacity by reserving one level
+for typed scalar fields and one for the result's `value` field. Deeper input reports
+`resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
+the fixed nesting allowance. XML admission also requires native validation, which
+can refuse input below this decoding ceiling. Compatibility conversions can
+likewise encounter an earlier native utility refusal; both retain native
+diagnostics. Archive and Interface Builder decoding retain their separate
+128-level allowance. Worker limits and host memory do not raise these fixed
+allowances, and the unchanged request fails the same way.
 
 A plist explicitly selected through the path input or as the active plist target
 reports an unreadable or malformed selection as `invalid_request`. A missing or
@@ -487,15 +511,25 @@ to the linked Mach-O. This classification requires both the recognized native
 refusal and an independently parsed dSYM Mach header; other tool failures keep
 their failure outcome.
 
+Observed `dyld_info` diagnostics include `unknown mh.filetype 4` and
+`unknown filetype 4` for `MH_CORE`, and the corresponding `3` spellings for
+`MH_FVMLIB`. These refusals report `unsupported_target` when the independently
+parsed Mach header confirms the reported file type. The error retains the exact
+native diagnostic and recommends a linked Mach-O executable or relocatable
+object. This classifies the selected target's refusal; it does not establish
+support for core-dump analysis, historical FVMLIB layouts, or unobserved native
+diagnostic spellings. Unknown or contradictory header values and signalled
+commands remain failures.
+
 `inspect_macho.selected_architecture` identifies the exact selected lipo slice
 and its `container_file_offset` in the input file. A thin Mach-O has a known
 offset of zero; an unknown universal-slice offset stays null. The Evidence
 subject format describes the input container: `mach-o-universal` for FAT files,
-including those with one slice. The normalized result describes the selected
-Mach-O image. Architecture
-`file_offset` values are container-relative. Entrypoint, segment and section
-`file_offset` values retain their source meaning and are relative to the
-selected Mach-O slice. Raw load-command fields retain their original values.
+including those with one slice. The normalized result also reports the container
+in `format`; `selected_architecture` identifies the selected Mach-O image.
+Architecture `file_offset` values are container-relative. Entrypoint, segment
+and section `file_offset` values retain their source meaning and are relative
+to the selected Mach-O slice. Raw load-command fields retain their original values.
 A field otool prints more than once, such as each `LC_BUILD_VERSION` tool, is
 keyed `name #n` in print order. Each `LC_LINKER_OPTION` string is keyed
 `string #n` and checked against the declared `count`. Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
@@ -532,6 +566,10 @@ complete observation.
   its outcome. Paths outside the analyzed root, including shared-cache system
   libraries, stay undetermined. See
   [Apple application analysis](apple-application-analysis.md#dylib-load-resolution).
+  ARM64 slice labels distinguish `arm64v8`, `arm64e`, and `arm64e.x1` while
+  retaining raw CPU subtype and capability bits. The `arm64` and `arm64e`
+  request filters select their respective families; a shared family label
+  does not establish dependency compatibility across different subtypes.
   Executable-root discovery preserves traversal uncertainty, including
   undecodable filenames and skipped symlinks, as partial coverage. Known
   executable roots remain available; unexamined names and symlink targets
@@ -706,9 +744,10 @@ complete observation.
   examined type records and fully decoded declarations. Class vtable recovery
   reads the same descriptors, so an unreadable type record also keeps
   `swift_class_vtable_descriptors` partial.
-  Nominal declarations, conformance type references and class vtables share one
-  snapshot-scoped name/context reader. Conformance `type_name` and dispatch
-  `owner` retain enclosing named types; conformances carry the known module.
+  Nominal declarations, conformance type and protocol references, and class
+  vtables share one snapshot-scoped name/context reader. Conformance `type_name`,
+  `protocol_name`, and dispatch `owner` retain enclosing named types;
+  conformances carry the known module.
   Unresolved parents preserve the leaf name and a partial identity reason,
   while independently readable witness implementations remain available.
   Protocol instance properties use the same property-list reader as classes.

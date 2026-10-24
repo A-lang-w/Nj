@@ -17,7 +17,10 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
+} from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 
@@ -95,8 +98,8 @@ export function* collectJavaScriptDerivedSemanticsSteps(
   yield;
   const assignmentFlows = yield* collectAssignmentFlowsSteps(
     program,
-    callables,
     state,
+    callables,
   );
   const functionFingerprints =
     yield* collectJavaScriptSemanticFingerprintsSteps({
@@ -128,15 +131,15 @@ export function* collectJavaScriptDerivedSemanticsSteps(
 /** Keep assignment syntax in the IR so graph consumers never reparse source. */
 function* collectAssignmentFlowsSteps(
   program: t.Program,
-  callables: readonly JavaScriptSemanticCallable[],
   state: JavaScriptSemanticAnalysisState,
+  callables: readonly JavaScriptSemanticCallable[],
 ): Generator<void, JavaScriptSemanticIr["assignmentFlows"]> {
   const flows: JavaScriptSemanticIr["assignmentFlows"][number][] = [];
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
   let conditionalDepth = 0;
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       stack.enter(node, parent);
       if (CONDITIONAL_AST_NODES.has(node.type)) conditionalDepth += 1;
@@ -188,6 +191,7 @@ const CONDITIONAL_AST_NODES = new Set([
  * direct literal container is captured; conditional placement, compound
  * operators, computed keys and destructuring keep the value unknown.
  */
+
 const assignedContainerValue = (
   target: t.Node,
   source: t.Node,

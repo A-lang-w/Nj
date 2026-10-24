@@ -31,6 +31,8 @@ it.each([
     const trace = queryJavaScriptSemanticGraph(graph, {
       seed: { kind: "literal", value: 0.001 },
       direction: "forward-influence",
+      include_ambiguous_dynamic_edges: true,
+      expected: null,
     });
     expect(trace.status).toBe("found");
     expect([...new Set(trace.nodes.map((node) => node.label))]).toEqual(
@@ -73,6 +75,8 @@ it.each([
   const trace = queryJavaScriptSemanticGraph(graph, {
     seed: { kind: "literal", value: 0.001 },
     direction: "forward-influence",
+    include_ambiguous_dynamic_edges: true,
+    expected: null,
   });
   expect(
     trace.nodes.filter((node) => node.label === "read:/config/ACCEL"),
@@ -101,6 +105,8 @@ it("folds the last of repeated top-level literal assignments", () => {
   const trace = queryJavaScriptSemanticGraph(graph, {
     seed: { kind: "literal", value: 0.25 },
     direction: "forward-influence",
+    include_ambiguous_dynamic_edges: true,
+    expected: null,
   });
   expect(trace.status).toBe("found");
 });
