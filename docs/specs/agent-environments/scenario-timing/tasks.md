@@ -7,6 +7,7 @@
 - [x] Leave them out of scenario comparisons.
 - [x] Document the fields and the timed records.
 - [x] Add unit, view and real-browser checks.
-- [ ] Run the gates.
-- [ ] Re-record stale scenario environments and compare them with their published versions.
-- [ ] Address the independent review.
+- [x] Run the gates.
+- [x] Re-record stale scenario environments and compare them with their published versions.
+- [x] Build prompt-recorded environments with and without request times.
+- [x] Address the independent review.
