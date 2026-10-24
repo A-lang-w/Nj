@@ -85,6 +85,15 @@ cliTest(
         resolves: true,
       },
       ...[
+        'import type { Worker } from "node:worker_threads";',
+        'import { type Worker } from "node:worker_threads";',
+      ].map((prefix) => ({
+        prefix,
+        constructor: "new Worker",
+        suffix: "",
+        resolves: true,
+      })),
+      ...[
         ["class Worker {}", "new Worker", ""],
         ["globalThis.Worker = Fake;", "new Worker", ""],
         ["globalThis.Worker = Fake;", "new window.Worker", ""],
@@ -94,16 +103,6 @@ cliTest(
         ["const custom = { Worker: class {} };", "new custom.Worker", ""],
         ["function start(window) {", "new window.Worker", "}"],
         ["function start(globalThis) {", "new globalThis.Worker", "}"],
-        [
-          'import type { Worker } from "node:worker_threads";',
-          "new Worker",
-          "",
-        ],
-        [
-          'import { type Worker } from "node:worker_threads";',
-          "new Worker",
-          "",
-        ],
         [
           'import type * as threads from "node:worker_threads";',
           "new threads.Worker",
