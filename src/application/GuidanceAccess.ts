@@ -1,15 +1,22 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   readGuidanceSectionInputSchema,
+  readGuidanceSectionOutputSchema,
+  type ReadGuidanceSectionOutput,
+  type SearchGuidanceOutput,
   searchGuidanceInputSchema,
+  searchGuidanceOutputSchema,
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { RetainedRegularFileCleanupFailure } from "./RegularFileRead.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const SKILL_ROOT = `../../skills/${PRODUCT_IDENTITY.skillName}/`;
@@ -31,27 +38,69 @@ interface GuidanceBundle {
   readonly sections: readonly GuideSection[];
 }
 
-const readPackagedGuide = (relativePath: string): Promise<string> =>
+const readPackagedGuide = (
+  relativePath: string,
+  resources: ArtifactResourceScope,
+): Promise<string> =>
   readSkillFile(
     fileURLToPath(new URL(`${SKILL_ROOT}${relativePath}`, import.meta.url)),
-    undefined,
+    resources,
     MAX_GUIDE_FILE_BYTES,
   );
 
+type GuidanceBundleRead =
+  | { readonly kind: "available"; readonly bundle: GuidanceBundle }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "cleanup"; readonly error: ProviderCleanupError };
+
+const guidanceCleanupFailure = (
+  cause: unknown,
+  resources: ArtifactResourceScope,
+  operation: string,
+): ProviderCleanupError => {
+  const observation = ArtifactReaderFailure.cleanupObservation(
+    cause,
+    resources.cleanupResources,
+  );
+  const error = new ProviderCleanupError(
+    "rea",
+    resources.cleanupResources,
+    { phase: "managed_guidance_read", reason: observation.reason },
+    {
+      operation,
+      cause,
+      cleanup: observation,
+      remediationAction:
+        "Close REA so it can retry releasing the retained guidance file handle. Do not repeat the request until cleanup completes.",
+    },
+  ).bindCleanupResourceOwner(resources);
+  resources.addCloseHook(async () => {
+    if (!resources.hasPending) error.resolveCleanup();
+  });
+  return error;
+};
+
 const readBundle = async (
-  readGuide: (relativePath: string) => Promise<string> = readPackagedGuide,
-): Promise<GuidanceBundle | undefined> => {
+  readGuide: (relativePath: string) => Promise<string>,
+  resources: ArtifactResourceScope,
+  operation: string,
+): Promise<GuidanceBundleRead> => {
   const files = new Map<string, string>();
   let bundleBytes = 0;
   try {
     for (const relativePath of MANAGED_SKILL_FILES) {
       const content = await readGuide(relativePath);
       bundleBytes += Buffer.byteLength(content, "utf8");
-      if (bundleBytes > MAX_GUIDE_BUNDLE_BYTES) return undefined;
+      if (bundleBytes > MAX_GUIDE_BUNDLE_BYTES) return { kind: "unavailable" };
       files.set(relativePath, content.replaceAll("\r\n", "\n"));
     }
-  } catch {
-    return undefined;
+  } catch (cause: unknown) {
+    return cause instanceof RetainedRegularFileCleanupFailure
+      ? {
+          kind: "cleanup",
+          error: guidanceCleanupFailure(cause, resources, operation),
+        }
+      : { kind: "unavailable" };
   }
   const digest = sha256(
     [...files]
@@ -61,7 +110,7 @@ const readBundle = async (
   const sections = [...files].flatMap(([guide, content]) =>
     parseSections(guide, content),
   );
-  return { digest, sections };
+  return { kind: "available", bundle: { digest, sections } };
 };
 
 const parseSections = (guide: string, content: string): GuideSection[] => {
@@ -140,14 +189,24 @@ const invalidInput = (
 
 export const searchGuidance = async (
   input: unknown,
-): Promise<Result<JsonValue, AnalysisInputError>> =>
-  searchGuidanceWithReader(input);
+  resources: ArtifactResourceScope,
+): Promise<
+  Result<SearchGuidanceOutput, AnalysisInputError | ProviderCleanupError>
+> =>
+  searchGuidanceWithReader(
+    input,
+    (path) => readPackagedGuide(path, resources),
+    resources,
+  );
 
 /** Reader seam keeps packaged-guide drift and missing-file behavior testable. */
 export const searchGuidanceWithReader = async (
   input: unknown,
-  readGuide: (relativePath: string) => Promise<string> = readPackagedGuide,
-): Promise<Result<JsonValue, AnalysisInputError>> => {
+  readGuide: (relativePath: string) => Promise<string>,
+  resources: ArtifactResourceScope,
+): Promise<
+  Result<SearchGuidanceOutput, AnalysisInputError | ProviderCleanupError>
+> => {
   const parsed = searchGuidanceInputSchema.safeParse(input);
   if (!parsed.success)
     return invalidInput("search_guidance", input, parsed.error.issues);
@@ -172,10 +231,11 @@ export const searchGuidanceWithReader = async (
         message: "The continuation token belongs to a different query",
       },
     ]);
-  const bundle = await readBundle(readGuide);
-  if (bundle === undefined)
+  const loaded = await readBundle(readGuide, resources, "search_guidance");
+  if (loaded.kind === "cleanup") return err(loaded.error);
+  if (loaded.kind === "unavailable")
     return ok(
-      jsonValueSchema.parse({
+      searchGuidanceOutputSchema.parse({
         status: "bundle_unavailable",
         source: SOURCE,
         content_kind: "documentation",
@@ -183,10 +243,11 @@ export const searchGuidanceWithReader = async (
           "Installed REA guidance is missing or unreadable; no guidance content was returned.",
       }),
     );
+  const bundle = loaded.bundle;
 
   if (cursor !== undefined && cursor.bundle !== bundle.digest)
     return ok(
-      jsonValueSchema.parse({
+      searchGuidanceOutputSchema.parse({
         status: "stale_continuation",
         source: SOURCE,
         content_kind: "documentation",
@@ -225,7 +286,7 @@ export const searchGuidanceWithReader = async (
 
   if (ranked.length === 0)
     return ok(
-      jsonValueSchema.parse({
+      searchGuidanceOutputSchema.parse({
         status: "no_matches",
         source: SOURCE,
         content_kind: "documentation",
@@ -249,7 +310,7 @@ export const searchGuidanceWithReader = async (
   const page = ranked.slice(offset, offset + parsed.data.limit);
   const hasMore = offset + page.length < ranked.length;
   return ok(
-    jsonValueSchema.parse({
+    searchGuidanceOutputSchema.parse({
       status: "matches",
       source: SOURCE,
       content_kind: "documentation",
@@ -284,14 +345,24 @@ export const searchGuidanceWithReader = async (
 
 export const readGuidanceSection = async (
   input: unknown,
-): Promise<Result<JsonValue, AnalysisInputError>> =>
-  readGuidanceSectionWithReader(input);
+  resources: ArtifactResourceScope,
+): Promise<
+  Result<ReadGuidanceSectionOutput, AnalysisInputError | ProviderCleanupError>
+> =>
+  readGuidanceSectionWithReader(
+    input,
+    (path) => readPackagedGuide(path, resources),
+    resources,
+  );
 
 /** Reader seam keeps packaged-guide drift and missing-file behavior testable. */
 export const readGuidanceSectionWithReader = async (
   input: unknown,
-  readGuide: (relativePath: string) => Promise<string> = readPackagedGuide,
-): Promise<Result<JsonValue, AnalysisInputError>> => {
+  readGuide: (relativePath: string) => Promise<string>,
+  resources: ArtifactResourceScope,
+): Promise<
+  Result<ReadGuidanceSectionOutput, AnalysisInputError | ProviderCleanupError>
+> => {
   const parsed = readGuidanceSectionInputSchema.safeParse(input);
   if (!parsed.success)
     return invalidInput("read_guidance_section", input, parsed.error.issues);
@@ -304,10 +375,15 @@ export const readGuidanceSectionWithReader = async (
         message: "Malformed or unsupported guidance locator",
       },
     ]);
-  const bundle = await readBundle(readGuide);
-  if (bundle === undefined)
+  const loaded = await readBundle(
+    readGuide,
+    resources,
+    "read_guidance_section",
+  );
+  if (loaded.kind === "cleanup") return err(loaded.error);
+  if (loaded.kind === "unavailable")
     return ok(
-      jsonValueSchema.parse({
+      readGuidanceSectionOutputSchema.parse({
         status: "guidance_missing",
         source: SOURCE,
         content_kind: "documentation",
@@ -315,9 +391,10 @@ export const readGuidanceSectionWithReader = async (
           "Installed REA guidance is missing or unreadable; no section content was returned.",
       }),
     );
+  const bundle = loaded.bundle;
   if (identity.bundle !== bundle.digest)
     return ok(
-      jsonValueSchema.parse({
+      readGuidanceSectionOutputSchema.parse({
         status: "stale_locator",
         source: SOURCE,
         content_kind: "documentation",
@@ -334,7 +411,7 @@ export const readGuidanceSectionWithReader = async (
   );
   if (section === undefined)
     return ok(
-      jsonValueSchema.parse({
+      readGuidanceSectionOutputSchema.parse({
         status: "stale_locator",
         source: SOURCE,
         content_kind: "documentation",
@@ -343,7 +420,7 @@ export const readGuidanceSectionWithReader = async (
       }),
     );
   return ok(
-    jsonValueSchema.parse({
+    readGuidanceSectionOutputSchema.parse({
       status: "section",
       source: SOURCE,
       content_kind: "documentation",

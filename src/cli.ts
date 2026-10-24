@@ -65,9 +65,27 @@ import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArgume
 import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
 import { presentCliArgumentErrors } from "./cli/argumentErrors.js";
 import { createCliCompletions } from "./cli/completions.js";
-import { registerGuidanceCommands } from "./cli/guidanceCommands.js";
+import {
+  closeCliGuidanceResources,
+  registerGuidanceCommands,
+} from "./cli/guidanceCommands.js";
+import { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
 
-export { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
+export { closeCliJavaScriptResources };
+
+/** Close every process-owned resource used by CLI commands. */
+export const closeCliResources = async (): Promise<void> => {
+  const results = await Promise.allSettled([
+    closeCliJavaScriptResources(),
+    closeCliGuidanceResources(),
+  ]);
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "CLI resource cleanup failed");
+};
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.

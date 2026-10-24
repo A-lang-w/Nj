@@ -16,7 +16,7 @@ export const registerApplicationTools = (
   server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
-  registerGuidanceTools(server);
+  registerGuidanceTools(server, options.artifactResources);
   registerTraceFeatureTool(server, options);
   registerTraceJavaScriptSemanticsTool(server, options);
   registerCompareApplicationVersionsTool(server, options);

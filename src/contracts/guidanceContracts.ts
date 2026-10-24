@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const boundedLimit = z.number().int().min(1).max(20).default(8);
+export const searchGuidanceLimitSchema = z.number().int().min(1).max(20);
 
 export const searchGuidanceInputSchema = z.strictObject({
   query: z
@@ -8,7 +8,7 @@ export const searchGuidanceInputSchema = z.strictObject({
     .min(1)
     .max(2048)
     .refine((value) => value.trim().length > 0),
-  limit: boundedLimit,
+  limit: searchGuidanceLimitSchema.default(8),
   cursor: z.string().min(1).max(4096).optional(),
 });
 
@@ -81,3 +81,8 @@ export const readGuidanceSectionOutputSchema = z.discriminatedUnion("status", [
     message: z.string(),
   }),
 ]);
+
+export type SearchGuidanceOutput = z.output<typeof searchGuidanceOutputSchema>;
+export type ReadGuidanceSectionOutput = z.output<
+  typeof readGuidanceSectionOutputSchema
+>;

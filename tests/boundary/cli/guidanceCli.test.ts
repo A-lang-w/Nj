@@ -1,5 +1,7 @@
-import { expect, it } from "vitest";
-import { createCli } from "./cli.js";
+import { afterAll, expect, it } from "vitest";
+import { createCli, closeCliResources } from "../../../src/cli.js";
+
+afterAll(async () => closeCliResources());
 
 const run = async (arguments_: string[]) => {
   const cli = createCli({});
@@ -52,6 +54,16 @@ it("searches and reads packaged guidance through the provider-free CLI", async (
     locator: selected?.locator,
     source: "installed_rea_guidance",
   });
+  const ignoredLimit = await run([
+    "guidance",
+    "--action",
+    "read",
+    "--locator",
+    selected?.locator ?? "",
+    "--limit",
+    "2",
+  ]);
+  expect(ignoredLimit.exitCode).not.toBe(0);
 });
 
 it("reports no matches and rejects invalid CLI inputs", async () => {
