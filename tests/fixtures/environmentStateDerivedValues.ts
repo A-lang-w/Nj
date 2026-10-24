@@ -53,6 +53,26 @@ export const TAG_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/tags", [FIRST_TAG, SECOND_TAG, HEAVY_TAG, BORROWED_TAG]],
 ];
 
+/** A later tag create whose update clock Go trims while its creation clock keeps a trailing zero. */
+const FIXED_CREATED_TAG = tag(
+  4,
+  "Borrowed",
+  bookClock(5).replace("Z", ".388122040Z"),
+  goClock(5, "388122180"),
+);
+
+/** Tag creates whose later call trims one clock and shows its sibling at a fixed width. */
+export const FIXED_SIBLING_TAG_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/tags", [FIRST_TAG, SECOND_TAG]],
+  ["GET", `/api/tags/${numberedUuid(1)}`, FIRST_TAG],
+  ["GET", `/api/tags/${numberedUuid(2)}`, SECOND_TAG],
+  ["POST", "/api/tags", HEAVY_TAG, 201, { name: "Heavy" }],
+  ["GET", `/api/tags/${numberedUuid(3)}`, HEAVY_TAG],
+  ["POST", "/api/tags", FIXED_CREATED_TAG, 201, { name: "Borrowed" }],
+  ["GET", `/api/tags/${numberedUuid(4)}`, FIXED_CREATED_TAG],
+  ["GET", "/api/tags", [FIRST_TAG, SECOND_TAG, HEAVY_TAG, FIXED_CREATED_TAG]],
+];
+
 /** A clock's UTC date and time digits, as the Wayback Machine names a snapshot. */
 const archiveDigits = (clock: string): string =>
   clock.replace(/\D/gu, "").slice(0, 14);
@@ -205,6 +225,67 @@ export const FOLDER_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/folders", [SEED_FOLDER, RENAMED_ALPHA, BRAVO]],
 ];
 
+/** Two folder renames, the first leaving its address as it was unless `rebuilt`, which another tool then rebuilds. */
+export const restoredAddressRows = (rebuilt: boolean): TimedCaptureRow[] => {
+  const held = "2026-10-01T09:00:00Z";
+  const alpha = folder(
+    numberedUuid(102),
+    "Scratch Alpha Harbor",
+    1656166527623168,
+    held,
+  );
+  const bravo = folder(
+    numberedUuid(103),
+    "Scratch Bravo Meadow",
+    1656166745726976,
+    held,
+  );
+  const renamed = folder(
+    numberedUuid(102),
+    "Renamed Alpha Lantern",
+    1656166527623168,
+    held,
+    bookClock(3),
+  );
+  const first = rebuilt ? renamed : { ...renamed, url: alpha.url ?? null };
+  const second = folder(
+    numberedUuid(103),
+    "Second Bravo Lantern",
+    1656166745726976,
+    held,
+    bookClock(7),
+  );
+  return [
+    ["GET", "/api/folders", [alpha, bravo]],
+    ["GET", `/api/folders/${numberedUuid(102)}`, alpha],
+    ["GET", `/api/folders/${numberedUuid(103)}`, bravo],
+    [
+      "PUT",
+      `/api/folders/${numberedUuid(102)}`,
+      first,
+      200,
+      { title: "Renamed Alpha Lantern" },
+    ],
+    ["GET", `/api/folders/${numberedUuid(102)}`, first],
+    [
+      "POST",
+      `/api/folders/${numberedUuid(102)}/address`,
+      renamed,
+      200,
+      { url: renamed.url ?? null },
+    ],
+    ["GET", `/api/folders/${numberedUuid(102)}`, renamed],
+    [
+      "PUT",
+      `/api/folders/${numberedUuid(103)}`,
+      second,
+      200,
+      { title: "Second Bravo Lantern" },
+    ],
+    ["GET", `/api/folders/${numberedUuid(103)}`, second],
+  ];
+};
+
 const RENAMED_FIRST_TAG = {
   ...FIRST_TAG,
   name: "Fragile glass",
@@ -237,6 +318,13 @@ export const TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
     { name: "Outdoor gear" },
   ],
   ["GET", `/api/tags/${numberedUuid(2)}`, RENAMED_SECOND_TAG],
+];
+
+/** The same renames with an archive the gate does not model before the second, which leaves that tag unknown. */
+export const UNKNOWN_TAG_UPDATE_ROWS: readonly TimedCaptureRow[] = [
+  ...TAG_UPDATE_ROWS.slice(0, 5),
+  ["POST", `/api/tags/${numberedUuid(2)}/archive`, { archived: true }, 200, {}],
+  ...TAG_UPDATE_ROWS.slice(5),
 ];
 
 const synced = (entity: Entity, syncedAt: string): Entity => ({

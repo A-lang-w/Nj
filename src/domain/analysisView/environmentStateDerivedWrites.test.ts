@@ -6,11 +6,14 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import {
   BOOKMARK_ROWS,
+  FIXED_SIBLING_TAG_ROWS,
   FOLDER_ROWS,
   goClock,
+  restoredAddressRows,
   TAG_ROWS,
   TAG_UPDATE_ROWS,
   TWO_CLOCK_TAG_UPDATE_ROWS,
+  UNKNOWN_TAG_UPDATE_ROWS,
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import {
   environmentStateViewOf,
@@ -81,6 +84,20 @@ describe("values an application derives from others", () => {
     },
   );
 
+  it("keeps a create's sibling clock at a fixed width when a later call trims one clock and shows the sibling's trailing zero", () => {
+    const rules = planOf(FIXED_SIBLING_TAG_ROWS, "post_tags").rules;
+    expect(rules).toContainEqual({
+      field: "updatedAt",
+      rule: "clock",
+      format: TRIMMED,
+    });
+    expect(rules).toContainEqual({
+      field: "createdAt",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 9, zone: "Z" },
+    });
+  });
+
   it("serves updates whose clock a later call shows trimmed", () => {
     expect(planOf(TAG_UPDATE_ROWS, "patch_tags_by_uuid")).toMatchObject({
       served: true,
@@ -88,6 +105,21 @@ describe("values an application derives from others", () => {
         { field: "updatedAt", rule: "clock", format: TRIMMED },
       ]),
     });
+  });
+
+  it("learns no clock spelling from an update to an entity an unmodelled write left unknown", () => {
+    expect(planOf(UNKNOWN_TAG_UPDATE_ROWS, "patch_tags_by_uuid")).toMatchObject(
+      {
+        served: true,
+        rules: expect.arrayContaining([
+          {
+            field: "updatedAt",
+            rule: "clock",
+            format: { kind: "iso", separator: "T", fraction: 9, zone: "Z" },
+          },
+        ]),
+      },
+    );
   });
 
   it("serves updates whose two clocks a later call shows trimmed for one only", () => {
@@ -140,6 +172,24 @@ describe("values an application derives from others", () => {
     expect(planOf(FOLDER_ROWS, "put_folders_by_uuid")).toMatchObject({
       served: true,
       rules: expect.arrayContaining([url]),
+    });
+  });
+
+  it("withholds renames whose address a later call composes when an earlier call left it otherwise", () => {
+    expect(
+      planOf(restoredAddressRows(true), "put_folders_by_uuid"),
+    ).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "url", rule: "composed" }),
+      ]),
+    });
+    // The first rename left its address as it was, which the composition would rebuild.
+    expect(
+      planOf(restoredAddressRows(false), "put_folders_by_uuid"),
+    ).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
     });
   });
 

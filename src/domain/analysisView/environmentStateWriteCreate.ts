@@ -319,7 +319,7 @@ const followsGenerated = (
     );
   }) && followsSequences(context, draft, created);
 
-/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them. */
+/** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless that call shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
   const fitted = draft.plan.rules.map((rule) => {
     if (rule.rule !== "clock") return rule;
@@ -332,7 +332,7 @@ const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
       ? rule
       : { ...rule, format };
   });
-  draft.plan.rules = siblingTrimmedClocks(fitted, draft.observed);
+  draft.plan.rules = siblingTrimmedClocks(fitted, draft.observed, fields);
 };
 
 /** Record the values a create's sequences took, which the next call follows. */
