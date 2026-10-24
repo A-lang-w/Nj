@@ -69,8 +69,6 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
   /** The entities of any type the state holds under an id. */
   readonly named?: (id: string) => readonly StateEntity[];
-  /** Members whose values the tool's recorded calls varied. */
-  readonly varied?: ReadonlySet<string>;
 }
 
 /** What explaining a create looks values up in, built once per request body. */
@@ -244,6 +242,16 @@ const generatedRule = (
   return createdNestedClock(field, value, evidence);
 };
 
+/** Pinned members less those a reference reads: it rebuilds the object they name for any held entity. */
+const unreferenced = (
+  rules: readonly FieldRule[],
+  pinned: Set<string>,
+): Set<string> => {
+  for (const rule of rules)
+    if (rule.rule === "reference") pinned.delete(rule.member);
+  return pinned;
+};
+
 /** Body members the application stored as sent, and the others with what they were sent. */
 const bodyOf = (
   body: JsonObject,
@@ -327,10 +335,10 @@ export const explainCreate = (
     ),
     ...instantMembers(evidence.call.body, evidence.entity, constants),
   ]);
-  const pinned = pinnedEchoes(evidence.entity, evidence.call.body, {
-    type: evidence.type,
-    varied: evidence.varied ?? new Set(),
-  });
+  const pinned = unreferenced(
+    rules,
+    pinnedEchoes(evidence.entity, evidence.call.body, evidence.type),
+  );
   const stored = storedMembers(
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,
@@ -431,7 +439,7 @@ export const explainUpdate = (
     if (rule.rule === "reference") echoed.add(rule.member);
   // Serving renews one UUID alike in every field, so the call must have.
   unexplained.push(...unexplainedRenewals(rules, evidence));
-  const pinned = pinnedEchoes(evidence.after, body, { varied: new Set() });
+  const pinned = unreferenced(rules, pinnedEchoes(evidence.after, body));
   const shaped = bodyOf(
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),

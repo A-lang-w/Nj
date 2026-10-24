@@ -9,7 +9,6 @@ import {
   segmentsOf,
   selectedCollection,
   type JsonObject,
-  requestJson,
   type StateEntity,
   type SuppliedSegment,
 } from "./environmentStateRules.js";
@@ -18,12 +17,9 @@ import {
   recordedGeneratedValue,
 } from "./environmentStateWriteApply.js";
 import {
-  unenveloped,
   createdToken,
   isOpaqueToken,
   restampedFields,
-  sameQuery,
-  variedMembers,
 } from "./environmentStateWriteStamps.js";
 import {
   recordedPathValues,
@@ -33,7 +29,6 @@ import {
 import {
   collectionTarget,
   entityTarget,
-  succeeded,
 } from "./environmentStateWriteChecks.js";
 import {
   built,
@@ -162,12 +157,7 @@ const refineCreate = (
   step: WriteStep,
   evidence: CreateCallEvidence,
 ): boolean => {
-  const { explained, request, held } = explainedCall(
-    context,
-    draft,
-    step,
-    evidence,
-  );
+  const { explained, held } = explainedCall(context, draft, step, evidence);
   if (
     (explained.tied && draft.plan.collection === null) ||
     linkedUnexplained(explained.rules, evidence.observed.object, held)
@@ -182,9 +172,9 @@ const refineCreate = (
       rules: explained.rules,
       contract: {
         ...explained.body,
-        ...(request.envelope === undefined
+        ...(evidence.envelope === undefined
           ? {}
-          : { envelope: request.envelope }),
+          : { envelope: evidence.envelope }),
       },
     },
   );
@@ -199,6 +189,7 @@ type CreateCallEvidence = {
   readonly observed: Observed;
   readonly call: WriteCall & { readonly body: JsonObject };
   readonly collection: string;
+  readonly envelope: string | undefined;
 };
 
 /** Explain one recorded create on its own, against the entities its collection and type held before it. */
@@ -211,20 +202,6 @@ const explainedCall = (
   const type = draft.plan.target!;
   const members = fieldsOf(context.state.members(type, evidence.collection));
   const held = fieldsOf(context.state.ofType(type));
-  // Only calls serving would take, successful and with the exemplar's query, show that a member may vary.
-  const calls = new Set(step.tool.record_ordinals);
-  const taken = context.records.filter(
-    (record) =>
-      calls.has(record.ordinal) &&
-      succeeded(record) &&
-      sameQuery(record.query, step.record.query),
-  );
-  const request = requestBodyPlan(
-    context,
-    step,
-    draft,
-    evidence.observed.object,
-  )!;
   const explained = explainCreate({
     entity: evidence.observed.object,
     call: evidence.call,
@@ -233,14 +210,8 @@ const explainedCall = (
     collection: members,
     type: held,
     named: (id) => context.state.named(id),
-    varied: variedMembers(
-      taken.map(({ ordinal }) => {
-        const body = requestJson(context.io.requestBody(ordinal));
-        return unenveloped(body, request.envelope);
-      }),
-    ),
   });
-  return { explained, request, members, held };
+  return { explained, members, held };
 };
 
 /** Build a create plan from its exemplar's observation. */
@@ -252,7 +223,7 @@ const buildCreate = (
 ): boolean => {
   const type = draft.plan.target!;
   const idField = context.idField(type);
-  const { explained, request, members, held } = explainedCall(
+  const { explained, members, held } = explainedCall(
     context,
     draft,
     step,
@@ -304,7 +275,9 @@ const buildCreate = (
     ),
     body: {
       ...explained.body,
-      ...(request.envelope === undefined ? {} : { envelope: request.envelope }),
+      ...(evidence.envelope === undefined
+        ? {}
+        : { envelope: evidence.envelope }),
     },
     rules: explained.rules,
     collection:
@@ -544,7 +517,8 @@ export const applyCreate = (
     idField,
     linked: draft.linked !== undefined,
   });
-  const body = requestBodyPlan(context, step, draft, observed?.object)?.object;
+  const request = requestBodyPlan(context, step, draft, observed?.object);
+  const body = request?.object;
   if (observed === undefined) {
     fail(draft, step, body === undefined ? "body-unusable" : "no-observation");
     return UNKNOWN;
@@ -593,7 +567,12 @@ export const applyCreate = (
   }
   if (
     !later &&
-    !buildCreate(context, draft, step, { observed, call, collection })
+    !buildCreate(context, draft, step, {
+      observed,
+      call,
+      collection,
+      envelope: request?.envelope,
+    })
   )
     return recorded();
   // Rules learn from the recorded path; serving fills path fields from the collection it selects.
@@ -617,7 +596,13 @@ export const applyCreate = (
     );
   // A later call that agrees with the plan widens it, as a later update does: to members it alone sent or left out, an
   // array it showed sorted, or a clock spelling. One that disagrees leaves the plan as it was.
-  if (later) refineCreate(context, draft, step, { observed, call, collection });
+  if (later)
+    refineCreate(context, draft, step, {
+      observed,
+      call,
+      collection,
+      envelope: request?.envelope,
+    });
   const fields = fieldsOfCall();
   const id = fields.ok ? scalarText(fields.value[idField]) : undefined;
   if (
