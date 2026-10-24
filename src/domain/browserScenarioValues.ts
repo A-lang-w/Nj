@@ -331,7 +331,16 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
         "JSON request body, sent with Content-Type application/json unless a header sets one; not allowed for GET or HEAD.",
       ),
     expected_status: z
-      .array(z.int().min(100).max(599))
+      .array(
+        z
+          .int()
+          .min(100)
+          .max(599)
+          .refine((status) => status < 300 || status > 399, {
+            message:
+              "Request steps follow no redirects, so a 3xx status cannot complete one",
+          }),
+      )
       .min(1)
       .optional()
       .describe(

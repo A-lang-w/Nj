@@ -271,6 +271,9 @@ export class BrowserScenarioSecrets {
    * {@link MIN_REDACTED_PAGE_VALUE_LENGTH} is not redacted.
    */
   admitPageValue(label: string, value: string): void {
+    // fetch sends a header value without surrounding spaces and tabs, so that is the spelling records hold.
+    const sent = value.replace(/^[\t ]+|[\t ]+$/gu, "");
+    if (sent !== value) this.admitPageValue(label, sent);
     if (value.length < MIN_REDACTED_PAGE_VALUE_LENGTH) return;
     for (const held of this.values.values()) if (held === value) return;
     let id = `page:${label}`;

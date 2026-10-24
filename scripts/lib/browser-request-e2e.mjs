@@ -225,7 +225,7 @@ const assertUnexpectedStatusFails = async (entrypoint, scenario, site) => {
     ({ step_id }) => step_id === "elsewhere",
   );
   assert.equal(step.status, "failed");
-  assert.match(step.error ?? "", /follow no redirects/u);
+  assert.match(step.error ?? "", /request steps do not follow/u);
   // Chrome reports the redirected request and aborts it; the other origin must never receive it.
   assert.ok(
     site.hosts.every((line) => !line.startsWith("localhost")),

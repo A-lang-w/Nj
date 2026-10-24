@@ -60,6 +60,9 @@ describe("request step schema", () => {
         }),
       ]),
     ).toContainEqual(expect.stringContaining("cannot set"));
+    expect(
+      issues([requestStep({ expected_status: [200, 303] })]),
+    ).toContainEqual(expect.stringContaining("3xx"));
     for (const header of [
       { name: "X-A", value: literal("a\r\nX-B: b") },
       { name: "X-A", value: literal("a"), prefix: "Bearer\n" },
@@ -321,7 +324,7 @@ describe("request step confinement", () => {
     const parsed = scenario([requestStep({})]);
     await expect(
       perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("follow no redirects");
+    ).rejects.toThrow("request steps do not follow");
     expect(calls[0]!.init.redirect).toBe("manual");
     await expect(
       perform(
@@ -375,6 +378,21 @@ describe("request step confinement", () => {
     expect(calls[0]!.url).toBe(
       `${ORIGIN}/api/items?flag&a=b%20c&s=x;y&q=a%20b`,
     );
+    for (const [path, sent] of [
+      ["/api/items?", "/api/items?q=1"],
+      ["/api/items#", "/api/items?q=1"],
+      ["/api/items?a=1&", "/api/items?a=1&q=1"],
+      ["/api/items?a=1#top", "/api/items?a=1&q=1"],
+    ] as const) {
+      const edge = scenario([
+        requestStep({
+          path,
+          query: [{ name: "q", value: { source: "literal", value: "1" } }],
+        }),
+      ]);
+      await perform(fakePage({}), edge.actions[0]!, resolved(edge));
+      expect(calls.at(-1)!.url, path).toBe(`${ORIGIN}${sent}`);
+    }
   });
 
   it("refuses page values a header cannot carry, and stored values it cannot read", async () => {
@@ -440,6 +458,14 @@ describe("page value redaction", () => {
     held.admitPageValue("create-2.X-CSRFToken", "csrf-token-value");
     expect(held.redact("csrf-token-value")).toBe(
       "[REDACTED:page:create-1.X-CSRFToken]",
+    );
+  });
+
+  it("redacts the value fetch sends when the stored one has surrounding spaces", () => {
+    const held = secrets();
+    held.admitPageValue("s.X-Tok", " padded-token-4f9e2a\t");
+    expect(held.redact("X-Tok: padded-token-4f9e2a")).not.toContain(
+      "padded-token-4f9e2a",
     );
   });
 

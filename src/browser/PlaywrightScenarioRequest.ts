@@ -119,8 +119,15 @@ const withQuery = (
         `${encodeURIComponent(name)}=${encodeURIComponent(value)}`,
     )
     .join("&");
-  const base = url.href.slice(0, url.href.length - url.hash.length);
-  return `${base}${url.search === "" ? "?" : "&"}${added}${url.hash}`;
+  // fetch drops the fragment; cut it at its "#" even when nothing follows it.
+  const hash = url.href.indexOf("#");
+  const base = hash < 0 ? url.href : url.href.slice(0, hash);
+  const separator = !base.includes("?")
+    ? "?"
+    : base.endsWith("?") || base.endsWith("&")
+      ? ""
+      : "&";
+  return `${base}${separator}${added}`;
 };
 
 /** What a request step sends: the URL, the origin it must be sent from, and the call. */
@@ -240,7 +247,7 @@ export const performScenarioRequest = async (input: {
     );
   if ("redirected" in response)
     throw new ScenarioRequestError(
-      `Request step ${action.step_id} was answered with a redirect; request steps follow no redirects, so send it to the path the redirect names.`,
+      `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. The capture records the redirect and, with header values selected, its Location.`,
     );
   if (
     action.expected_status !== undefined &&
