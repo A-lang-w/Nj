@@ -374,12 +374,11 @@ export const parseAndroidManifestComponents = (
         capacityTruncated = true;
         break;
       }
-      const rawDeclaredName = androidAttribute(component, "name");
-      if (rawDeclaredName === null) {
+      const declared = androidAttribute(component, "name");
+      if (declared === null) {
         unnamed += 1;
         continue;
       }
-      const declared = rawDeclaredName.trim();
       const unresolvedName = containsUnresolvedToken(declared);
       const filters = childNodes(component).filter(
         (entry): entry is Element =>
@@ -394,7 +393,6 @@ export const parseAndroidManifestComponents = (
       // once the byte budget is spent, later names keep their declared form.
       const invalidDeclaredName =
         declared.length === 0 ||
-        declared !== rawDeclaredName ||
         (!unresolvedName && !hasSupportedDexBinaryClassNameSyntax(declared));
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
@@ -415,9 +413,7 @@ export const parseAndroidManifestComponents = (
       const nameFits = packageKnown && resolvedBytes <= nameBudget;
       const name = nameFits
         ? resolveAndroidComponentName(packageName, declared)
-        : invalidDeclaredName
-          ? rawDeclaredName
-          : declared;
+        : declared;
       if (invalidDeclaredName) invalidNames += 1;
       if (!invalidDeclaredName) {
         if (unresolvedName) unresolvedTokens += 1;
@@ -523,15 +519,13 @@ export const parseAndroidManifestComponents = (
         if (targetActivity === null) {
           unresolvedTargetActivities += 1;
         } else {
-          const targetName = targetActivity.trim();
           const targetNeedsPackage =
-            targetName.startsWith(".") || !targetName.includes(".");
-          const targetUnresolved = containsUnresolvedToken(targetName);
+            targetActivity.startsWith(".") || !targetActivity.includes(".");
+          const targetUnresolved = containsUnresolvedToken(targetActivity);
           const targetInvalid =
-            targetName.length === 0 ||
-            targetName !== targetActivity ||
+            targetActivity.length === 0 ||
             (!targetUnresolved &&
-              !hasSupportedDexBinaryClassNameSyntax(targetName));
+              !hasSupportedDexBinaryClassNameSyntax(targetActivity));
           const targetPackageKnown =
             packageName !== null &&
             !packageHasInvalidWhitespace &&
@@ -541,7 +535,10 @@ export const parseAndroidManifestComponents = (
             !targetInvalid &&
             !targetUnresolved &&
             (!targetNeedsPackage || targetPackageKnown);
-          if (!targetResolved || !precedingActivityTargetNames.has(targetName))
+          if (
+            !targetResolved ||
+            !precedingActivityTargetNames.has(targetActivity)
+          )
             unresolvedTargetActivities += 1;
         }
       }
@@ -582,7 +579,7 @@ export const parseAndroidManifestComponents = (
       if (filteredExportUnknown) unknownFilteredExportDefaults += 1;
       items.push({
         kind: component.nodeName,
-        declared_name: rawDeclaredName,
+        declared_name: declared,
         name,
         exported: exportedLiteral,
         exported_default:
@@ -618,7 +615,7 @@ export const parseAndroidManifestComponents = (
   }
   if (invalidNames > 0) {
     limitations.push(
-      `${String(invalidNames)} component name value(s) are empty, have surrounding whitespace, or do not fit DEX binary class-name syntax; the raw declaration is retained without resolving it as an identity.`,
+      `${String(invalidNames)} component name value(s) are empty or do not fit DEX binary class-name syntax; the raw declaration is retained without resolving it as an identity.`,
     );
     truncated = true;
   }

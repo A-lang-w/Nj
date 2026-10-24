@@ -287,3 +287,32 @@ from the timeout and no deadline was increased. This completed selection uses
 primed OS/file caches and a fresh runner; it is a validation cost, not a
 before/after performance comparison. Family-memory sampling limitations above
 remain applicable.
+
+## Exact DEX class spelling follow-up
+
+A later review identified another identity/display conflation: DEX format 040
+permits U+0020 in SimpleName, including its boundaries, but component and alias
+handling still trimmed it. Five source-boundary regressions fail before the
+correction (87 other cases pass); all 92 component cases pass after it. They
+cover trailing space, leading space, spaces after a relative dot, a space-only
+segment, and a fully qualified spelling with boundary spaces. A separate control
+keeps `.Hidden` distinct from `.Hidden ` in alias matching.
+
+The XML owner now validates and resolves the original component spelling and
+compares exact alias references. The redundant raw/trimmed representations and
+the downstream trim-based invalidity checks are removed. The existing malformed
+boundary control now uses XML character-reference tabs, which DEX disallows,
+rather than incorrectly treating U+0020 as invalid. Empty names and the descriptor
+separator controls remain covered. Package grammar retains its separate owner.
+The domain schema and retained summary consume these strings without another
+normalization step.
+
+The source authorities are [DEX SimpleName](https://source.android.com/docs/core/runtime/dex-format#simplename)
+and Android 16's [buildClassName](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-16.0.0_r1/core/java/com/android/internal/pm/pkg/parsing/ParsingUtils.java),
+which applies the package to the exact string. These are decoded-XML and
+source-qualified cases. No authentic space-named DEX APK or device load was
+executed; the decoded manifest alone does not establish DEX version, class
+existence or loadability. Earlier real-ApiDemos measurements keep their exact
+source pins and are not re-labelled as measurements of this correction. The
+public response schema and ordinary valid-name output are unchanged by source
+reasoning; no new token or speed improvement is claimed.

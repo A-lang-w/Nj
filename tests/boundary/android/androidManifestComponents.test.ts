@@ -494,21 +494,23 @@ it("measures an oversized inherited permission once for the whole inventory", ()
   }
 });
 
-it("does not resolve malformed raw component names after trimming", () => {
+it("retains forbidden controls and empty component names", () => {
   const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=" .Main "/><service android:name=""/><receiver android:name=".Valid"/></application></manifest>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="&#x9;.Main&#x9;"/><service android:name=""/><receiver android:name=".Valid"/></application></manifest>',
     "complete",
     "33",
   );
   expect(
     inventory.items.map(({ declared_name, name }) => [declared_name, name]),
   ).toEqual([
-    [" .Main ", " .Main "],
+    ["\t.Main\t", "\t.Main\t"],
     ["", ""],
     [".Valid", "com.example.Valid"],
   ]);
   expect(inventory.status).toBe("partial");
-  expect(inventory.limitations.join(" ")).toContain("surrounding whitespace");
+  expect(inventory.limitations.join(" ")).toContain(
+    "DEX binary class-name syntax",
+  );
 });
 
 it("applies the provider export default from the target SDK", () => {
@@ -1011,3 +1013,36 @@ it.each(["android", "com.Example_9", "a." + "b".repeat(221)])(
     ]);
   },
 );
+
+it.each([
+  [".Hidden ", ".Hidden ", "com.example.Hidden "],
+  [" Hidden", ". Hidden", "com.example. Hidden"],
+  [". Hidden ", "com.example. Hidden ", "com.example. Hidden "],
+  [" ", ". ", "com.example. "],
+  [" other.Hidden ", " other.Hidden ", " other.Hidden "],
+])(
+  "preserves DEX boundary spaces in %j and alias %j",
+  (declared, target, expected) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name="${declared}"/><activity-alias android:name=".Alias" android:targetActivity="${target}" android:exported="false"/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory.status).toBe("complete");
+    expect(inventory.items[0]).toMatchObject({
+      declared_name: declared,
+      name: expected,
+    });
+    expect(inventory.items[1]?.target_activity).toBe(target);
+  },
+);
+
+it("keeps distinct DEX spellings distinct in alias matching", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Hidden"/><activity-alias android:name=".Alias" android:targetActivity=".Hidden " android:exported="false"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.status).toBe("partial");
+  expect(inventory.items[1]?.target_activity).toBe(".Hidden ");
+});
