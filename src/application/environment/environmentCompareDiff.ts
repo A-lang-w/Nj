@@ -1,12 +1,12 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
-import type {
-  ComposedPart,
-  FieldRule,
-} from "../../domain/analysisView/environmentStateWriteRules.js";
+import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { matchesClockFormat } from "../../domain/analysisView/environmentStateWriteClockFormats.js";
-import { composedValue } from "../../domain/analysisView/environmentStateWriteComposed.js";
 import {
-  generatedIntegerDigits,
+  composedPartText,
+  composedValue,
+} from "../../domain/analysisView/environmentStateWriteComposed.js";
+import {
+  likeGeneratedInteger,
   isUuid,
   readClock,
   type ClockFormat,
@@ -114,21 +114,6 @@ interface Generation {
   readonly pointer: string;
 }
 
-/** Whether both values are generated integers of one JSON kind and length, as a `unique` integer field's are. */
-const sameGeneratedInteger = (
-  live: string | number,
-  env: string | number,
-): boolean => {
-  const liveDigits = generatedIntegerDigits(live);
-  const envDigits = generatedIntegerDigits(env);
-  return (
-    liveDigits !== undefined &&
-    envDigits !== undefined &&
-    typeof live === typeof env &&
-    liveDigits.length === envDigits.length
-  );
-};
-
 /** Whether a confirmed generation rule applies here and both values retain its generated format. */
 const generatedPair = (
   live: string | number,
@@ -140,7 +125,7 @@ const generatedPair = (
   if (
     rule.rule === "unique" &&
     pointer === "" &&
-    sameGeneratedInteger(live, env)
+    likeGeneratedInteger(live, env)
   )
     return true;
   if (typeof live !== "string" || typeof env !== "string") return false;
@@ -162,16 +147,9 @@ const generatedPair = (
   );
 };
 
-/** Whether a composed field's value is the composition its own response's fields spell. */
-const spellsOwn = (
-  parts: readonly ComposedPart[],
-  response: JsonObject,
-  value: JsonValue | undefined,
-): boolean =>
-  typeof value === "string" && composedValue(parts, response) === value;
-
 class Differ {
   readonly #rules: ReadonlyMap<string, FieldRule>;
+  readonly #composedRules: readonly Extract<FieldRule, { rule: "composed" }>[];
   readonly #generatedToEnv = new Map<string, string>();
   readonly #generatedToLive = new Map<string, string>();
   readonly differences: Difference[] = [];
@@ -195,6 +173,9 @@ class Differ {
     },
   ) {
     this.#rules = new Map(entity.rules.map((rule) => [rule.field, rule]));
+    this.#composedRules = entity.rules.filter(
+      (rule) => rule.rule === "composed",
+    );
   }
 
   add(difference: Difference): void {
@@ -441,6 +422,10 @@ class Differ {
         : key;
     };
     const matched = new Set<string>();
+    const composed =
+      self && this.#composedRules.length > 0
+        ? { agreed: new Set<string>(), fields: new Map<string, string>() }
+        : undefined;
     for (const [key, value] of Object.entries(live)) {
       const child = `${pointer}/${escapePointer(key)}`;
       const other = envKey(key);
@@ -453,15 +438,11 @@ class Differ {
       else {
         matched.add(other);
         const rule = self ? this.#rules.get(key) : undefined;
-        if (
-          rule?.rule === "composed" &&
-          value !== env[other] &&
-          spellsOwn(rule.parts, live, value) &&
-          spellsOwn(rule.parts, env, env[other])
-        ) {
-          this.normalised.generated += 1;
+        if (rule?.rule === "composed" && composed !== undefined) {
+          composed.fields.set(key, other);
           continue;
         }
+        const before = this.differences.length;
         this.value(
           value,
           env[other]!,
@@ -480,6 +461,36 @@ class Differ {
                   pointer: `${generation.pointer}/${escapePointer(key)}`,
                 },
         );
+        if (this.differences.length === before) composed?.agreed.add(key);
+      }
+    }
+    // Compare source fields once, then reuse their clock/identity decisions.
+    // Validate each response's spelling before normalizing its composition.
+    if (composed !== undefined) {
+      for (const rule of this.#composedRules) {
+        const other = composed.fields.get(rule.field);
+        if (other === undefined) continue;
+        const coherent =
+          composedValue(rule.parts, live) === live[rule.field] &&
+          composedValue(rule.parts, env) === env[other];
+        if (
+          coherent &&
+          rule.parts.every(
+            (part) =>
+              !("from" in part) ||
+              composed.agreed.has(part.from) ||
+              composedPartText(part, live) === composedPartText(part, env),
+          )
+        ) {
+          composed.agreed.add(rule.field);
+          if (live[rule.field] !== env[other]) this.normalised.generated += 1;
+        } else
+          this.add({
+            category: "value",
+            pointer: `${pointer}/${escapePointer(rule.field)}`,
+            live: shown(live[rule.field]),
+            env: shown(env[other]),
+          });
       }
     }
     for (const [key, value] of Object.entries(env))

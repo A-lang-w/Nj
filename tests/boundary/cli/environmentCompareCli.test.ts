@@ -10,7 +10,11 @@ import {
   type TimedCaptureRow,
 } from "../../fixtures/analysisView.js";
 import { environmentStateServeFixture } from "../../fixtures/environmentServe.js";
-import { TAG_ROWS } from "../../fixtures/environmentStateDerivedValues.js";
+import {
+  BOOKMARK_ROWS,
+  bookmark,
+  TAG_ROWS,
+} from "../../fixtures/environmentStateDerivedValues.js";
 import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
@@ -350,15 +354,11 @@ describe("rea environment-compare value context", () => {
 });
 
 describe("rea environment-compare recorded clock spelling", () => {
-  cliTest(
-    "accepts variable fractional widths under a confirmed trimmed write plan",
-    async ({ cli }) => {
-      const root = await createTestTempDirectory(
-        "rea-environment-trimmed-clock-",
-      );
-      const capture = timedCaptureEvidence(TAG_ROWS);
-      const fixture = environmentStateServeFixture(capture);
-      const probe = timedCaptureEvidence([
+  for (const scenario of [
+    {
+      name: "variable fractional widths under a confirmed trimmed write plan",
+      rows: TAG_ROWS,
+      probe: [
         [
           "POST",
           "/api/tags",
@@ -371,7 +371,36 @@ describe("rea environment-compare recorded clock spelling", () => {
           201,
           { name: "Spare" },
         ],
-      ]);
+      ] as const,
+      generated: 0,
+    },
+    {
+      name: "a composed bookmark URL through its creation clock",
+      rows: BOOKMARK_ROWS,
+      probe: [
+        [
+          "POST",
+          "/api/bookmarks",
+          bookmark(
+            20,
+            "https://pier.example.test/inspection",
+            "Pier",
+            "2026-10-20T10:00:00Z",
+          ),
+          201,
+          { url: "https://pier.example.test/inspection", title: "Pier" },
+        ],
+      ] as const,
+      generated: 1,
+    },
+  ]) {
+    cliTest(`accepts ${scenario.name}`, async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-derived-compare-",
+      );
+      const capture = timedCaptureEvidence(scenario.rows);
+      const fixture = environmentStateServeFixture(capture);
+      const probe = timedCaptureEvidence(scenario.probe);
       const originals = new Map<string, string>();
       for (const [name, value] of [
         ["manifest.json", fixture.manifest],
@@ -400,15 +429,15 @@ describe("rea environment-compare recorded clock spelling", () => {
         summary: { probes: 1, steps: 1, equal: 1, agreement: 1 },
         probes: [
           {
-            normalised: { clocks: 2 },
+            normalised: { clocks: 2, generated: scenario.generated },
             results: [{ method: "POST", equal: true, differences: [] }],
           },
         ],
       });
       for (const [path, text] of originals)
         expect(await readFile(path, "utf8")).toBe(text);
-    },
-  );
+    });
+  }
 
   cliTest(
     "replays compact-offset submillisecond probe timestamps in exact order",

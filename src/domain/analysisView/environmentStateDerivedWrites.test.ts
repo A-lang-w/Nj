@@ -42,6 +42,71 @@ const TRIMMED = {
   trimmed: true,
 } as const;
 
+describe("later creates must retain the learned value rules", () => {
+  it("withholds a later create whose captured composed address is null", () => {
+    const snapshot = null;
+    const rows = BOOKMARK_ROWS.slice(0, 6).map(
+      (row, index): TimedCaptureRow => {
+        if (index !== 5) return row;
+        const [method, path, body, ...rest] = row;
+        if (!isObject(body)) throw new Error("Expected a bookmark response");
+        return [
+          method,
+          path,
+          { ...body, web_archive_snapshot_url: snapshot },
+          ...rest,
+        ];
+      },
+    );
+    expect(planOf(rows, "post_bookmarks")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it.each([
+    {
+      name: "a string integer becomes a UUID",
+      exemplar: String,
+      later: numberedUuid(888),
+    },
+    {
+      name: "a string integer becomes an equal-length token",
+      exemplar: String,
+      later: "a656166745726976",
+    },
+    {
+      name: "a UUID becomes an equal-length opaque token",
+      exemplar: (id: number) => numberedUuid(400 + (id % 1000)),
+      later: "a".repeat(35) + "1",
+    },
+  ])("withholds a create when $name", ({ exemplar, later }) => {
+    const changed = (value: JsonValue): JsonValue =>
+      Array.isArray(value)
+        ? value.map(changed)
+        : isObject(value)
+          ? Object.fromEntries(
+              Object.entries(value).map(([field, child]) => [
+                field,
+                field === "id" && typeof child === "number"
+                  ? child === 1656166745726976
+                    ? later
+                    : exemplar(child)
+                  : changed(child),
+              ]),
+            )
+          : value;
+    const rows = FOLDER_ROWS.map((row): TimedCaptureRow => {
+      const [method, path, body, ...rest] = row;
+      return body === undefined ? row : [method, path, changed(body), ...rest];
+    });
+    expect(planOf(rows, "post_folders")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+});
+
 describe("clock spellings an application derives", () => {
   it("serves creates whose clocks drop trailing fraction zeros, as Go spells nanoseconds", () => {
     expect(planOf(TAG_ROWS, "post_tags")).toMatchObject({

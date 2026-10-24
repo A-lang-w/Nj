@@ -75,6 +75,7 @@ import {
   containsDelimited,
   generatedIntegerDigits,
   isUuid,
+  likeGeneratedInteger,
   nextSequence,
   sequenceNumber,
   spelledLike,
@@ -320,28 +321,22 @@ const followsSequences = (
     );
   });
 
-/** Whether a value is a generated integer of the exemplar's length and JSON kind. */
-const likeGeneratedInteger = (
-  value: JsonValue | undefined,
-  exemplar: JsonValue | undefined,
-): boolean => {
-  const digits = generatedIntegerDigits(value);
-  return (
-    digits !== undefined &&
-    typeof value === typeof exemplar &&
-    digits.length === generatedIntegerDigits(exemplar)?.length
-  );
-};
-
-/** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values as the exemplar's kind of integer or token, UUID identities as UUIDs, and sequences in order. */
-const followsGenerated = (
+/** Whether a later create preserves generation shapes and its derived fields reproduce the captured observation. */
+const followsCreateRules = (
   context: EffectContext,
   draft: WriteDraft,
-  created: Pick<StateEntity, "type" | "collection" | "fields">,
+  created: Pick<StateEntity, "type" | "collection" | "fields"> & {
+    readonly observed: JsonObject;
+  },
 ): boolean =>
   draft.plan.rules.every((rule) => {
     const value = created.fields[rule.field];
     const exemplar = draft.observed?.[rule.field];
+    if (rule.rule === "composed")
+      return (
+        !Object.hasOwn(created.observed, rule.field) ||
+        value === created.observed[rule.field]
+      );
     if (rule.rule === "clock")
       return (
         fittedClockFormat(
@@ -352,9 +347,11 @@ const followsGenerated = (
       );
     if (rule.rule === "unique")
       return (
-        (generatedIntegerDigits(exemplar) === undefined
-          ? isUuid(value) || isOpaqueToken(value, exemplar)
-          : likeGeneratedInteger(value, exemplar)) &&
+        (isUuid(exemplar)
+          ? isUuid(value)
+          : generatedIntegerDigits(exemplar) !== undefined
+            ? likeGeneratedInteger(value, exemplar)
+            : isOpaqueToken(value, exemplar)) &&
         !context.state
           .ofType(created.type)
           .some((held) => held.fields[rule.field] === value)
@@ -363,19 +360,6 @@ const followsGenerated = (
       rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
   }) && followsSequences(context, draft, created);
-
-/** Whether a later call's response spells each composed field it shows as the plan rebuilds it. */
-const followsComposed = (
-  rules: readonly FieldRule[],
-  fields: JsonObject,
-  observed: JsonObject,
-): boolean =>
-  rules.every(
-    (rule) =>
-      rule.rule !== "composed" ||
-      !Object.hasOwn(observed, rule.field) ||
-      observed[rule.field] === fields[rule.field],
-  );
 
 /** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless a value the plan saw shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
@@ -607,12 +591,12 @@ export const applyCreate = (
     id === undefined ||
     context.state.entity(type, collection, id) !== undefined ||
     (later &&
-      (!followsGenerated(context, draft, {
+      !followsCreateRules(context, draft, {
         type,
         collection,
         fields: fields.value,
-      }) ||
-        !followsComposed(draft.plan.rules, fields.value, observed.object)))
+        observed: observed.object,
+      }))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();

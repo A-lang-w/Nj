@@ -1056,8 +1056,6 @@ two collections can reuse a live id, and an equal pair stays in that collection.
 environment answers, a path parameter by the collection the live path names (a nested collection keeps its parent values, each decoded once, and a literal route segment stays), except a query value that pages a list, such as `limit`
 or `page`. Each call is checked against the served tool's input schema first, as the MCP server checks it. After mapping, two clock values compare by format only (ISO-8601 strings, and epoch numbers under
 `at`, `time`, `date`, `timestamp`, `created`, `updated` or `modified` field names, including snake-case and camel-case forms).
-A `composed` field compares equal when each side's response spells it from its
-own fields; those fields compare under their own rules.
 Numeric arrays retain that containing field's clock context through nested
 arrays; an object's own fields establish their own context. Numeric values at
 the body root, in root arrays, or under measurement fields remain literal.
@@ -1078,6 +1076,12 @@ Admitted generated values must also preserve aliases and distinct identities
 within that response. UUID identity uses the generator's case-insensitive
 matching; token and sequence strings retain their literal identity. This
 correspondence ends with the answer and is not inferred across calls.
+A `composed` response field must spell the value its parts build from that
+response's own fields. Its parts then compare by their rendered text or their
+source fields' clock and ID rules. A coherent archive URL can therefore differ
+only in normalized clock digits without reporting a value difference; an
+incoherent URL still differs even when both sides repeat the same stale text.
+Normalized compositions count under `generated`; source fields are counted once.
 The report counts each kind of normalised
 value; the generation rules remain model-derived facts, rather than new
 observations of the application.
