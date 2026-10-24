@@ -22,17 +22,24 @@ coverage, re-record by reason, export and hand off.
 - A `request` step names a method (`GET`, `HEAD`, `POST`, `PUT`, `PATCH`,
   `DELETE`), a path on the start URL's origin, ordered query entries, headers,
   an optional JSON body and optional expected statuses. Validation refuses a
-  path that resolves to another origin, a body on `GET` or `HEAD`, and header
-  names a page's `fetch` cannot set.
+  path that resolves to another origin, a body on `GET` or `HEAD`, a 3xx
+  expected status, header names a page's `fetch` cannot set or Chrome drops
+  (`User-Agent`), a header name given twice, and line breaks or control
+  characters in literal values and prefixes.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL, or a local storage value on the start origin, optionally
   read at a JSON pointer, with an optional prefix. Values read from the page are
-  redacted like declared secrets from records made after they are read.
+  redacted like declared secrets from records made after they are read, as
+  stored and as sent; a value read again keeps its first marker, a colliding
+  label never unredacts an earlier value, and values shorter than 8 characters
+  are not redacted.
 - The request runs through the page's `fetch` with same-origin credentials, from
-  a page on the start origin, and completes when the response is read. A status
+  a page on the start origin (checked again in the page as it is sent), follows
+  no redirects, and completes when the response is read. A redirect, a status
   outside `expected_status`, a network error or the step timeout fails the step;
-  later steps are cancelled as for other actions. Its network events are
-  attributed to the step.
+  later steps are cancelled as for other actions. A step that is cancelled or
+  out of time before sending sends nothing. Its network events are attributed
+  to the step.
 - Captures with request steps say so in a limitation. A scenario without one
   validates, runs and records exactly as before.
 - `export_environment_bundle` takes retained capture Evidence or a capture
@@ -48,6 +55,8 @@ coverage, re-record by reason, export and hand off.
   and routed from SKILL.md. It covers disposable instances only, credentials
   from environment variables, the recording rules the state needs, coverage,
   the stop rule and the hand-off.
+- Coverage of a capture whose records are not all timed, which includes every
+  browser scenario capture, says the state learns no write clock.
 - Stop rule: re-record a withheld write at most twice for a recording gap
   (`no-state-target`, `no-observation`, `unconfirmed`, `incomplete-entities`),
   once for `unexplained-change` and `no-call`, and stop at once for application

@@ -6,6 +6,6 @@
 - [x] Add the export_environment_bundle tool.
 - [x] Write and install the skill reference.
 - [x] Document the request step, the tool and recording writes.
-- [ ] Run static, formatting, documentation and test gates, and the existing browser lanes.
-- [ ] Build environments from prompts with an agent against live applications on Linux VMs.
-- [ ] Address the independent review.
+- [x] Run static, formatting, documentation and test gates, and the existing browser lanes.
+- [x] Build environments from prompts with an agent against live applications on Linux VMs.
+- [x] Address the two independent reviews.
