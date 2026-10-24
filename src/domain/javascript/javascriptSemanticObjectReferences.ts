@@ -728,12 +728,21 @@ class ObjectReferenceWalk {
     const selected = this.#key ?? null;
     if (typeof selected !== "object" && this.#overwritten.has(String(selected)))
       return;
-    if (
-      this.accessor !== undefined &&
-      (!t.isObjectExpression(property.argument) ||
-        objectExpressionOwnKeyPresence(property.argument, String(selected)) ===
-          "unknown")
-    )
+    const sourcePresence = t.isObjectExpression(property.argument)
+      ? objectExpressionOwnKeyPresence(property.argument, String(selected))
+      : "unknown";
+    // A source getter can delete an enumerated key before CopyDataProperties
+    // reaches it. Syntax presence proves a copied slot only while the getter
+    // effect owner proves the source's descriptor inventory stays intact.
+    const copyPresence =
+      sourcePresence === "present" &&
+      t.isObjectExpression(property.argument) &&
+      this.query.state.objectCopyMayInvalidateOwnDescriptors?.(
+        property.argument,
+      ) !== false
+        ? "unknown"
+        : sourcePresence;
+    if (this.accessor !== undefined && copyPresence === "unknown")
       this.#ownDescriptorUnknown = true;
     // Spread creates data properties; the source descriptor is not installed.
     if (this.accessor === undefined)
@@ -746,8 +755,7 @@ class ObjectReferenceWalk {
     if (
       selected !== null &&
       typeof selected !== "object" &&
-      t.isObjectExpression(property.argument) &&
-      objectExpressionDefinesKey(property.argument, String(selected))
+      copyPresence === "present"
     ) {
       this.#overwritten.add(String(selected));
       this.#data.add(String(selected));

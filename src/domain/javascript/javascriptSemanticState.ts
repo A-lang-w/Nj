@@ -187,6 +187,10 @@ export interface JavaScriptSemanticAnalysisState {
           }
         | undefined)
     | undefined;
+  /** Getter invocation effects while copying an object's enumerable own slots. */
+  objectCopyMayInvalidateOwnDescriptors?:
+    | ((source: t.ObjectExpression) => boolean)
+    | undefined;
   /** Ordinary local identity selected at the target argument's own read site. */
   ordinaryLocalIdentityAt?: ((node: t.Node) => boolean) | undefined;
   /** Captured allocation's prototype mutations invalidate inherited member identity. */

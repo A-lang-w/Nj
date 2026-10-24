@@ -635,6 +635,10 @@ export function* collectSemanticMemberMutationsSteps(
     }
     return effects;
   };
+  state.objectCopyMayInvalidateOwnDescriptors = (source) =>
+    getterEffects(source, [null], "own").some(
+      (effect) => effect.node === source && effect.path.length === 0,
+    );
   const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();

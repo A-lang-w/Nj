@@ -589,3 +589,25 @@ it.each([
     else expect(endpoints).toEqual([]);
   },
 );
+
+it.each([
+  ["delete this.q;return 0", true],
+  ["return 0", false],
+])(
+  "checks source getter effects before proving a spread own slot: %s",
+  (body, invoked) => {
+    const source = `Object.defineProperty(Object.prototype,"q",{set(value){value.get=fetch}});const box={...{get p(){${body}},q:0}};box.q=Map.prototype;new Map().get("/accounts");`;
+    const calls: unknown[] = [];
+    runInNewContext(source, { fetch: (value: unknown) => calls.push(value) });
+    expect(calls).toEqual(invoked ? ["/accounts"] : []);
+    const endpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    if (invoked)
+      expect(endpoints).toContainEqual(
+        expect.objectContaining({
+          value: "/accounts",
+          interpretation: "candidate",
+        }),
+      );
+    else expect(endpoints).toEqual([]);
+  },
+);
