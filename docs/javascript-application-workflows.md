@@ -347,6 +347,11 @@ remain `changed` while retaining any separate relationship uncertainty.
 An unknown item with no observed content, property, or relationship difference
 does not emit a `changed_from` edge; its pairing and uncertainty remain in the item.
 
+Within a valid `file_occurrence`, `container_sha256` records provenance and does
+not by itself count as a semantic property change. The graph retains the original
+occurrence; its path and source digest still participate in comparison.
+Unrecognized occurrence metadata remains part of property comparison.
+
 One-sided absence is `added` or `removed` only when the opposite input graph has
 complete coverage. With partial, unavailable, or truncated input, the same
 condition is `unknown`. The comparison retains every classified item and
@@ -496,6 +501,15 @@ Identifier references and closure captures share Babel syntax-role facts plus
 explicit binding/write roles; noncomputed declaration keys and import/meta names
 are not lexical reads. Provenance-only expression-depth omissions enter the same typed source coverage
 as value-evaluation bounds and remain visible in retained application Evidence.
+Immediate synchronous function results also share the loader reference owner.
+An expression arrow returning the retained CommonJS `require` can preserve that
+loader identity. Possible loader results with opaque alternatives or block
+bodies retain candidate uncertainty; async and generator results are their
+wrapper values.
+This does not interpret `typeof` or Proxy behavior in bundler shims. Historical
+source imports consume the same proven loader fact and keep their existing
+requirement for a known loader association.
+
 Direct generator and async calls produce iterators and
 Promises; body returns do not become direct call-result flows. Their unresolved
 consumption remains an explicit frontier. Replaced emitter bindings select their

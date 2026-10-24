@@ -74,17 +74,13 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
       { readonly status: "failed" }
     >,
   ) {
-    super(
-      failure.path,
-      failure.owner,
-      failure.outcome,
-      new AggregateError(
+    super({
+      ...failure,
+      cleanupCause: new AggregateError(
         [failure.cleanupCause, configurationFailure],
         `Configuration readback cleanup and rollback failed: ${failure.path}`,
       ),
-      failure.retention,
-      failure.completionCancellation,
-    );
+    });
   }
 }
 
@@ -144,24 +140,8 @@ const configureClientDocument = async (
       : undefined;
   if (editabilityError !== undefined)
     return { status: "failed", reason: "readback" };
-  const policy = await readClientPolicyBlock(
-    client,
-    existing,
-    await clientConfigurationDesired(
-      client,
-      environment,
-      command,
-      existing,
-      files.value,
-      resolveProviderRequestBudget,
-    ),
-  );
-  if (!policy.ok) {
-    throwCleanupFailure(policy.error);
-    return { status: "failed", reason: "readback" };
-  }
-  if (policy.value !== undefined)
-    return { status: "failed", reason: "readback" };
+  // Policy admission belongs to the transaction snapshot below, not the
+  // earlier layered discovery document.
   let snapshot:
     | Awaited<ReturnType<typeof readRegularFileTextSnapshot>>
     | undefined;
@@ -532,27 +512,6 @@ const inspectClientDocument = async (
       status: "invalid",
       remediation: editabilityError.message,
     };
-  const policy = await readClientPolicyBlock(
-    client,
-    existing,
-    await clientConfigurationDesired(
-      client,
-      providerEnvironment,
-      command,
-      existing,
-      files.value,
-      resolveProviderRequestBudget,
-    ),
-  );
-  if (!policy.ok) {
-    throwCleanupFailure(policy.error);
-    return {
-      status: "invalid",
-      remediation: policy.error.detail,
-    };
-  }
-  if (policy.value !== undefined)
-    return { status: "invalid", remediation: policy.value };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -568,6 +527,28 @@ const inspectClientDocument = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (isMissing(cause)) {
+      // This read establishes absence; do not reuse an earlier user-file policy.
+      const policy = await readClientPolicyBlock(
+        client,
+        undefined,
+        await clientConfigurationDesired(
+          client,
+          providerEnvironment,
+          command,
+          undefined,
+          files.value,
+          resolveProviderRequestBudget,
+        ),
+      );
+      if (!policy.ok) {
+        throwCleanupFailure(policy.error);
+        return {
+          status: "invalid",
+          remediation: policy.error.detail,
+        };
+      }
+      if (policy.value !== undefined)
+        return { status: "invalid", remediation: policy.value };
       const fallback = await readZcodeFallbackServers(client);
       if (!fallback.ok) {
         throwCleanupFailure(fallback.error);

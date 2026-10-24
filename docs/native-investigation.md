@@ -433,6 +433,8 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+Malformed successful `lipo` output reports a format failure with its parse
+diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the
 raw `nfat_arch` count and admitted only from its extra FAT table slot when its
 in-range Mach-O header matches the row. `list_architectures` preserves the
@@ -464,6 +466,12 @@ reports an unreadable or malformed selection as `invalid_request`. A missing or
 unreadable default plist of another target reports `capability_unavailable`.
 Permission failures remain `access_denied`; output and cleanup failures retain
 their own error categories.
+
+Selected plist paths preserve filesystem resolution, including `..` after a
+directory symlink and trailing directory separators. Resource-only bundle
+sessions resolve relative selections from the bundle root with the same path
+semantics as executable sessions; the reported source path retains those
+selected segments.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
@@ -549,9 +557,11 @@ complete observation.
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
   Binary references retain their serialized type-8 UID identity; ordinary
-  dictionaries with `UID` or `CF$UID` keys remain authored data. XML has no UID
-  scalar, so its dictionary UID convention remains ambiguous with authored
-  dictionaries of the same shape. Object `kind` describes the decoded archive value: data, dates and numbers
+  dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
+  Foundation's single numeric `CF$UID` dictionary convention for references;
+  a numeric `UID` dictionary remains authored data. Reference identity follows
+  the parsed format, rather than the displayed key alone. Object `kind`
+  describes the decoded archive value: data, dates and numbers
   remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
   dictionary with the same fields remains `dictionary`.
   XML must be well-formed. Data literals use
@@ -653,6 +663,10 @@ complete observation.
   non-generic, non-resilient class vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  The selected Mach-O header must match the requested CPU family for both thin
+  files and universal slices before metadata decoding. CPU subtypes and
+  capability bits remain source facts; an `arm64` request may select an
+  `arm64e` image under the existing slice preference policy.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -691,6 +705,16 @@ complete observation.
   - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
+
+  [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
+  compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
+  When a name has no lossless UTF-8 text
+  projection, the affected binding remains unresolved and pointer-fixup
+  coverage is partial; later readable bindings and other metadata survive.
+  The internal fixup reader retains the exact name bytes and parsed binding
+  fields, while public Objective-C and Swift results retain the unresolved
+  reason instead of publishing a guessed symbol or class name. A literal
+  U+FFFD in valid UTF-8 remains a known symbol character.
 
   A Swift conformance whose type or protocol reference is an external bind
   keeps its name as `null` and carries the raw dyld identity in
