@@ -548,10 +548,22 @@ describe("Electron members destructured from a Webpack external binding", () => 
     ],
     ["a cyclic alias", "var a=b,b=a;const{BrowserWindow}=a;"],
     ["a different table key", "const s=n(45841);const{BrowserWindow}=s;"],
+    [
+      "a rebindable binding exposed to direct eval",
+      "let s=n(45840);eval(code);const{BrowserWindow}=s;",
+    ],
   ])("keeps %s unresolved", (_name, prefix) => {
     expect(
       electronOf(
         bootstrap(EXTERNAL, `${prefix}new BrowserWindow({${WINDOW}});`),
+      ).browser_windows,
+    ).toEqual([]);
+  });
+
+  it("keeps a require alias exposed to direct eval unresolved", () => {
+    expect(
+      electronOf(
+        `let s=require("electron");eval(code);const{BrowserWindow}=s;new BrowserWindow({${WINDOW}});`,
       ).browser_windows,
     ).toEqual([]);
   });

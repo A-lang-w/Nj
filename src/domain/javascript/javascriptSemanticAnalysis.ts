@@ -3,6 +3,7 @@ import {
   indexSemanticOpaqueEffects,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
+  semanticBindingMayHaveOpaqueEffect,
 } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 
@@ -1015,7 +1016,8 @@ const electronRequireOrigin = (
 /**
  * General provenance only knows literal `require`, so a bundled external held
  * in one binding and destructured from another (`const s=n(K);const{X}=s`)
- * is followed here through stable lexical aliases.
+ * is followed here through stable lexical aliases. Like provenance, a hop
+ * stops at a rebindable binding that direct eval may have changed.
  */
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
@@ -1038,7 +1040,12 @@ const bindingOrigin = (
     alias === undefined
       ? electronRequireOrigin(initializer.node, state)?.origin
       : visited.has(alias.bindingId) ||
-          visited.size >= SEMANTIC_ALIAS_SELECTION_LIMIT
+          visited.size >= SEMANTIC_ALIAS_SELECTION_LIMIT ||
+          [binding, alias].some(
+            (hop) =>
+              semanticBindingCanBeRebound(hop) &&
+              semanticBindingMayHaveOpaqueEffect(hop, state),
+          )
         ? undefined
         : bindingOrigin(alias, state, new Set([...visited, binding.bindingId]));
   const projection = initializer.projection;
