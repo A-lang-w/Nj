@@ -12,9 +12,10 @@ export interface AddressMask {
 }
 
 export interface AddressProjection {
+  /** Names are the matched identifier and its spelling with any `ns::` qualifier. */
   readonly maskIdentifier: (
     address: bigint,
-    name: string,
+    names: readonly string[],
   ) => AddressMask | null;
   readonly maskTextAddress: (
     address: bigint,
@@ -66,8 +67,10 @@ export const createFunctionAddressProjection = (
   };
   return {
     isCalleeAddress: (address) => calleeAddresses.has(address),
-    maskIdentifier: (address, name) =>
-      namedSymbols.has(name) ? null : observedAddress(address),
+    maskIdentifier: (address, names) =>
+      names.some((name) => namedSymbols.has(name))
+        ? null
+        : observedAddress(address),
     maskTextAddress: (address, location) => {
       if (location.isAddressSpaceQualified) return null;
       if (

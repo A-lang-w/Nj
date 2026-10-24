@@ -36,6 +36,10 @@ const POLICY = "rea-address-normalized-text-v1";
 const NORMALIZABLE_ADDRESS_TOKEN =
   /(?<![0-9A-Za-z_])(?:(?<label>(?:thunk_|flt_)?(?:FUN|SUB|DAT|LAB|PTR|UNK|SwitchD|Join)_|(?:sub|loc|off|unk|nullsub)_|(?:fcn|sub|loc|off|data)\.)(?<identifier_prefix>0x)?(?<identifier_address>[0-9a-f]{4,})(?![0-9A-Za-z_])|(?<address>0x[0-9a-f]+))/giu;
 
+/** A `ns::` qualifier chain that can precede a matched identifier, read within a bounded window. */
+const QUALIFIER = /(?:[A-Za-z_][0-9A-Za-z_]*::)+$/u;
+const QUALIFIER_WINDOW = 256;
+
 /** Declared masking rules, reported verbatim so every view can be audited. */
 const RULES = [
   {
@@ -105,11 +109,19 @@ const normalizeText = (
           ? `${groups.identifier_prefix ?? "0x"}${groups.identifier_address ?? ""}`
           : (groups.address ?? match);
         const address = parseAddress(addressText.toLowerCase());
+        const qualifier = isIdentifier
+          ? (QUALIFIER.exec(
+              code.slice(Math.max(0, index - QUALIFIER_WINDOW), index),
+            )?.[0] ?? "")
+          : "";
         const mask =
           address === null
             ? null
             : isIdentifier
-              ? projection.maskIdentifier(address, match)
+              ? projection.maskIdentifier(address, [
+                  match,
+                  `${qualifier}${match}`,
+                ])
               : projection.maskTextAddress(
                   address,
                   addressLocation(codeStart + index),

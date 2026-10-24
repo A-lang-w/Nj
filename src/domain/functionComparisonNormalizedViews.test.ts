@@ -214,17 +214,21 @@ describe("wallace relocation-only function pair", () => {
   });
 
   it.each([
-    { source: "default", masked: 1, status: "unchanged" },
-    { source: "user_defined", masked: 0, status: "changed" },
+    { source: "default", qualifier: "", masked: 1, status: "unchanged" },
+    { source: "user_defined", qualifier: "", masked: 0, status: "changed" },
+    { source: "user_defined", qualifier: "ns::", masked: 0, status: "changed" },
   ] as const)(
-    "masks an address-shaped name only without a named symbol origin ($source)",
-    ({ source, masked, status }) => {
+    "masks an address-shaped name only without a named symbol origin ($source, $qualifier)",
+    ({ source, qualifier, masked, status }) => {
       const withSymbol = (address: string) => {
         const dossier = addressRelocationText(address);
+        const name = `${qualifier}${dossier.procedure.name}`;
         return {
           ...dossier,
+          pseudocode: dossier.pseudocode.replace(dossier.procedure.name, name),
           procedure: {
             ...dossier.procedure,
+            name,
             symbol: {
               primary: true,
               dynamic: false,
