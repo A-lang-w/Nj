@@ -167,7 +167,8 @@ export class SortedArrays {
     const shown = this.#shown(view, read.record);
     this.#ruleOut(view.tool, shown);
     // A contradictory ordering invalidates the view's earlier checks; a raw retry cannot preserve their proof.
-    if (this.#unlearn(view.tool, shown)) return read.outcome;
+    if (this.#unlearn(view.tool, shown))
+      return check({ ...view, sorted_arrays: [] }) ?? read.outcome;
     const current = view;
     const failed = read.outcome;
     const candidates = this.#candidates.get(view.tool)?.fields;

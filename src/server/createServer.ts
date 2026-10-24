@@ -1,3 +1,5 @@
+import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
@@ -25,6 +27,8 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
   createAppleIpsService,
+  createDevicetreeService,
+  createKernelModuleService,
   createPeLoadConfigService,
   createPeCertificatesService,
   createPeImportsService,
@@ -33,6 +37,7 @@ import {
 } from "../composition/binaryDiagnostics.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
+import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
@@ -40,6 +45,7 @@ import type { PeResourcesService } from "../application/binaryDiagnostics/PeReso
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
+import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
@@ -475,8 +481,10 @@ export const createServer = (
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
+  const devicetree = createDevicetreeService();
   const elfNotes = createElfNotesService();
   const appleIps = createAppleIpsService();
+  const kernelModule = createKernelModuleService();
   const peLoadConfig = createPeLoadConfigService();
   const peCertificates = createPeCertificatesService();
   const peImports = createPeImportsService();
@@ -589,8 +597,10 @@ export const createServer = (
       gpuCodeObjects.close(),
       peResources.close(),
       nativeExports.close(),
+      devicetree.close(),
       elfNotes.close(),
       appleIps.close(),
+      kernelModule.close(),
       peLoadConfig.close(),
       peCertificates.close(),
       peImports.close(),
@@ -660,8 +670,10 @@ export const createServer = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
     appleIps,
+    kernelModule,
     peLoadConfig,
     peCertificates,
     peImports,
@@ -900,8 +912,10 @@ const registerConfiguredAnalysisTools = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
     appleIps,
+    kernelModule,
     peLoadConfig,
     peCertificates,
     peImports,
@@ -964,6 +978,14 @@ const registerConfiguredAnalysisTools = (
     evidenceById,
     withAdmittedAnalysis,
   );
+  registerDevicetreeTool(
+    server,
+    devicetree,
+    toolLogger,
+    recordEvidence,
+    evidenceById,
+    withAdmittedAnalysis,
+  );
   registerElfNotesTool(
     server,
     elfNotes,
@@ -974,6 +996,13 @@ const registerConfiguredAnalysisTools = (
   registerAppleIpsTool(
     server,
     appleIps,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerKernelModuleTool(
+    server,
+    kernelModule,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -1154,8 +1183,10 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
   readonly nativeExports: NativeExportsService;
+  readonly devicetree: DevicetreeService;
   readonly elfNotes: ElfNotesService;
   readonly appleIps: AppleIpsService;
+  readonly kernelModule: KernelModuleService;
   readonly peLoadConfig: PeLoadConfigService;
   readonly peCertificates: PeCertificatesService;
   readonly peImports: PeImportsService;

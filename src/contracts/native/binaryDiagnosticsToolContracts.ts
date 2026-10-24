@@ -1,4 +1,9 @@
 import {
+  inspectDevicetreeInputSchema,
+  devicetreeSchema,
+} from "../../domain/firmware/devicetree.js";
+import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
 } from "../../domain/native/peLoadConfig.js";
@@ -48,6 +53,10 @@ import {
   inspectAppleIpsInputSchema,
   appleIpsSchema,
 } from "../../domain/native/appleIps.js";
+import {
+  inspectKernelModuleInputSchema,
+  kernelModuleSchema,
+} from "../../domain/native/kernelModule.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -66,6 +75,26 @@ export const inspectByteEntropyRequestSchema = publicInputStrictObject(
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  {
+    name: "inspect_devicetree",
+    ...toolContractMetadata("inspect_devicetree"),
+    kind: "native-provider",
+    description:
+      "Inspect an explicit local flattened devicetree blob (FDT v16/v17) without execution or external tools. Returns validated header, memory reservations, full node/property tree with bounded raw hex, derived standard strings, cells and parent-sized reg tuples, aliases and selected single-cell phandle references with unresolved targets. Binding-specific arrays, overlays and runtime hardware remain unknown. Malformed structure or exhausted named budgets fails without partial success. Complete detail returns all Evidence inline; summary retains it for inspect_analysis_view kind devicetree, collections nodes, properties (requires exact path), reservations and references, with offset/limit pagination.",
+    inputSchema: inspectDevicetreeInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      devicetreeSchema,
+      devicetreeSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Inspect a firmware hardware description",
+        input: { path: "/artifacts/board.dtb", detail: "summary" },
+      },
+    ],
+  },
   {
     name: "inspect_pe_load_config",
     ...toolContractMetadata("inspect_pe_load_config"),
@@ -109,6 +138,22 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect an Apple .ips crash report",
         input: { path: "/artifacts/app.ips" },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_module",
+    ...toolContractMetadata("inspect_kernel_module"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 ET_REL Linux kernel module without executing it or opening a disassembler. Returns ordered .modinfo key/value entries (duplicates preserved), __versions symbol CRCs, presence of .gnu.linkonce.this_module and __ksymtab sections, observed .init.text and .exit.text sizes, and an appended module signature trailer with its module_signature fields plus a PKCS#7 byte range and SHA-256. Does not execute the module, decode struct module, or validate certificates. A missing section is observed absence when section names are known, not proof the module never carried that metadata. Other ELF types are not applicable. gzip, xz, and zstd containers are unsupported and name external_decompression as the next probe; neither this tool nor extract_artifact decodes those codecs, so decompress with an external utility and inspect the result. Reads a stable regular file; malformed ELF headers and exhausted entry budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectKernelModuleInputSchema,
+    outputSchema: evidenceResultOf(kernelModuleSchema),
+    examples: [
+      {
+        title:
+          "Inspect Linux kernel module license, vermagic, and dependencies",
+        input: { path: "/artifacts/demo.ko" },
       },
     ],
   },
