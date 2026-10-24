@@ -1,4 +1,8 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  FIRMWARE_TOOL_REQUIREMENTS,
+  type FirmwareEngineName,
+} from "../contracts/firmware/firmwareToolRequirements.js";
 import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -9,21 +13,29 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareFailure,
   firmwareCancellation,
+  firmwareFailure,
+  firmwareLimitRecovery,
   firmwarePhaseInterruption,
+  firmwareProcessLimitRecovery,
+  firmwareSignalLimitError,
 } from "./FirmwareFailures.js";
+import { prlimitArgumentVector } from "../process/LinuxResourceLimits.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
   type OwnedProviderProcessSpawnOptions,
+  type ProviderProcessSnapshot,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import {
   FirmwareFileAccess,
@@ -35,6 +47,19 @@ export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
+/** Captured tool output for one finished firmware command. */
+const capturedFirmwareOutput = (
+  snapshot: ProviderProcessSnapshot,
+): AnalysisCapturedOutput => ({
+  stdout: snapshot.stdout.text,
+  stderr: snapshot.stderr.text,
+  stdout_bytes: snapshot.stdout.bytes,
+  stderr_bytes: snapshot.stderr.bytes,
+  exit_code: snapshot.exitCode ?? null,
+  signal: snapshot.signal ?? null,
+  truncated: snapshot.diagnosticTruncated === true,
+});
+
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
   engine: string,
@@ -45,19 +70,22 @@ export const firmwareToolUnavailable = (
     userMessage: reason,
   });
 
+/** Firmware engines run only on Linux; discovery and execution share this check. */
+export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
+
 /** Resolve explicitly supplied executable paths; never install or search for engines. */
 export const resolveFirmwareCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
-  engine: "binwalk" | "unblob",
+  engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
   signal?: AbortSignal,
 ) => {
-  const variable =
-    engine === "binwalk" ? "REA_BINWALK_COMMAND" : "REA_UNBLOB_COMMAND";
+  const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    process.platform !== "linux" ||
+    !firmwareHostSupported(process.platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -106,7 +134,12 @@ export const resolveFirmwareCommand = async (
       `Resource limiter is not an executable regular file: ${limiter}: ${cause instanceof Error ? cause.message : String(cause)}; provide util-linux prlimit`,
     );
   }
-  return { command, limiter, sha256 };
+  return {
+    command,
+    limiter,
+    sha256,
+    fileSizeCeiling: await files.fileSizeCeiling(signal),
+  };
 };
 
 /** Execute one bounded provider command and verify its owned descendants have stopped. */
@@ -115,6 +148,8 @@ export const runFirmwareCommand = async (context: {
   operation: string;
   command: string;
   limiter: string;
+  /** Observed inherited soft/hard file policy; never raised by metadata headroom. */
+  fileSizeCeiling: number;
   args: readonly string[];
   cwd: string;
   environment: Readonly<Record<string, string | undefined>>;
@@ -126,6 +161,21 @@ export const runFirmwareCommand = async (context: {
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
+  // RLIMIT_FSIZE covers every producer file, including mandatory reports/logs.
+  // Aggregate extracted payload remains governed by outputBudget inventory.
+  const fileSizeBytes = Math.min(
+    context.fileSizeCeiling,
+    Math.max(
+      context.outputBudget?.bytes ?? 0,
+      FIRMWARE_LIMITS.reportBytes,
+      FIRMWARE_LIMITS.diagnosticBytes,
+    ),
+  );
+  const fileSizeAdjustable =
+    context.outputBudget !== undefined &&
+    context.fileSizeCeiling > context.outputBudget.bytes &&
+    context.outputBudget.bytes >=
+      Math.max(FIRMWARE_LIMITS.reportBytes, FIRMWARE_LIMITS.diagnosticBytes);
   const checkInterruption = () => {
     const failure = firmwarePhaseInterruption(
       operation,
@@ -139,12 +189,14 @@ export const runFirmwareCommand = async (context: {
   const spawned = await (context.launcher ?? spawnOwnedProviderProcess)({
     command: context.limiter,
     arguments: [
-      `--as=${FIRMWARE_LIMITS.addressSpaceBytes}`,
-      `--fsize=${context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes}`,
-      "--core=0",
-      `--cpu=${FIRMWARE_LIMITS.cpuSeconds}`,
-      "--",
-      context.command,
+      ...prlimitArgumentVector(
+        {
+          address_space_bytes: FIRMWARE_LIMITS.addressSpaceBytes,
+          file_bytes: fileSizeBytes,
+          cpu_seconds: FIRMWARE_LIMITS.cpuSeconds,
+        },
+        context.command,
+      ),
       ...context.args,
     ],
     expectedCommand: null,
@@ -201,6 +253,10 @@ export const runFirmwareCommand = async (context: {
             stderr: snapshot.stderr.text,
             truncated: true,
           },
+          userMessage: `Firmware diagnostics exceeded the ${String(FIRMWARE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
+          remediationAction: firmwareLimitRecovery(
+            `The firmware diagnostic capture allowance is ${String(FIRMWARE_LIMITS.diagnosticBytes)} bytes`,
+          ),
         },
       );
     }
@@ -248,15 +304,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: {
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          stdout_bytes: snapshot.stdout.bytes,
-          stderr_bytes: snapshot.stderr.bytes,
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-          truncated: snapshot.diagnosticTruncated === true,
-        },
+        capturedOutput: capturedFirmwareOutput(snapshot),
       },
     );
   }
@@ -267,7 +315,15 @@ export const runFirmwareCommand = async (context: {
       context.acceptReportedExtractionFailure === true &&
       snapshot.exitCode === 1
     )
-  )
+  ) {
+    const signalLimit = firmwareSignalLimitError(
+      operation,
+      snapshot.signal,
+      fileSizeBytes,
+      fileSizeAdjustable,
+      capturedFirmwareOutput(snapshot),
+    );
+    if (signalLimit !== undefined) throw signalLimit;
     throw new ProviderAdapterError(engine, operation, {
       diagnostics: {
         reason:
@@ -279,7 +335,9 @@ export const runFirmwareCommand = async (context: {
         stdout_bytes: snapshot.stdout.bytes,
         stderr_bytes: snapshot.stderr.bytes,
       },
+      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
     });
+  }
   return {
     stdout: snapshot.stdout,
     stderr: snapshot.stderr,
@@ -291,7 +349,12 @@ export const runFirmwareCommand = async (context: {
   };
 };
 
-/** Preserve tool failure diagnostics when an accepted exit 1 has no usable report. */
+/**
+ * Consume the report a completed command was asked to write. A successful exit
+ * status is not analysis Evidence by itself: an absent, empty or malformed report
+ * fails with the observed report state and command facts, without retrying or
+ * substituting an empty result.
+ */
 export const readFirmwareCommandReport = async (context: {
   path: string;
   engine: string;
@@ -308,33 +371,54 @@ export const readFirmwareCommandReport = async (context: {
     );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    if (context.execution.exit_code === 1)
-      throw new ProviderAdapterError(context.engine, context.operation, {
+    const { engine, operation, execution } = context;
+    const reportFailure =
+      cause instanceof AnalysisOutputError
+        ? cause.reason
+        : `Report could not be read: ${cause instanceof Error ? cause.message : String(cause)}`;
+    const diagnostics = {
+      ...(cause instanceof AnalysisOutputError ? cause.diagnostics : {}),
+      report_path: context.path,
+      report_failure: reportFailure,
+      command: execution.command,
+      args: execution.args,
+      resource_limiter: execution.resource_limiter,
+      exit_code: execution.exit_code ?? null,
+      signal: execution.signal,
+      stdout: execution.stdout.text,
+      stderr: execution.stderr.text,
+      stdout_bytes: execution.stdout.bytes,
+      stderr_bytes: execution.stderr.bytes,
+    };
+    if (execution.exit_code === 1)
+      throw new ProviderAdapterError(engine, operation, {
         cause,
         diagnostics: {
           reason:
             "Tool exited 1 without a usable analysis report; inspect stderr for startup, sandbox or dependency failures",
-          report_failure:
-            cause instanceof Error ? cause.message : String(cause),
-          exit_code: 1,
-          signal: context.execution.signal,
-          stdout: context.execution.stdout.text,
-          stderr: context.execution.stderr.text,
-          stdout_bytes: context.execution.stdout.bytes,
-          stderr_bytes: context.execution.stderr.bytes,
+          ...diagnostics,
         },
       });
-    const diagnostics = `stdout (${context.execution.stdout.bytes} bytes): ${context.execution.stdout.text}; stderr (${context.execution.stderr.bytes} bytes): ${context.execution.stderr.text}`;
-    if (cause instanceof AnalysisOutputError)
-      throw new AnalysisOutputError(
-        context.operation,
-        `${cause.reason}; ${diagnostics}`,
-        { cause },
-      );
+    const oversized =
+      cause instanceof AnalysisOutputError &&
+      cause.diagnostics?.report_state === "oversized";
+    const reportFacts =
+      "Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is.";
+    const reportAllowance = firmwareLimitRecovery(
+      `The firmware report allowance is ${String(FIRMWARE_LIMITS.reportBytes)} bytes`,
+    );
+    const observed = `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.`;
     throw new AnalysisOutputError(
-      context.operation,
-      `Tool did not produce the expected complete report: ${context.path}; ${diagnostics}`,
-      { cause },
+      operation,
+      `${engine} exited ${String(execution.exit_code)} without a usable report: ${reportFailure}`,
+      {
+        cause,
+        diagnostics,
+        userMessage: oversized ? `${observed} ${reportAllowance}` : observed,
+        remediationAction: oversized
+          ? `${reportFacts} ${reportAllowance} \`rea doctor\` checks configuration only and cannot recover this report.`
+          : `${reportFacts} Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.`,
+      },
     );
   }
 };
