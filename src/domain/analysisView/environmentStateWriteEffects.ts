@@ -1,6 +1,5 @@
 import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
-import { ok } from "../result.js";
 import {
   isObject,
   locateItem,
@@ -15,7 +14,11 @@ import {
   type StateType,
   type StateView,
 } from "./environmentStateRules.js";
-import { updatedEntity, updatedFields } from "./environmentStateWriteApply.js";
+import {
+  updatedEntity,
+  updatedFields,
+  recordedGeneratedValue,
+} from "./environmentStateWriteApply.js";
 import {
   collectionTarget,
   entityTarget,
@@ -537,7 +540,12 @@ export const updateEntity = (
     draft.plan,
     { before: entity.fields, observed: draft.observed! },
     { ...call, id },
-    (rule) => ok(stored[rule.field]),
+    (rule) =>
+      recordedGeneratedValue(
+        rule,
+        entity.fields[rule.field],
+        stored[rule.field],
+      ),
   );
   const kept = keptFields(entity.fields, after.object);
   const disagrees =

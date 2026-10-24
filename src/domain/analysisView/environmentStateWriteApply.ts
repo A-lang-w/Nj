@@ -20,9 +20,13 @@ import type {
   WriteCall,
   WriteResponse,
 } from "./environmentStateWriteRules.js";
-import { stampProblem } from "./environmentStateWriteStamps.js";
+import {
+  stampProblem,
+  nestedClockValue,
+} from "./environmentStateWriteStamps.js";
 import {
   integerOf,
+  readClock,
   isUuid,
   replaceDelimited,
   slugOf,
@@ -178,6 +182,27 @@ const pathValue = (observed: JsonValue | undefined, text: string): JsonValue =>
   typeof observed === "number" && integerOf(text) !== undefined
     ? Number(text)
     : text;
+
+/** A generated field from a recorded call, reproduced with the same nested-clock renderer serving uses. */
+export const recordedGeneratedValue = (
+  rule: GeneratedRule,
+  base: JsonValue | undefined,
+  value: JsonValue | undefined,
+): Applied<JsonValue | undefined> => {
+  if (rule.rule !== "nested-clock") return ok(value);
+  const clock = isObject(value) ? value[rule.members[0]!] : undefined;
+  if (
+    clock === undefined ||
+    JSON.stringify(readClock(clock)?.format) !== JSON.stringify(rule.format)
+  )
+    return err(`The recorded ${rule.field} has no clock in the plan's format.`);
+  const rebuilt = nestedClockValue(base, rule, clock);
+  return rebuilt.ok && same(rebuilt.value, value)
+    ? rebuilt
+    : err(
+        `The recorded ${rule.field} differs from its nested-clock rendering.`,
+      );
+};
 
 /** One field's value under a rule that reads the call or generates. */
 const ruledValue = (

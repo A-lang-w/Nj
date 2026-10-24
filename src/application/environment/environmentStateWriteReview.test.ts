@@ -16,6 +16,7 @@ import {
   SECOND_BOOK,
   book,
   bookClock,
+  renamedBook,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 
 import { webNetworkCaptureSchema } from "../../domain/webNetworkCapture.js";
@@ -249,3 +250,42 @@ it("serves successive creates whose complete nested-clock objects are reproducib
   const edit = (result.body as { edit: { at: string; seen_at: string } }).edit;
   expect(edit.at).toBe(edit.seen_at);
 });
+
+it.each([0, 1])(
+  "checks the complete nested-clock update for a %s-second member difference",
+  (seconds) => {
+    const first = {
+      ...FIRST_BOOK,
+      edit: { at: bookClock(-8), seen_at: bookClock(-8), by: "alice" },
+    };
+    const second = {
+      ...SECOND_BOOK,
+      edit: { at: bookClock(-7), seen_at: bookClock(-7), by: "alice" },
+    };
+    const changed = {
+      ...renamedBook(first, "Renamed", 3),
+      edit: { at: bookClock(3), seen_at: bookClock(3 + seconds), by: "alice" },
+    };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["PATCH", "/api/books/1", changed, 200, { name: "Renamed" }],
+      ["GET", "/api/books/1", changed],
+      ["GET", "/api/books", [changed, second]],
+    ]);
+    expect(books.state.writes.get("patch_books_by_id")).toMatchObject({
+      served: seconds === 0,
+    });
+    if (seconds === 0) {
+      const result = books.answer("patch_books_by_id", {
+        id: "2",
+        body: { name: "Caller" },
+      });
+      expect(result.body).toMatchObject({ edit: { by: "alice" } });
+      const edit = (result.body as { edit: { at: string; seen_at: string } })
+        .edit;
+      expect(edit.at).toBe(edit.seen_at);
+    }
+  },
+);
