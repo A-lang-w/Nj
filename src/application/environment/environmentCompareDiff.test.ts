@@ -671,3 +671,76 @@ describe("raw ids a mapping gives to other entities", () => {
     ).toEqual([]);
   });
 });
+
+describe("generated integer identities", () => {
+  const unique: readonly FieldRule[] = [{ field: "id", rule: "unique" }];
+
+  it.each([
+    {
+      name: "numbers of one length",
+      live: 1_729_791_234_567_890,
+      env: 1_000_000_000_123_456,
+      rules: unique,
+      generated: 1,
+    },
+    {
+      name: "digit strings of one length",
+      live: "1729791234567890",
+      env: "1000000000123456",
+      rules: unique,
+      generated: 1,
+    },
+    {
+      name: "numbers of different lengths",
+      live: 1_729_791_234_567_890,
+      env: 100_000_000_012_345,
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "a number and a digit string",
+      live: 1_729_791_234_567_890,
+      env: "1000000000123456",
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "short integers",
+      live: 17,
+      env: 18,
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "integers no rule generates",
+      live: 1_729_791_234_567_890,
+      env: 1_000_000_000_123_456,
+      rules: [],
+      generated: 0,
+    },
+  ])(
+    "matches $name only when a unique rule generates both",
+    ({ live, env, rules, generated }) => {
+      const result = compare(
+        { id: live },
+        { id: env },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.normalised.generated).toBe(generated);
+      expect(result.differences).toEqual(
+        generated === 1
+          ? []
+          : [
+              {
+                category: "value",
+                pointer: "/id",
+                live: JSON.stringify(live),
+                env: JSON.stringify(env),
+              },
+            ],
+      );
+    },
+  );
+});

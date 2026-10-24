@@ -48,7 +48,10 @@ import {
 } from "./environmentStateWriteObserve.js";
 import { plannedBody, restampedFields } from "./environmentStateWriteStamps.js";
 import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
-import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
+import {
+  fittedClockFormat,
+  noteFixedWidths,
+} from "./environmentStateWriteClockFormats.js";
 import {
   actionItemPath,
   observationNeeds,
@@ -90,7 +93,16 @@ export interface WriteDraft {
   readonly unstamped: Set<string>;
   /** Members a call stored as sent with strings out of code-point order, which no plan may store sorted. */
   readonly kept: Set<string>;
+  /** A value a held entity or an accepted call showed each clock field at a fixed width in, which keeps it untrimmed. */
+  readonly fixedWidth: Map<string, JsonValue>;
 }
+
+/** The value a draft fits a clock field against: one showing it at a fixed width, else the exemplar's. */
+export const clockEvidence = (
+  draft: WriteDraft,
+  field: string,
+): JsonValue | undefined =>
+  draft.fixedWidth.get(field) ?? draft.observed?.[field];
 
 /** A write observation plus the fields its selected read view actually covers, if any. */
 type UpdateObservation = Observed & {
@@ -574,6 +586,7 @@ export const updateEntity = (
     return recorded();
   }
   draft.plan.rules = rules;
+  noteFixedWidths(draft.fixedWidth, after.object);
   buildUpdate(context, draft, step, { after, explained, idField });
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
@@ -639,7 +652,7 @@ const fitUpdateClocks = (
   if (!built(draft)) return { explained, rules: draft.plan.rules };
   const fits = (format: ClockFormat, field: string): boolean =>
     JSON.stringify(
-      fittedClockFormat(format, after[field], draft.observed?.[field]),
+      fittedClockFormat(format, after[field], clockEvidence(draft, field)),
     ) === JSON.stringify(format);
   const rules = draft.plan.rules.map((rule) => {
     const later = explained.rules.find((other) => other.field === rule.field);
@@ -652,11 +665,16 @@ const fitUpdateClocks = (
     const format = fittedClockFormat(
       rule.format,
       after[rule.field],
-      draft.observed?.[rule.field],
+      clockEvidence(draft, rule.field),
     );
     return format === undefined ? rule : { ...rule, format };
   });
-  const fitted = siblingTrimmedClocks(rules, draft.observed);
+  const fitted = siblingTrimmedClocks(
+    rules,
+    draft.observed,
+    after,
+    Object.fromEntries(draft.fixedWidth),
+  );
   const planned = new Map(fitted.map((rule) => [rule.field, rule]));
   return {
     explained: {

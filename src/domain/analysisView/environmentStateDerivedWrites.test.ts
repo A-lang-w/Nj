@@ -6,9 +6,13 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import {
   BOOKMARK_ROWS,
+  FIXED_HELD_TAG_ROWS,
   FIXED_SIBLING_TAG_ROWS,
   FOLDER_ROWS,
   goClock,
+  LATER_FIXED_SIBLING_TAG_ROWS,
+  MIDDLE_FIXED_TAG_UPDATE_ROWS,
+  MIXED_WIDTH_TAG_UPDATE_ROWS,
   restoredAddressRows,
   TAG_ROWS,
   TAG_UPDATE_ROWS,
@@ -20,7 +24,7 @@ import {
   numberedUuid,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
-import { isObject } from "./environmentStateRules.js";
+import { isObject, type JsonObject } from "./environmentStateRules.js";
 
 const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
   const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
@@ -135,6 +139,59 @@ describe("clock spellings an application derives", () => {
   });
 });
 
+describe("fixed-width clock evidence", () => {
+  const FIXED = {
+    kind: "iso",
+    separator: "T",
+    fraction: 9,
+    zone: "Z",
+  } as const;
+
+  it("serves updates whose later call trims one clock and shows the other's trailing zero", () => {
+    expect(
+      planOf(MIXED_WIDTH_TAG_UPDATE_ROWS, "patch_tags_by_uuid"),
+    ).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        { field: "updatedAt", rule: "clock", format: TRIMMED },
+        { field: "syncedAt", rule: "clock", format: FIXED },
+      ]),
+    });
+  });
+
+  it("keeps a create's clock at a fixed width an earlier later call showed, whatever a third shows", () => {
+    expect(
+      planOf(LATER_FIXED_SIBLING_TAG_ROWS, "post_tags").rules,
+    ).toContainEqual({ field: "createdAt", rule: "clock", format: FIXED });
+  });
+
+  it("keeps a create's clock at a fixed width a held entity showed while its sibling is learned trimmed", () => {
+    const rules = planOf(FIXED_HELD_TAG_ROWS, "post_tags").rules;
+    expect(rules).toContainEqual({
+      field: "updatedAt",
+      rule: "clock",
+      format: TRIMMED,
+    });
+    expect(rules).toContainEqual({
+      field: "createdAt",
+      rule: "clock",
+      format: FIXED,
+    });
+  });
+
+  it("withholds updates whose clock a later call trims after an earlier one showed a trailing zero", () => {
+    expect(
+      planOf(MIDDLE_FIXED_TAG_UPDATE_ROWS, "patch_tags_by_uuid"),
+    ).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+      rules: expect.arrayContaining([
+        { field: "updatedAt", rule: "clock", format: FIXED },
+      ]),
+    });
+  });
+});
+
 describe("values an application composes or generates", () => {
   it("serves creates whose snapshot address joins the creation time and the sent URL, accepting any URL", () => {
     expect(planOf(BOOKMARK_ROWS, "post_bookmarks")).toMatchObject({
@@ -195,20 +252,35 @@ describe("values an application composes or generates", () => {
     });
   });
 
-  it("withholds folder creates whose generated numeric id another field repeats, which seeding cannot keep", () => {
+  /** The folder rows with each folder's numeric id repeated where `mirror` puts it. */
+  const mirrored = (mirror: (id: number) => JsonObject): TimedCaptureRow[] => {
     const repeated = (value: JsonValue): JsonValue =>
       Array.isArray(value)
         ? value.map(repeated)
         : isObject(value) && typeof value.id === "number"
-          ? { ...value, folderId: value.id }
+          ? { ...value, ...mirror(value.id) }
           : value;
-    const rows = FOLDER_ROWS.map((row): TimedCaptureRow => {
+    return FOLDER_ROWS.map((row): TimedCaptureRow => {
       const [method, path, body, ...rest] = row;
       return body === undefined ? row : [method, path, repeated(body), ...rest];
     });
-    expect(planOf(rows, "post_folders")).toMatchObject({
-      served: false,
-      reason: "unexplained-change",
-    });
+  };
+
+  it("withholds folder creates whose generated numeric id another field repeats, which seeding cannot keep", () => {
+    expect(
+      planOf(
+        mirrored((id) => ({ folderId: id })),
+        "post_folders",
+      ),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+
+  it("withholds folder creates whose generated numeric id a number nested in another field repeats", () => {
+    expect(
+      planOf(
+        mirrored((id) => ({ metadata: { serial: id } })),
+        "post_folders",
+      ),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
   });
 });

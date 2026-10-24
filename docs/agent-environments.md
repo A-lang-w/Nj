@@ -1065,9 +1065,11 @@ Numeric arrays retain that containing field's clock context through nested
 arrays; an object's own fields establish their own context. Numeric values at
 the body root, in root arrays, or under measurement fields remain literal.
 
-Generated strings normalize only where this confirmed, served write's entity
-response rules identify generation. A `unique` rule or UUID identity rule must
-still compare two UUIDs; a `renewed` rule applies only at its recorded pointers,
+Generated values normalize only where this confirmed, served write's entity
+response rules identify generation. A UUID identity rule must still compare two
+UUIDs, and a `unique` rule two UUIDs or two generated integers (10 to 20
+digits) of one JSON kind and length; a `renewed` rule applies only at its
+recorded pointers,
 with `*` matching actual array items. Token/sequence strings retain the existing
 format check: equal length of at least eight, the same character classes, and
 a digit. Numeric sequences continue to compare literally unless an ID mapping

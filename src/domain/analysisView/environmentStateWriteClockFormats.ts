@@ -62,6 +62,22 @@ export const showsFixedWidth = (
   );
 };
 
+/** Keep the first value showing each field as an ISO clock at a fixed width, which no trimmed spelling of the field may contradict. */
+export const noteFixedWidths = (
+  seen: Map<string, JsonValue>,
+  fields: Readonly<Record<string, JsonValue>>,
+): void => {
+  for (const [field, value] of Object.entries(fields)) {
+    const reading = readClock(value);
+    if (
+      reading?.fixedWidth === true &&
+      reading.format.kind === "iso" &&
+      !seen.has(field)
+    )
+      seen.set(field, value);
+  }
+};
+
 /** A clock format trimmed as a sibling's is, when it is spelled alike and its own value does not show a fixed width. */
 export const trimmedLike = (
   format: ClockFormat,

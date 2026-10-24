@@ -220,6 +220,7 @@ export class EnvironmentStateWriteSimulation {
         steady: new Set(),
         unstamped: new Set(),
         kept: new Set(),
+        fixedWidth: new Map(),
         linked: link.collection,
       });
     }
