@@ -53,11 +53,11 @@ before building.
   parameters and no text, or the null text mitmproxy's SaveHar records, is
   scanned by those parameters, and a scenario transaction that cannot be
   attributed to one response still has its request side scanned. Text bodies
-  over the 4 MiB scan limit, including a response body decoded only as a prefix,
-  are not scanned; they are reported as a `credential-scan-incomplete` warning
-  with a count and the first 20 record and side pointers (`record 3 response`),
-  never contents, and never refuse a build. Binary bodies hold no JSON or form
-  text and are neither scanned nor reported.
+  over the 4 MiB scan limit, measured in UTF-8 bytes, including a response body
+  decoded only as a prefix, are not scanned; they are reported as a
+  `credential-scan-incomplete` warning with a count and the first 20 record and
+  side pointers (`record 3 response`), never contents, and never refuse a build.
+  Binary bodies hold no JSON or form text and are neither scanned nor reported.
 - The inspected HAR's Evidence and the projected manifest are admitted against
   the live heap headroom for parsing and sealing before either is serialized, as
   a capture Evidence file is before it is read; one that does not fit is refused
