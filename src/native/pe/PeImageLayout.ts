@@ -107,6 +107,14 @@ export interface PeImageLayout {
   readonly sectionCount: number;
   /** NumberOfRvaAndSizes actually present in this optional header. */
   readonly directoryCount: number;
+  /** Offset of the PE signature within the artifact. */
+  readonly peOffset: number;
+  /** Offset of the optional header within the artifact. */
+  readonly optionalOffset: number;
+  /** Optional-header magic: `0x10b` for PE32, `0x20b` for PE32+. */
+  readonly optionalMagic: number;
+  /** Offset of the data-directory array within the optional header. */
+  readonly directoriesOffset: number;
   readonly sections: readonly PeSection[];
   /**
    * Declared directory `index`, or `null` when the optional header does not
@@ -308,6 +316,10 @@ export const readPeImageLayout = (
     sizeOfImage,
     sectionCount,
     directoryCount,
+    peOffset: pe,
+    optionalOffset: optional,
+    optionalMagic: magic,
+    directoriesOffset: directoriesAt,
     sections,
     directory(index: number): PeDataDirectory | null {
       if (index < 0 || index >= directoryCount) return null;
