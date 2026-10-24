@@ -286,16 +286,28 @@ export const parseDevicetree = (
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {
-    for (const name of ["phandle", "linux,phandle"]) {
+    const declared = ["phandle", "linux,phandle"].flatMap((name) => {
       const handle = prop(node.path, name)?.derived.cells?.[0];
-      if (handle !== undefined && handle !== 0 && handle !== 0xffffffff) {
+      return handle === undefined ? [] : [handle];
+    });
+    // Disagreeing declarations leave both values ambiguous rather than choosing one.
+    const conflict = declared.length === 2 && declared[0] !== declared[1];
+    if (conflict) {
+      admit(node.path.length * 2 + 256);
+      limitations.push(
+        `phandle at ${node.path} conflicts with linux,phandle (0x${declared[0]?.toString(16)} vs 0x${declared[1]?.toString(16)}); references to either value are unresolved.`,
+      );
+    }
+    for (const handle of declared)
+      if (handle !== 0 && handle !== 0xffffffff) {
         const existing = handles.get(handle);
         handles.set(
           handle,
-          existing === undefined || existing === node.path ? node.path : null,
+          !conflict && (existing === undefined || existing === node.path)
+            ? node.path
+            : null,
         );
       }
-    }
     const reg = prop(node.path, "reg");
     if (!reg || node.parent === null) continue;
     const count = (name: string, fallback: number) => {

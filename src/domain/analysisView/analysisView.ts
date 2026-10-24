@@ -2,6 +2,7 @@ import {
   devicetreeViewRequestSchema,
   devicetreeViewItemsSchema,
   devicetreeSummarySchema,
+  devicetreePageContextSchema,
   projectDevicetreeView,
 } from "./devicetreeView.js";
 import {
@@ -1018,7 +1019,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("devicetree"),
     parent_operation: z.literal("inspect_devicetree"),
     view: devicetreeViewRequestSchema,
-    devicetree: devicetreeSummarySchema,
+    devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
   erlangBeamTableViewResultSchema,

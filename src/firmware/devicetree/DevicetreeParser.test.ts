@@ -156,6 +156,39 @@ it("does not guess malformed reg tuples or duplicate phandle targets", () => {
   ).toBeNull();
   expect(r.limitations.some((s) => s.includes("reg at /a"))).toBe(true);
 });
+it("leaves conflicting phandle declarations unresolved", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "same",
+          properties: { phandle: cells(3), "linux,phandle": cells(3) },
+        },
+        {
+          name: "split",
+          properties: { phandle: cells(1), "linux,phandle": cells(2) },
+        },
+        {
+          name: "consumer",
+          properties: {
+            "interrupt-parent": cells(1),
+            "msi-parent": cells(2),
+            "remote-endpoint": cells(3),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.references.map((ref) => [ref.phandle, ref.target])).toEqual([
+    [1, null],
+    [2, null],
+    [3, "/same"],
+  ]);
+  expect(r.limitations.filter((s) => s.includes("conflicts"))).toEqual([
+    "phandle at /split conflicts with linux,phandle (0x1 vs 0x2); references to either value are unresolved.",
+  ]);
+});
 it("rejects unterminated reservations and unknown tokens", () => {
   const reservation = devicetreeFixture();
   reservation.fill(1, 56, 72);

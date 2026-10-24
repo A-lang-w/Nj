@@ -29,7 +29,8 @@ The summary is labeled derived and includes root compatible/model, chosen
 bootargs/stdout-path and aliases. An undecodable alias retains its name with a
 null path; it is not silently treated as absent. Single-cell `interrupt-parent`, `remote-endpoint` and `msi-parent`
 references resolve through phandle declarations. Missing or duplicate targets
-have null target paths. Binding-specific reference arrays and overlays are not
+have null target paths. A node whose `phandle` and `linux,phandle` disagree
+adds a limitation, and references to either value stay unresolved. Binding-specific reference arrays and overlays are not
 resolved; an empty reference list does not prove absence of hardware links.
 
 MCP `detail: summary` retains complete Evidence in the session. Follow its
@@ -50,7 +51,9 @@ MCP `detail: summary` retains complete Evidence in the session. Follow its
 
 Collections are `nodes` (identity and property counts), `properties` (requires an
 exact node path), `reservations`, and `references`. Pages use retained parsed
-facts and do not reopen the file. Source indices are scoped to the selected
+facts and do not reopen the file. Each page carries fixed-size context
+(artifact, header, coverage and counts) rather than the summary strings, so a
+large `bootargs` value does not repeat on every page. Source indices are scoped to the selected
 collection and parent Evidence; property indices are scoped to their node.
 
 | Input budget     | Default | Ceiling |

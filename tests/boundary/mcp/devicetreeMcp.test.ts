@@ -2,6 +2,7 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerDevicetreeTool } from "../../../src/server/registerDevicetreeTool.js";
@@ -14,7 +15,10 @@ import type { Evidence } from "../../../src/domain/evidence.js";
 import { onTestFinished } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import {
+  devicetreeFixture,
+  dtString,
+} from "../../../src/firmware/devicetree/Devicetree.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
@@ -104,6 +108,68 @@ mcpTest(
     }
   },
   // Includes SDK schema conversion, dialect validation and two public calls.
+  60_000,
+);
+mcpTest(
+  "pages nodes without repeating a large bootargs summary",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("DTB inspection must not start an engine");
+    });
+    const client = await mcp.connect(createDtbServer(session));
+    try {
+      const root = await createTestTempDirectory("rea-dtb-mcp-bootargs-");
+      const path = join(root, "board.dtb");
+      // Quotes double under JSON escaping; the value must not ride on every page.
+      const bootargs = '"'.repeat(3 * 1024 * 1024);
+      await writeFile(
+        path,
+        devicetreeFixture({
+          name: "",
+          children: [
+            { name: "chosen", properties: { bootargs: dtString(bootargs) } },
+          ],
+        }),
+      );
+      const response = await client.callTool({
+        name: "inspect_devicetree",
+        arguments: { path, detail: "summary", max_file_bytes: 16777216 },
+      });
+      // The complete summary exceeds the response budget; its retained parent
+      // must still page, so pages cannot repeat the summary strings.
+      const { error } = parseMcpToolError(response);
+      expect(error.code).toBe("resource_constraint");
+      const receipt = session.evidenceById(
+        z
+          .object({ evidence_id: z.string() })
+          .parse(error.details?.reported_limits).evidence_id,
+      );
+      const evidenceId = z
+        .object({ parent_evidence_id: z.string() })
+        .parse(receipt?.normalized_result).parent_evidence_id;
+      const page = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: evidenceId,
+          },
+          view: { kind: "devicetree", collection: "nodes", limit: 2 },
+        },
+      });
+      expect(page.isError, JSON.stringify(page).slice(0, 4000)).not.toBe(true);
+      expect(JSON.stringify(page).length).toBeLessThan(65536);
+      expect(page.structuredContent).toMatchObject({
+        normalized_result: {
+          kind: "devicetree",
+          devicetree: { alias_count: 0, reference_count: 0 },
+          items: [{ path: "/" }, { path: "/chosen", property_count: 1 }],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  },
   60_000,
 );
 mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {

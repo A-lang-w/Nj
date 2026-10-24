@@ -42,13 +42,18 @@ export const devicetreeViewItemsSchema = z.union([
   z.array(devicetreeSchema.shape.reservations.element.extend(sourceIndex)),
   z.array(devicetreeSchema.shape.references.element.extend(sourceIndex)),
 ]);
+const counts = {
+  reservation_count: z.int().nonnegative(),
+  reference_count: z.int().nonnegative(),
+  unresolved_reference_count: z.int().nonnegative(),
+};
 export const devicetreeSummarySchema = devicetreeSchema
   .pick({ artifact: true, header: true, summary: true, coverage: true })
-  .extend({
-    reservation_count: z.int().nonnegative(),
-    reference_count: z.int().nonnegative(),
-    unresolved_reference_count: z.int().nonnegative(),
-  });
+  .extend(counts);
+/** Fixed-size page context; unbounded summary strings stay in the summary view. */
+export const devicetreePageContextSchema = devicetreeSchema
+  .pick({ artifact: true, header: true, coverage: true })
+  .extend({ ...counts, alias_count: z.int().nonnegative() });
 const readReport = createAnalysisViewResultReader(devicetreeSchema);
 export const projectDevicetreeView = (
   parent: AnalysisViewParent,
@@ -67,10 +72,9 @@ export const projectDevicetreeView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const r = parsed.value;
-  const summary = {
+  const context = {
     artifact: r.artifact,
     header: r.header,
-    summary: r.summary,
     coverage: r.coverage,
     reservation_count: r.reservations.length,
     reference_count: r.references.length,
@@ -97,7 +101,7 @@ export const projectDevicetreeView = (
       ...shared,
       kind: "summary",
       view,
-      summary,
+      summary: { ...context, summary: r.summary },
       coverage: completeWithinViewCoverage(r.nodes.length, r.nodes.length),
     });
   if (view.collection === "properties" && view.path === undefined)
@@ -146,7 +150,7 @@ export const projectDevicetreeView = (
     ...shared,
     kind: "devicetree",
     view,
-    devicetree: summary,
+    devicetree: { ...context, alias_count: r.summary.aliases.length },
     items,
     coverage: pageViewCoverage(view.offset, items.length, total),
   });
