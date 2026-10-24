@@ -1,3 +1,6 @@
+import { setImmediate } from "node:timers/promises";
+
+import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
@@ -123,7 +126,11 @@ const formatFailure = (
  * admitted; any other trailing byte fails closed. 32-bit `size_t` producers
  * are outside this reader.
  */
-export const decodeNodeSeaBlob = (bytes: Buffer): DecodedNodeSeaBlob => {
+export const decodeNodeSeaBlob = async (
+  bytes: Buffer,
+  signal?: AbortSignal,
+): Promise<DecodedNodeSeaBlob> => {
+  assertArtifactReadActive(signal);
   const cursor = new BlobCursor(bytes);
   if (cursor.remaining < 4) throw formatFailure(NODE_SEA_TRUNCATED);
   const magic = cursor.u32();
@@ -138,10 +145,11 @@ export const decodeNodeSeaBlob = (bytes: Buffer): DecodedNodeSeaBlob => {
   const useCodeCache = (flags & FLAG_USE_CODE_CACHE) !== 0;
   const codeCache = useCodeCache ? cursor.byteRange() : null;
   const includeAssets = (flags & FLAG_INCLUDE_ASSETS) !== 0;
-  const assets = includeAssets ? cursor.assets() : [];
+  const assets = includeAssets ? await cursor.assets(signal) : [];
   const includeExecArgv = (flags & FLAG_INCLUDE_EXEC_ARGV) !== 0;
-  const execArgv = includeExecArgv ? cursor.execArgv() : [];
-  if (cursor.hasNonZeroTail()) throw formatFailure(NODE_SEA_TRAILING_BYTES);
+  const execArgv = includeExecArgv ? await cursor.execArgv(signal) : [];
+  if (await cursor.hasNonZeroTail(signal))
+    throw formatFailure(NODE_SEA_TRAILING_BYTES);
   return {
     magic: NODE_SEA_MAGIC,
     flags,
@@ -252,7 +260,7 @@ class BlobCursor {
     return { offset, length };
   }
 
-  assets(): NodeSeaAsset[] {
+  async assets(signal?: AbortSignal): Promise<NodeSeaAsset[]> {
     const count = this.#count(MAX_ASSET_COUNT, NODE_SEA_ASSET_COUNT);
     if (count * 16 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
     const seen = new Set<string>();
@@ -264,6 +272,10 @@ class BlobCursor {
         throw limitFailure(NODE_SEA_ASSET_NAME_BYTES, "memory");
     };
     for (let index = 0; index < count; index += 1) {
+      if (index % 256 === 0) {
+        await setImmediate();
+        assertArtifactReadActive(signal);
+      }
       const name = this.text(false, NODE_SEA_EMPTY_ASSET_NAME, charge);
       if (seen.has(name)) throw formatFailure(nodeSeaAssetCollision(name));
       seen.add(name);
@@ -272,7 +284,7 @@ class BlobCursor {
     return assets;
   }
 
-  execArgv(): string[] {
+  async execArgv(signal?: AbortSignal): Promise<string[]> {
     const count = this.#count(MAX_EXEC_ARGV, NODE_SEA_EXEC_ARGV_COUNT);
     if (count * 8 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
     const values: string[] = [];
@@ -282,14 +294,29 @@ class BlobCursor {
       if (textBytes > MAX_EXEC_ARGV_TEXT_BYTES)
         throw limitFailure(NODE_SEA_EXEC_ARGV_TEXT, "memory");
     };
-    for (let index = 0; index < count; index += 1)
+    for (let index = 0; index < count; index += 1) {
+      if (index % 256 === 0) {
+        await setImmediate();
+        assertArtifactReadActive(signal);
+      }
       values.push(this.text(true, NODE_SEA_INVALID_UTF8, charge));
+    }
     return values;
   }
 
-  hasNonZeroTail(): boolean {
-    for (let index = this.#offset; index < this.bytes.length; index += 1)
-      if (this.bytes[index] !== 0) return true;
+  async hasNonZeroTail(signal?: AbortSignal): Promise<boolean> {
+    for (
+      let start = this.#offset;
+      start < this.bytes.length;
+      start += 64 * 1024
+    ) {
+      await setImmediate();
+      assertArtifactReadActive(signal);
+      const end = Math.min(start + 64 * 1024, this.bytes.length);
+      for (let index = start; index < end; index += 1)
+        if (this.bytes[index] !== 0) return true;
+    }
+    assertArtifactReadActive(signal);
     return false;
   }
 

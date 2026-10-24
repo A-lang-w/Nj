@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
-import { nodeSeaPe } from "../../../src/artifacts/nodeSea/NodeSea.fixture.js";
+import {
+  nodeSeaPe,
+  buildNodeSeaBlob,
+} from "../../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { z } from "zod";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
@@ -77,6 +80,23 @@ it.each(["full", "compact"] as const)(
       const invalid = await call("inspect_artifact", {});
       expect(JSON.stringify(parseMcpToolError(invalid))).toContain(
         "Node SEA blob magic",
+      );
+      await call("close_binary", {});
+      await writeFile(
+        path,
+        nodeSeaPe({
+          blob: buildNodeSeaBlob({
+            assets: Array.from({ length: 100_001 }, (_, index) => ({
+              name: `a${String(index)}`,
+              body: "",
+            })),
+          }),
+        }),
+      );
+      await call("open_binary", { path });
+      const overLimit = await call("inspect_artifact", {});
+      expect(JSON.stringify(parseMcpToolError(overLimit))).toContain(
+        "Node SEA asset count exceeds",
       );
     } finally {
       if (outputRoot !== undefined)

@@ -62,7 +62,10 @@ PE carriers also use the shared 512 MiB input, 65,536 directory-entry and 8 MiB
 resource-metadata ceilings. The decoder admits at most 100,000 assets whose
 names total at most 8 MiB, and 4,096 exec arguments totaling at most 1 MiB of
 text. These are fixed resource bounds, not Node format limits, checked before
-records are created; a hit fails as a limit with no runtime override. The PE
+decoding names or creating records; a hit fails as a limit with no runtime
+override. Asset and argument decoding, padding scans, and inventory construction
+yield in bounded batches and honor caller cancellation. Asset count and name
+budgets bound retained metadata independently of stored member body sizes. The PE
 name probe reads headers from the first 64 KiB of the carrier; a PE whose
 headers extend beyond that is left to native classification. Snapshot and
 code-cache bytes remain opaque.

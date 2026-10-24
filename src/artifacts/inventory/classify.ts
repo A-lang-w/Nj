@@ -227,8 +227,9 @@ const classifyRootFormat = async (
     const sea = await locateNodeSea(handle, archiveBytes, signal);
     abortIfNeeded(signal);
     if (sea !== undefined) {
-      decodeNodeSeaBlob(
+      await decodeNodeSeaBlob(
         await readNodeSeaBlob(handle, sea, archiveBytes, signal),
+        signal,
       );
       return "node-sea";
     }

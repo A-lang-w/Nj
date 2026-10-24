@@ -1,7 +1,10 @@
 import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate } from "node:timers";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+
+import * as artifactPaths from "./ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
@@ -528,3 +531,55 @@ it("honors cancellation before admitting a carrier", async () => {
     await reader.close();
   }
 });
+
+it.each(["cancel", "close"] as const)(
+  "settles preparation when the caller requests %s during inventory construction",
+  async (action) => {
+    const path = await writeCarrier(
+      "large-table",
+      nodeSeaElf({
+        assets: [
+          ...Array.from({ length: 1024 }, (_, index) => ({
+            name: `asset-${String(index)}`,
+            body: "",
+          })),
+          { name: "../unsafe", body: "" },
+        ],
+      }),
+    );
+    const reader = new NodeSeaArtifactReader(path);
+    const controller = new AbortController();
+    const reason = { stage: "building inventory" };
+    let completion: Promise<void> | undefined;
+    const normalize = artifactPaths.normalizeArtifactPath;
+    // Schedule the request from a real consumer boundary after construction
+    // has begun. A synchronous whole-table pass reaches the unsafe tail first.
+    const observer = vi
+      .spyOn(artifactPaths, "normalizeArtifactPath")
+      .mockImplementation((name) => {
+        if (name === "asset-10")
+          setImmediate(() => {
+            if (action === "cancel") controller.abort(reason);
+            else completion = reader.close();
+          });
+        return normalize(name);
+      });
+    try {
+      await expect(
+        reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+      ).rejects.toMatchObject(
+        action === "cancel"
+          ? { reason: "cancelled", cause: reason }
+          : { reason: "unavailable" },
+      );
+      await completion;
+      await reader.close();
+      await expect(
+        reader.entries()[Symbol.asyncIterator]().next(),
+      ).rejects.toMatchObject({ reason: "unavailable" });
+    } finally {
+      observer.mockRestore();
+      await reader.close();
+    }
+  },
+);

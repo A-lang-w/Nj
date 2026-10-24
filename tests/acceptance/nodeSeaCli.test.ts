@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
+  buildNodeSeaBlob,
   nodeSeaElf,
   nodeSeaMachO,
   nodeSeaPe,
@@ -114,3 +115,29 @@ cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
   expect(result.exitCode).not.toBe(0);
   expect(result.stdout + result.stderr).toContain("Node SEA blob magic");
 });
+
+cliTest(
+  "refuses an empty-body SEA asset table over its record bound",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sea-limit-cli-");
+    const source = join(root, "application");
+    await writeFile(
+      source,
+      nodeSeaElf({
+        blob: buildNodeSeaBlob({
+          assets: Array.from({ length: 100_001 }, (_, index) => ({
+            name: `a${String(index)}`,
+            body: "",
+          })),
+        }),
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Node SEA asset count exceeds",
+    );
+  },
+);

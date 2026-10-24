@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+
 import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
@@ -28,47 +30,49 @@ const header = (flags: number, extension = 1): Buffer => {
   return bytes;
 };
 
-it("rejects a blob that ends before the magic", () => {
-  expect(() => decodeNodeSeaBlob(Buffer.from([0x20, 0xda]))).toThrow(
+it("rejects a blob that ends before the magic", async () => {
+  await expect(decodeNodeSeaBlob(Buffer.from([0x20, 0xda]))).rejects.toThrow(
     NODE_SEA_TRUNCATED,
   );
 });
 
-it("rejects a blob whose magic is not 0x143da20", () => {
-  expect(() => decodeNodeSeaBlob(Buffer.alloc(9))).toThrow(NODE_SEA_BAD_MAGIC);
+it("rejects a blob whose magic is not 0x143da20", async () => {
+  await expect(decodeNodeSeaBlob(Buffer.alloc(9))).rejects.toThrow(
+    NODE_SEA_BAD_MAGIC,
+  );
 });
 
-it("rejects a header that ends before the extension byte", () => {
-  expect(() => decodeNodeSeaBlob(header(0).subarray(0, 8))).toThrow(
+it("rejects a header that ends before the extension byte", async () => {
+  await expect(decodeNodeSeaBlob(header(0).subarray(0, 8))).rejects.toThrow(
     NODE_SEA_TRUNCATED,
   );
 });
 
-it("rejects unknown flag bits", () => {
-  expect(() => decodeNodeSeaBlob(header(1 << 5))).toThrow(
+it("rejects unknown flag bits", async () => {
+  await expect(decodeNodeSeaBlob(header(1 << 5))).rejects.toThrow(
     NODE_SEA_UNKNOWN_FLAGS,
   );
 });
 
-it("rejects an unknown exec argv extension", () => {
-  expect(() => decodeNodeSeaBlob(header(0, 9))).toThrow(
+it("rejects an unknown exec argv extension", async () => {
+  await expect(decodeNodeSeaBlob(header(0, 9))).rejects.toThrow(
     NODE_SEA_UNKNOWN_EXTENSION,
   );
 });
 
-it("rejects an empty code path", () => {
-  expect(() => decodeNodeSeaBlob(buildNodeSeaBlob({ codePath: "" }))).toThrow(
-    NODE_SEA_EMPTY_CODE_PATH,
-  );
+it("rejects an empty code path", async () => {
+  await expect(
+    decodeNodeSeaBlob(buildNodeSeaBlob({ codePath: "" })),
+  ).rejects.toThrow(NODE_SEA_EMPTY_CODE_PATH);
 });
 
-it("rejects a truncated length-prefixed field", () => {
+it("rejects a truncated length-prefixed field", async () => {
   const bytes = Buffer.concat([header(0), Buffer.alloc(4)]);
-  expect(() => decodeNodeSeaBlob(bytes)).toThrow(NODE_SEA_TRUNCATED);
+  await expect(decodeNodeSeaBlob(bytes)).rejects.toThrow(NODE_SEA_TRUNCATED);
 });
 
-it("rejects colliding asset names", () => {
-  expect(() =>
+it("rejects colliding asset names", async () => {
+  await expect(
     decodeNodeSeaBlob(
       buildNodeSeaBlob({
         assets: [
@@ -77,12 +81,12 @@ it("rejects colliding asset names", () => {
         ],
       }),
     ),
-  ).toThrow(nodeSeaAssetCollision("shared"));
+  ).rejects.toThrow(nodeSeaAssetCollision("shared"));
 });
 
-const limitOf = (bytes: Buffer): ArtifactReaderFailure => {
+const limitOf = async (bytes: Buffer): Promise<ArtifactReaderFailure> => {
   try {
-    decodeNodeSeaBlob(bytes);
+    await decodeNodeSeaBlob(bytes);
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure) return cause;
     throw cause;
@@ -90,22 +94,22 @@ const limitOf = (bytes: Buffer): ArtifactReaderFailure => {
   throw new Error("expected a limit failure");
 };
 
-it("refuses an asset table over its count bound before creating records", () => {
+it("refuses an asset table over its count bound before creating records", async () => {
   const prefix = buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] });
   const count = Buffer.alloc(8);
   count.writeBigUInt64LE(100_001n);
   // Replace the declared count; the bound is checked before the table length.
   const bytes = Buffer.concat([prefix.subarray(0, -25), count]);
-  const failure = limitOf(bytes);
+  const failure = await limitOf(bytes);
   expect(failure).toMatchObject({
     reason: "limit",
     message: NODE_SEA_ASSET_COUNT,
   });
 });
 
-it("refuses asset names over the decoded name budget", () => {
+it("refuses asset names over the decoded name budget", async () => {
   const name = "n".repeat(4 * 1024 * 1024 + 1);
-  const failure = limitOf(
+  const failure = await limitOf(
     buildNodeSeaBlob({
       assets: [
         { name: `a${name}`, body: "" },
@@ -119,15 +123,17 @@ it("refuses asset names over the decoded name budget", () => {
   });
 });
 
-it("rejects non-zero trailing bytes and keeps zero padding", () => {
+it("rejects non-zero trailing bytes and keeps zero padding", async () => {
   const padded = buildNodeSeaBlob({ trailing: Buffer.alloc(8) });
-  expect(decodeNodeSeaBlob(padded).codePath).toBe("sea.js");
+  expect((await decodeNodeSeaBlob(padded)).codePath).toBe("sea.js");
   const dirty = Buffer.concat([padded, Buffer.from([1])]);
-  expect(() => decodeNodeSeaBlob(dirty)).toThrow(NODE_SEA_TRAILING_BYTES);
+  await expect(decodeNodeSeaBlob(dirty)).rejects.toThrow(
+    NODE_SEA_TRAILING_BYTES,
+  );
 });
 
-it("decodes flags, the main script, code cache, assets, and exec argv", () => {
-  const decoded = decodeNodeSeaBlob(
+it("decodes flags, the main script, code cache, assets, and exec argv", async () => {
+  const decoded = await decodeNodeSeaBlob(
     buildNodeSeaBlob({
       codePath: "app/main.js",
       main: "console.log(1)\n",
@@ -157,8 +163,8 @@ it("decodes flags, the main script, code cache, assets, and exec argv", () => {
   expect(decoded.codeCache?.length).toBe(3);
 });
 
-it("treats the body as a snapshot when that flag is set", () => {
-  const decoded = decodeNodeSeaBlob(
+it("treats the body as a snapshot when that flag is set", async () => {
+  const decoded = await decodeNodeSeaBlob(
     buildNodeSeaBlob({
       codePath: "sea.js",
       snapshot: Buffer.from("snap"),
@@ -192,4 +198,48 @@ it("reports an absent, unset, set, or conflicting fuse sentinel", () => {
     fuseSentinel: null,
     fuseContradiction: NODE_SEA_FUSE_CONFLICT,
   });
+});
+
+it.each([
+  [
+    "assets",
+    () =>
+      buildNodeSeaBlob({
+        assets: Array.from({ length: 1024 }, (_, index) => ({
+          name: `asset-${String(index)}`,
+          body: "",
+        })),
+      }),
+  ],
+  [
+    "exec arguments",
+    () =>
+      buildNodeSeaBlob({
+        execArgv: Array.from({ length: 1024 }, () => "--no-warnings"),
+      }),
+  ],
+  [
+    "zero padding",
+    () => buildNodeSeaBlob({ trailing: Buffer.alloc(1024 * 1024) }),
+  ],
+] as const)("observes cancellation while decoding %s", async (_name, build) => {
+  const bytes = build();
+  const controller = new AbortController();
+  const reason = { stage: "decoding" };
+  const pending = decodeNodeSeaBlob(bytes, controller.signal);
+  // Let a batch run; cancellation must be observed before the whole table or
+  // padding scan finishes, without relying on elapsed-time assertions.
+  await setImmediate();
+  controller.abort(reason);
+  await expect(pending).rejects.toMatchObject({
+    reason: "cancelled",
+    cause: reason,
+  });
+});
+
+it("preserves cancellation before decoding even a malformed blob", async () => {
+  const reason = { stage: "before decoding" };
+  await expect(
+    decodeNodeSeaBlob(Buffer.alloc(0), AbortSignal.abort(reason)),
+  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
 });

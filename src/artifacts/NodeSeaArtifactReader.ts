@@ -273,16 +273,19 @@ export class NodeSeaArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure("limit", NODE_SEA_BLOB_TOO_LARGE, {
         boundary: "memory",
       });
-    const decoded = decodeNodeSeaBlob(
+    const decoded = await decodeNodeSeaBlob(
       await readNodeSeaBlob(handle, location, initial.size, signal),
+      signal,
     );
     const fuse = await scanNodeSeaFuse(handle, initial.size, signal);
-    const members = seaMembers(decoded);
     let declaredBytes = 0n;
     const expansionBudget = BigInt(
       artifactExpansionBudgetBytes(location.blobLength),
     );
-    members.forEach((member, index) => {
+    let index = 0;
+    for (const member of seaMembers(decoded)) {
+      if (index % 256 === 0) await setImmediate();
+      this.#assertOpen(signal);
       declaredBytes += BigInt(member.range.length);
       if (declaredBytes > expansionBudget)
         throw new ArtifactReaderFailure(
@@ -313,7 +316,8 @@ export class NodeSeaArtifactReader implements ArtifactReader {
         },
       } satisfies ArtifactEntry;
       this.#entries.set(entry.adapterKey, entry);
-    });
+      index += 1;
+    }
     this.#header = {
       kind: "node-sea",
       magic: decoded.magic,
@@ -363,13 +367,11 @@ export class NodeSeaArtifactReader implements ArtifactReader {
   }
 }
 
-const seaMembers = (
-  decoded: DecodedNodeSeaBlob,
-): {
+function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
   readonly path: string;
   readonly role: NodeSeaRole;
   readonly range: NodeSeaByteRange;
-}[] => {
+}> {
   const claimed = new Map<string, NodeSeaRole>();
   const claim = (path: string, role: NodeSeaRole): string => {
     const normalized = normalizeArtifactPath(path);
@@ -386,37 +388,31 @@ const seaMembers = (
     claimed.set(normalized, role);
     return path;
   };
-  const members: {
-    path: string;
-    role: NodeSeaRole;
-    range: NodeSeaByteRange;
-  }[] = [];
   if (decoded.mainScript !== null)
-    members.push({
+    yield {
       path: claim(decoded.codePath, "main-script"),
       role: "main-script",
       range: decoded.mainScript,
-    });
+    };
   if (decoded.snapshot !== null)
-    members.push({
+    yield {
       path: claim(SNAPSHOT_PATH, "snapshot"),
       role: "snapshot",
       range: decoded.snapshot,
-    });
+    };
   if (decoded.codeCache !== null)
-    members.push({
+    yield {
       path: claim(CODE_CACHE_PATH, "code-cache"),
       role: "code-cache",
       range: decoded.codeCache,
-    });
+    };
   for (const asset of decoded.assets)
-    members.push({
+    yield {
       path: claim(asset.name, "asset"),
       role: "asset",
       range: asset.range,
-    });
-  return members;
-};
+    };
+}
 
 const formatFailure = (detail: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("format", `Node SEA blob is malformed: ${detail}`);
