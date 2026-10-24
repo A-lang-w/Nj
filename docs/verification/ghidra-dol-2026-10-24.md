@@ -9,7 +9,7 @@ No automatic DOL detection or new provider is introduced.
 
 ## Sources and corrections
 
-The final source pin is `7f892827610d8e0f14993c577ac48ba8ac1f7ea2`.
+The measured feature-source pin is `7f892827610d8e0f14993c577ac48ba8ac1f7ea2`.
 The comparison baseline is `2961f06776dcb73818980a2a5d6886a4fec1e521`.
 Both include main `3ce311757dd8ac444c8297b2871464536f93816d`, the contributor's
 DOL work and the shared inventory/caller/cleanup corrections below. Their
@@ -169,3 +169,36 @@ and JavaScript worker startup
 These are recorded baseline failures, not successful checks or automatic
 exemptions for unrelated future failures. The published head's CI must be
 assessed separately before any authorized bypass.
+
+## Final integration after main's ownership update
+
+Source `a853c0c0ee5ea5eb66924c2c0235b223ae9d87b0` integrates main
+`d9660eb03271d0ce1859cf8720ca460701dd3322`. The only conflict was the packaged
+Windows verifier: main's new command/workspace owner is retained exactly, with
+one additional `ReaGhidraPrepareDol.java` caller-directory collision fixture.
+No previous resource-owner implementation is restored.
+
+The combined snapshot `e267d92d7af33681620548d584e3d60622ec7abd`
+(tree `5dd561143b516ae4ae5983fe8250608329f4cee6`) includes that source and
+Android head `e65ba83fa319dd34eaebce7d93d78d4e67cf8458`, in addition to the
+merged IPS and IL2CPP work. **1,062 checks pass, 4 skip, none fail** across the
+four features and the newly changed process/package owners. Skips cover three
+Windows launcher scenarios and the platform-specific adjacent-npm scenario.
+The cached build passes. `check:fast` fails only at main's already recorded
+`releaseProposal.test.ts:378` `includeFiles` type error; it is not reported as
+passing. Standalone lint, full formatting and documentation are checked again
+on the integrated DOL source after this report.
+
+The same combined snapshot also reruns the real stock Ghidra CLI/MCP DOL lane
+successfully after the process-owner changes: 111.490 s elapsed,
+98.176 CPU s,
+1448.965 MiB sampled peak family RSS.
+Section/BSS mapping, entry/callee, decompilation, bytes, unchanged DOL identity
+and final verified empty lineage pass. Gekko remains unavailable and skipped.
+The six paired query costs above retain their original source pins; the new
+ownership implementation was not rebenchmarked as a six-task series.
+
+Android subsequently merges as `f2fa7f648de3dfbac5de69f3c091a54ffd571015` on
+that same main parent. Its CI built report has 14,251 passing / 220 skipped
+tests; the source worker and release-test failures match main. That is context
+for the combined snapshot, not the CI outcome of the newly published DOL head.
