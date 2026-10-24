@@ -289,3 +289,62 @@ it.each([0, 1])(
     }
   },
 );
+
+it.each([
+  { bulk: false, unequal: false },
+  { bulk: true, unequal: false },
+  { bulk: false, unequal: true },
+  { bulk: true, unequal: true },
+])(
+  "validates the write response before its stored clock spelling (bulk=$bulk, unequal=$unequal)",
+  ({ bulk, unequal }) => {
+    const edit = (seconds: number, fraction: string) => ({
+      at: new Date(bookClock(seconds)).toISOString().replace(".000Z", fraction),
+      seen_at: new Date(bookClock(seconds))
+        .toISOString()
+        .replace(".000Z", fraction),
+      by: "alice",
+    });
+    const first = { ...FIRST_BOOK, edit: edit(-8, ".000123Z") };
+    const second = { ...SECOND_BOOK, edit: edit(-7, ".000123Z") };
+    const changed = {
+      ...renamedBook(first, "Renamed", 3),
+      edit: {
+        ...edit(3, ".000Z"),
+        seen_at: new Date(bookClock(unequal ? 4 : 3)).toISOString(),
+      },
+    };
+    const read = { ...changed, edit: edit(3, ".000123Z") };
+    const books = servedFrom([
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      [
+        "PATCH",
+        bulk ? "/api/books" : "/api/books/1",
+        bulk ? [changed] : changed,
+        200,
+        bulk ? [{ id: 1, name: "Renamed" }] : { name: "Renamed" },
+      ],
+      ["GET", "/api/books/1", read],
+      ["GET", "/api/books", [read, second]],
+    ]);
+    const name = bulk ? "patch_books" : "patch_books_by_id";
+    expect(books.state.writes.get(name)).toMatchObject({ served: !unequal });
+    if (!unequal) {
+      const result = books.answer(
+        name,
+        bulk
+          ? { body: [{ id: 2, name: "Caller" }] }
+          : { id: "2", body: { name: "Caller" } },
+      );
+      const entity = (bulk ? (result.body as unknown[])[0] : result.body) as {
+        name: string;
+        edit: { at: string; seen_at: string; by: string };
+      };
+      expect(entity).toMatchObject({ name: "Caller", edit: { by: "alice" } });
+      expect(entity.edit.at).toBe(entity.edit.seen_at);
+      expect(entity.edit.at).toMatch(/\.\d{3}Z$/u);
+    }
+  },
+);

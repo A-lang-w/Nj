@@ -223,10 +223,13 @@ export const applyBulk = (
     const planned = draft.plan.response;
     if (planned !== null) {
       const written = targets.flatMap((target, index) => {
-        const entity = deleted
-          ? before[index]
-          : context.state.entity(type, target.collection, target.id);
-        return entity === undefined ? [] : [entity];
+        const result = results[index];
+        const fields = deleted
+          ? before[index]?.fields
+          : result?.kind === "applied"
+            ? result.responseFields
+            : undefined;
+        return fields === undefined ? [] : [{ id: target.id, fields }];
       });
       const fits =
         planned.shape === response.shape &&

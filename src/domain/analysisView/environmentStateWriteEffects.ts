@@ -176,6 +176,8 @@ export type EffectResult =
         readonly accumulated: readonly string[];
       };
       readonly inserted?: string;
+      /** Validated update-response fields, before a later read restamps stored clocks. */
+      readonly responseFields?: JsonObject;
     }
   | {
       readonly kind: "observed";
@@ -529,12 +531,6 @@ export const updateEntity = (
     return recorded();
   }
   buildUpdate(context, draft, step, { after, explained, idField });
-  const stored = restampedFields(
-    searchFrom(context, step),
-    itemReads(context, { type, idField, collection, id }),
-    after.object,
-    draft.plan.rules,
-  );
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
     draft.plan,
@@ -544,7 +540,7 @@ export const updateEntity = (
       recordedGeneratedValue(
         rule,
         entity.fields[rule.field],
-        stored[rule.field],
+        after.object[rule.field],
       ),
   );
   const kept = keptFields(entity.fields, after.object);
@@ -564,12 +560,26 @@ export const updateEntity = (
     { before: entity.fields, after: after.object, sent: body, kept },
     explained.unstamped,
   );
-  context.io.retain(64 + jsonTextCodeUnits(written.value) * 2);
-  context.state.put(updatedEntity(entity, written.value));
-  return appliedUpdate(draft.plan, { targets, target }, entity.fields, {
-    written: written.value,
-    body,
-  });
+  // Response reproducibility is established before the read owner adopts a stored clock spelling.
+  const stored = restampedFields(
+    searchFrom(context, step),
+    itemReads(context, { type, idField, collection, id }),
+    written.value,
+    draft.plan.rules,
+  );
+  context.io.retain(
+    64 +
+      jsonTextCodeUnits(stored) * 2 +
+      (stored === written.value ? 0 : jsonTextCodeUnits(written.value) * 2),
+  );
+  context.state.put(updatedEntity(entity, stored));
+  return {
+    ...appliedUpdate(draft.plan, { targets, target }, entity.fields, {
+      written: stored,
+      body,
+    }),
+    responseFields: written.value,
+  };
 };
 
 /** Serving regenerates a learned clock on every update, so recorded calls must advance it. */
