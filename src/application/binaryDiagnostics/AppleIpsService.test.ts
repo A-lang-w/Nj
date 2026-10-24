@@ -35,7 +35,7 @@ const report: AppleIps = {
   },
   exception: null,
   termination: null,
-  faulting_thread: 0,
+  faulting_thread: null,
   threads: [],
   images: [],
   classification: { status: "unclassified", matches: [] },
@@ -51,6 +51,68 @@ const report: AppleIps = {
   unlisted_body_keys: [],
   limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
 };
+
+it.each([0, 5])(
+  "rejects an unresolved faulting thread %s without its mismatch",
+  async (index) => {
+    const unresolved: AppleIps = { ...report, faulting_thread: index };
+    const service = new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(unresolved)),
+    });
+    const result = await service.inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
+
+it.each(["body.faultingThread", "body.other"])(
+  "requires the matching reference diagnostic: %s",
+  async (path) => {
+    const unresolved: AppleIps = {
+      ...report,
+      faulting_thread: 5,
+      coverage: {
+        ...report.coverage,
+        status: "partial",
+        reason: "Unresolved reference",
+        type_mismatches: [
+          { path, expected: "index into threads", observed: "out of range" },
+        ],
+      },
+    };
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(unresolved)),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(path === "body.faultingThread");
+  },
+);
+
+it.each([
+  { status: "classified", matches: [] },
+  {
+    status: "unclassified",
+    matches: [
+      {
+        rule: "watchdog",
+        fields: [{ name: "termination.code", value: "2343432205" }],
+      },
+    ],
+  },
+])(
+  "rejects contradictory provider classification $status",
+  async (classification) => {
+    const malformed = structuredClone(report);
+    Reflect.set(malformed, "classification", classification);
+    const result = await new AppleIpsService({
+      identity,
+      inspect: () => Promise.resolve(ok(malformed)),
+    }).inspect({ path: report.artifact.path });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+  },
+);
 
 it.each(["288", "309 "])(
   "rejects unsupported crash kind %s from a custom provider",

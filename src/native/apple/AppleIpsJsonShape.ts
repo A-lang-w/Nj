@@ -207,8 +207,7 @@ export const consumeJson = (
     const parsed = parseLosslessJson(text, 0, shape, {
       maxDepth: MAX_IPS_JSON_DEPTH,
     });
-    const trailing = text.slice(parsed.end).trim();
-    if (trailing.length > 0)
+    if (!/^[\u0020\u0009\u000a\u000d]*$/u.test(text.slice(parsed.end)))
       throw new AppleIpsFormatFailure(
         "malformed",
         `${label} has trailing JSON text after the first complete value`,

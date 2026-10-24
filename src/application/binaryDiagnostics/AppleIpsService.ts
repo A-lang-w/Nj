@@ -104,6 +104,17 @@ const validReport = (
     report.coverage.images !== report.images.length
   )
     return false;
+  const faultingThread = report.faulting_thread;
+  const mismatches = report.coverage.type_mismatches;
+  if (
+    faultingThread !== null &&
+    (report.threads[faultingThread]?.index !== faultingThread ||
+      mismatches.some(
+        ({ path }) => path === `body.threads[${String(faultingThread)}]`,
+      )) &&
+    !mismatches.some(({ path }) => path === "body.faultingThread")
+  )
+    return false;
   let frames = 0;
   let registers = 0;
   for (const thread of report.threads) {

@@ -308,7 +308,7 @@ const crashText = (bytes: Buffer): { metadata: string; body: string } => {
       "IPS crash report must start with a metadata JSON object on the first line",
     );
   const lineEnd = text.startsWith("\r\n", newline) ? newline + 2 : newline + 1;
-  return { metadata: text.slice(0, newline), body: text.slice(lineEnd).trim() };
+  return { metadata: text.slice(0, newline), body: text.slice(lineEnd) };
 };
 
 const metadataOf = (text: string, read: FieldReader): AppleIps["metadata"] => {

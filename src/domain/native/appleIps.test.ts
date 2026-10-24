@@ -1,6 +1,25 @@
 import { expect, it } from "vitest";
 import { appleIpsSchema, inspectAppleIpsInputSchema } from "./appleIps.js";
 
+it.each([
+  ["classified", 0, false],
+  ["classified", 1, true],
+  ["unclassified", 0, true],
+  ["unclassified", 1, false],
+] as const)(
+  "advertises classification %s with %s matches consistently",
+  (status, count, accepted) => {
+    const matches = Array.from({ length: count }, () => ({
+      rule: "watchdog",
+      fields: [{ name: "termination.code", value: "2343432205" }],
+    }));
+    expect(
+      appleIpsSchema.shape.classification.safeParse({ status, matches })
+        .success,
+    ).toBe(accepted);
+  },
+);
+
 it("rejects extra caller arguments and admits an empty crash inventory", () => {
   expect(
     inspectAppleIpsInputSchema.safeParse({

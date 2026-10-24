@@ -70,6 +70,32 @@ it("advertises and validates IPS facts and failures through production stdio MCP
     },
   };
   expect(ajv.validate(outputSchema, unsupported)).toBe(false);
+  const match = {
+    rule: "watchdog",
+    fields: [{ name: "termination.code", value: "2343432205" }],
+  };
+  for (const [status, matches, accepted] of [
+    ["classified", [], false],
+    ["classified", [match], true],
+    ["unclassified", [match], false],
+    ["unclassified", [], true],
+  ] as const) {
+    expect(
+      ajv.validate(outputSchema, {
+        ...evidence,
+        normalized_result: { ...report, classification: { status, matches } },
+      }),
+    ).toBe(accepted);
+  }
+
+  const whitespacePath = join(root, "non-json-whitespace.ips");
+  await writeFile(
+    whitespacePath,
+    Buffer.concat([appleIpsBytes(), Buffer.from("\f")]),
+  );
+  const whitespace = await call("inspect_apple_ips", { path: whitespacePath });
+  expect(whitespace.isError).toBe(true);
+  expect(parseMcpToolError(whitespace).error.code).toBe("invalid_request");
 
   const malformedPath = join(root, "malformed-uuid.ips");
   await writeFile(malformedPath, appleIpsBytes({ uuid: "malformed/report" }));

@@ -277,10 +277,16 @@ export const appleIpsSchema = z.strictObject({
   faulting_thread: uint.nullable(),
   threads: z.array(threadSchema),
   images: z.array(imageSchema),
-  classification: z.strictObject({
-    status: z.enum(["classified", "unclassified"]),
-    matches: z.array(classificationMatchSchema),
-  }),
+  classification: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("classified"),
+      matches: z.array(classificationMatchSchema).min(1),
+    }),
+    z.strictObject({
+      status: z.literal("unclassified"),
+      matches: z.array(classificationMatchSchema).max(0),
+    }),
+  ]),
   coverage: coverageSchema,
   unlisted_body_keys: z.array(z.string().min(1)),
   limitations: z.array(z.string().min(1)),

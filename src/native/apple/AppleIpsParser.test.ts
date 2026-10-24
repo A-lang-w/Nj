@@ -22,6 +22,40 @@ const artifact = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
+it.each(
+  ["\f", "\v", "\u00a0", "\ufeff"].flatMap((character) =>
+    ["metadata suffix", "body prefix", "body suffix"].map((position) => ({
+      character,
+      position,
+    })),
+  ),
+)(
+  "rejects non-JSON whitespace at $position: $character",
+  ({ character, position }) => {
+    const metadata = appleIpsMetadataLine();
+    const body = '{"threads":[],"usedImages":[]}';
+    const bytes = Buffer.from(
+      position === "metadata suffix"
+        ? `${metadata}${character}\n${body}`
+        : position === "body prefix"
+          ? `${metadata}\n${character}${body}`
+          : `${metadata}\n${body}${character}`,
+    );
+    expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
+      AppleIpsFormatFailure,
+    );
+  },
+);
+
+it("accepts only JSON whitespace around each object", () => {
+  const bytes = Buffer.from(
+    ` \t${appleIpsMetadataLine()} \t\r\n \t\r\n{"threads":[],"usedImages":[]} \t\r\n`,
+  );
+  expect(parseAppleIps(bytes, artifact(bytes), input).coverage.status).toBe(
+    "complete",
+  );
+});
+
 it.each([
   "not-a-uuid",
   "Z".repeat(32),
