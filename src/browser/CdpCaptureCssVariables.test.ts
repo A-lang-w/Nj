@@ -90,9 +90,9 @@ it("extracts, validates, and sorts root CSS variables deterministically", async 
     total: 4,
     retained_count: 3,
     items: [
-      { name: "--alpha", value: "16px" },
-      { name: "--middle-val", value: "calc(100% - 20px)" },
-      { name: "--zebra", value: "#000" },
+      { name: "--alpha", value: "16px", redacted: false },
+      { name: "--middle-val", value: "calc(100% - 20px)", redacted: false },
+      { name: "--zebra", value: "#000", redacted: false },
     ],
   });
   expect(
@@ -301,7 +301,9 @@ it("preserves observed count and records rejection limitation when tokens fail s
 
   expect(result.total).toBe(2);
   expect(result.retained_count).toBe(1);
-  expect(result.items).toEqual([{ name: "--valid-token", value: "#333333" }]);
+  expect(result.items).toEqual([
+    { name: "--valid-token", value: "#333333", redacted: false },
+  ]);
   expect(
     limitations.some(
       (lim) =>
@@ -780,15 +782,25 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
   expect(result.items).toEqual([
     {
       name: "--unquoted",
+      redacted: true,
       value: "url(https://example.com/path)",
     },
     {
       name: "--with-double-quote",
+      redacted: true,
       value: "url('https://example.com/a\"b')",
     },
     {
       name: "--with-single-quote",
+      redacted: true,
       value: 'url("https://example.com/a\'b")',
     },
   ]);
+  expect(
+    limitations.some((lim) =>
+      lim.includes(
+        "3 root CSS custom property values had transport credentials redacted",
+      ),
+    ),
+  ).toBe(true);
 });

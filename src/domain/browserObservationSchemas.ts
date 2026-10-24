@@ -271,7 +271,7 @@ export const browserCssVariableItemSchema = z.object({
     .max(512)
     .refine(
       (val) =>
-        !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u202A-\u202E\u2066-\u2069]/u.test(
+        !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u.test(
           val,
         ),
       {
@@ -279,6 +279,7 @@ export const browserCssVariableItemSchema = z.object({
           "Disallowed control characters or bidirectional overrides in CSS variable value",
       },
     ),
+  redacted: z.boolean().default(false),
 });
 export type BrowserCssVariableItem = z.infer<
   typeof browserCssVariableItemSchema

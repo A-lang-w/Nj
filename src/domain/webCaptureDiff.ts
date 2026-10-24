@@ -1127,12 +1127,41 @@ const metadataDimension = (
       after.css_variables.status === "included" &&
       sectionsComplete(before, ["css_variables"]) &&
       sectionsComplete(after, ["css_variables"]);
-    if (cssComplete) {
+
+    const beforeCssMap = new Map(
+      before.css_variables.items.map((item) => [
+        item.name,
+        digestCanonicalValue({ value: item.value, redacted: item.redacted }),
+      ]),
+    );
+    const afterCssMap = new Map(
+      after.css_variables.items.map((item) => [
+        item.name,
+        digestCanonicalValue({ value: item.value, redacted: item.redacted }),
+      ]),
+    );
+
+    let cssModified = false;
+    for (const [name, beforeDigest] of beforeCssMap) {
+      const afterDigest = afterCssMap.get(name);
+      if (afterDigest !== undefined && afterDigest !== beforeDigest) {
+        cssModified = true;
+        break;
+      }
+    }
+
+    if (cssModified) {
+      changes.push({ identity: "css_variables", change: "modified" });
+    } else if (cssComplete) {
       const beforeCssDigest = digestCanonicalValue(
-        before.css_variables.items.map((item) => `${item.name}:${item.value}`),
+        before.css_variables.items.map(
+          (item) => `${item.name}:${item.value}:${String(item.redacted)}`,
+        ),
       );
       const afterCssDigest = digestCanonicalValue(
-        after.css_variables.items.map((item) => `${item.name}:${item.value}`),
+        after.css_variables.items.map(
+          (item) => `${item.name}:${item.value}:${String(item.redacted)}`,
+        ),
       );
       if (beforeCssDigest !== afterCssDigest) {
         changes.push({ identity: "css_variables", change: "modified" });

@@ -207,11 +207,16 @@ export const captureCssVariables = async (
 
     totalObserved += 1;
 
-    const value =
+    const sanitizedValue =
       rawValue.length > MAX_CSS_VALUE_LENGTH
         ? rawValue
         : redactCssUrlCredentials(rawValue);
-    const parsed = browserCssVariableItemSchema.safeParse({ name, value });
+    const redacted = sanitizedValue !== rawValue;
+    const parsed = browserCssVariableItemSchema.safeParse({
+      name,
+      value: sanitizedValue,
+      redacted,
+    });
     if (parsed.success) {
       if (validItems.length < MAX_INTAKE_CSS_VARIABLES) {
         validItems.push(parsed.data);
@@ -259,6 +264,13 @@ export const captureCssVariables = async (
 
   const total = totalObserved;
   const items = validItems.slice(0, MAX_RETAINED_CSS_VARIABLES);
+  const redactedCount = items.filter((item) => item.redacted).length;
+  if (redactedCount > 0) {
+    limitations.push(
+      `${String(redactedCount)} root CSS custom ${redactedCount === 1 ? "property value had transport credentials redacted" : "property values had transport credentials redacted"}.`,
+    );
+  }
+
   const status: BrowserCssVariables["status"] =
     malformedProtocolEntries > 0 && items.length === 0
       ? "unavailable"

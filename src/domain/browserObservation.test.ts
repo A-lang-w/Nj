@@ -272,7 +272,7 @@ describe("browser CSS variables item and summary schemas", () => {
       origin_scope: "same_origin" as const,
       total: 1,
       retained_count: 1,
-      items: [{ name: "--primary-color", value: "#0066cc" }],
+      items: [{ name: "--primary-color", value: "#0066cc", redacted: false }],
     };
     expect(browserCssVariablesSchema.parse(valid)).toEqual(valid);
     expect(
@@ -402,7 +402,9 @@ describe("browser CSS variables item and summary schemas", () => {
       }).success,
     ).toBe(true);
   });
+});
 
+describe("browser CSS variables item and bundle schemas", () => {
   it("scopes include_css_variables to inspect_web_page and rejects it in bundle analysis", () => {
     expect("include_css_variables" in analyzeWebBundleInputSchema.shape).toBe(
       false,
@@ -428,5 +430,38 @@ describe("browser CSS variables item and summary schemas", () => {
       conflictingStorageInput,
     );
     expect(storageResult.success).toBe(false);
+  });
+
+  it("rejects C1 and DEL control characters from CSS values and supports redaction flag", () => {
+    const base = {
+      status: "included" as const,
+      origin_scope: "same_origin" as const,
+      total: 1,
+      retained_count: 1,
+    };
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...base,
+        items: [{ name: "--c1-ctrl", value: "val\u009B31mue" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.safeParse({
+        ...base,
+        items: [{ name: "--del-ctrl", value: "val\u007Fue" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      browserCssVariablesSchema.parse({
+        ...base,
+        items: [
+          {
+            name: "--redacted",
+            value: "url(https://example.com)",
+            redacted: true,
+          },
+        ],
+      }).items[0]?.redacted,
+    ).toBe(true);
   });
 });

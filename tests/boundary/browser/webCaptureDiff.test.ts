@@ -1226,12 +1226,12 @@ describe("web capture CSS variables comparison", () => {
       origin_scope: "same_origin",
       total: 1,
       retained_count: 1,
-      items: [{ name: "--theme-color", value: "#ff0000" }],
+      items: [{ name: "--theme-color", value: "#ff0000", redacted: false }],
     };
 
     const afterChanged = structuredClone(beforeCss);
     afterChanged.css_variables.items = [
-      { name: "--theme-color", value: "#0000ff" },
+      { name: "--theme-color", value: "#0000ff", redacted: false },
     ];
     const changedResult = compareWebCaptures(
       compareWebCapturesInputSchema.parse({
@@ -1255,6 +1255,22 @@ describe("web capture CSS variables comparison", () => {
     expect(incompleteResult.dimensions.metadata).toMatchObject({
       status: "unknown",
       total_changes: 0,
+    });
+
+    // Incomplete inventory still proves change when matched retained tokens differ
+    const afterIncompleteWithChange = structuredClone(afterIncomplete);
+    afterIncompleteWithChange.css_variables.items = [
+      { name: "--theme-color", value: "#0000ff", redacted: false },
+    ];
+    const incompleteChangeResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeCss },
+        after: { inspection: afterIncompleteWithChange },
+      }),
+    );
+    expect(incompleteChangeResult.dimensions.metadata).toMatchObject({
+      status: "changed",
+      changes: [{ identity: "css_variables", change: "modified" }],
     });
 
     // One-sided CSS selection reports unknown rather than false change when metadata is unchanged
