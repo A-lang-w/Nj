@@ -17,7 +17,6 @@ import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
   parseMcpHttpEndpoint,
-  mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -697,12 +696,20 @@ export const registerEnvironmentCommands = (
         .describe(
           "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
+      // Flags follow the same rules as MCP_HOST and MCP_PORT (rea mcp --http).
       host: z
         .string()
+        .trim()
         .min(1)
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpListenerPortSchema
+      port: z
+        .string()
+        .regex(
+          /^(?:0|[1-9]\d*)$/u,
+          "Expected a decimal port between 0 and 65535",
+        )
+        .pipe(z.coerce.number<string>().int().min(0).max(65535))
         .optional()
         .describe(
           "Listener port; default MCP_PORT, else 0 for an ephemeral port",
