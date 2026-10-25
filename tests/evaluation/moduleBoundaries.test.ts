@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { writeRepositoryOxlintConfiguration } from "../fixtures/oxlintConfiguration.js";
 
 describe("process capture implementation ownership", () => {
   it.each([
@@ -329,8 +330,7 @@ describe("test lane import boundaries", () => {
 
   it("checks the test-lane import matrix in one lint invocation", async () => {
     const temporary = await createTestTempDirectory("rea-test-lane-");
-    const config = join(temporary, ".oxlintrc.json");
-    await copyFile(resolve(".oxlintrc.json"), config);
+    const config = await writeRepositoryOxlintConfiguration(temporary);
     for (const [file, dependency] of cases) {
       await mkdir(dirname(join(temporary, file)), { recursive: true });
       await writeFile(
