@@ -13,6 +13,7 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
+  RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
@@ -23,9 +24,10 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactResourceRetryFailure,
@@ -155,6 +157,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         status: "supported",
         code: null,
         reason: null,
+        diagnostics,
+      };
+    if (target.format === "gamecube-dol")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "GameCube DOL analysis requires the Ghidra adapter with a caller-selected gamecube-dol format.",
         diagnostics,
       };
     if (isHopperDeclinedArchitecture(target.architecture))
