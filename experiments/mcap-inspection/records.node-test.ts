@@ -5,7 +5,7 @@ import { validateSummaryRecords } from "./records.ts";
 import { inspectSummary } from "./summary.ts";
 import { recording } from "./fixtures.ts";
 
-test("each SDK parse is restricted to its declared record boundary", () => {
+await test("each SDK parse is restricted to its declared record boundary", () => {
   const bytes = Buffer.alloc(29);
   bytes[0] = Opcode.CHANNEL;
   bytes.writeBigUInt64LE(4n, 1);
@@ -18,7 +18,7 @@ test("each SDK parse is restricted to its declared record boundary", () => {
   assert.throws(() => validateSummaryRecords(bytes), /record boundary/);
 });
 
-test("inspection rejects a Channel string crossing its frame after a complete length prefix", async () => {
+await test("inspection rejects a Channel string crossing its frame after a complete length prefix", async () => {
   const bytes = await recording();
   const valid = await inspectSummary(new TempBuffer(bytes));
   if (!valid.ok) throw valid.error;
@@ -50,7 +50,7 @@ test("inspection rejects a Channel string crossing its frame after a complete le
   }
 });
 
-test("inspection rejects Schema data crossing its frame after a complete length prefix", async () => {
+await test("inspection rejects Schema data crossing its frame after a complete length prefix", async () => {
   const schemaData = Buffer.from([0xff, 0x00, 0x80, 0x41]);
   const bytes = await recording({}, schemaData);
   const valid = await inspectSummary(new TempBuffer(bytes), 1);
@@ -83,7 +83,7 @@ test("inspection rejects Schema data crossing its frame after a complete length 
   }
 });
 
-test("inspection rejects a short summary frame and retains the read evidence", async () => {
+await test("inspection rejects a short summary frame and retains the read evidence", async () => {
   const bytes = await recording();
   const footer = bytes.length - 37;
   const start = Number(bytes.readBigUInt64LE(footer + 9));

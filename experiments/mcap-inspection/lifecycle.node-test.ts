@@ -9,7 +9,7 @@ import { recording } from "./fixtures.ts";
 
 const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-test("CLI preserves inspection results and primary errors when close fails", async (t) => {
+await test("CLI preserves inspection results and primary errors when close fails", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = join(folder, "input.mcap");
@@ -54,7 +54,7 @@ syncBuiltinESMExports();
   }
 });
 
-test("CLI rejects mutation after its final read and closes on read failure", async (t) => {
+await test("CLI rejects mutation after its final read and closes on read failure", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = join(folder, "input.mcap");

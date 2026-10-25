@@ -1,3 +1,4 @@
+import { parseJavaScriptRouteDelivery } from "./javascriptRouteDelivery.js";
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
@@ -21,7 +22,10 @@ import {
   javascriptApplicationOptions,
   selectedCommandTimeout,
 } from "../cliObservationOptions.js";
-import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import {
+  cliJavaScriptSourcePaths,
+  runCliJavaScriptApplicationAnalysis,
+} from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -117,6 +121,7 @@ const registerElectronActiveCommand = (
             const input = await parseCliJsonInput(
               args.inputJson,
               "capture_electron_scenario",
+              signal,
             );
             if (!input.ok) return input.error;
             const parsed = electronActiveObservationInputSchema.safeParse(
@@ -219,7 +224,8 @@ const registerElectronTargetList = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-electron-targets", async () => {
-          const context = await electronObservationContext(environment);
+          const provider =
+            await createCliElectronObservationProvider(environment);
           const input = {
             cdp_endpoint: args.endpoint,
           };
@@ -233,14 +239,13 @@ const registerElectronTargetList = (
           const { listElectronTargets } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
-            () =>
-              listElectronTargets(context.provider, parsed.data, { signal }),
+            () => listElectronTargets(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            "rea-cdp-electron",
+            provider.identity().id,
             "list_electron_targets",
             signal,
           );
@@ -264,7 +269,8 @@ const registerElectronPageInspection = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-electron-page", async () => {
-          const context = await electronObservationContext(environment);
+          const provider =
+            await createCliElectronObservationProvider(environment);
           const input = {
             cdp_endpoint: args.endpoint,
             target_id: args.targetId,
@@ -282,14 +288,13 @@ const registerElectronPageInspection = (
           const { inspectElectronPage } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
-            () =>
-              inspectElectronPage(context.provider, parsed.data, { signal }),
+            () => inspectElectronPage(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            "rea-cdp-electron",
+            provider.identity().id,
             "inspect_electron_page",
             signal,
           );
@@ -312,56 +317,72 @@ const registerJavaScriptApplicationCommand = (
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
-          runCliJavaScriptApplicationAnalysis(
-            {
-              // An empty path names no file; leave it for input validation.
-              input_path:
-                args.path === "" ? args.path : absoluteCallerPath(args.path),
-              format: options.artifactFormat,
-              integrity_policy: options.integrityPolicy,
-              ...(options.maxSemanticNodes === undefined
-                ? {}
-                : { max_semantic_nodes: options.maxSemanticNodes }),
-              ...(options.maxSemanticNodesPerFile === undefined
-                ? {}
-                : {
-                    max_semantic_nodes_per_file:
-                      options.maxSemanticNodesPerFile,
-                  }),
-              ...(options.maxSemanticUnknowns === undefined
-                ? {}
-                : { max_semantic_unknowns: options.maxSemanticUnknowns }),
-              ...(options.maxSemanticUnknownsPerFile === undefined
-                ? {}
-                : {
-                    max_semantic_unknowns_per_file:
-                      options.maxSemanticUnknownsPerFile,
-                  }),
-              ...(options.sourcePath === undefined
-                ? {}
-                : { source_paths: options.sourcePath }),
-              ...(options.maxHeapMb === undefined
-                ? {}
-                : { max_heap_mb: options.maxHeapMb }),
-              ...(options.analysisTimeoutMs === undefined
-                ? {}
-                : { analysis_timeout_ms: options.analysisTimeoutMs }),
-            },
-            environment,
-            signal,
-          ),
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.analyzeJavaScriptApplication,
+          async () => {
+            const delivery = parseJavaScriptRouteDelivery(
+              "analyze_javascript_application",
+              options,
+            );
+            if (!delivery.ok) return projectAnalysisError(delivery.error);
+            const sourcePaths = await cliJavaScriptSourcePaths(
+              options.sourcePath,
+              options.sourcePathsJson,
+              signal,
+            );
+            if (!sourcePaths.ok) return sourcePaths.error;
+            return runCliJavaScriptApplicationAnalysis(
+              {
+                // An empty path names no file; leave it for input validation.
+                input_path:
+                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                format: options.artifactFormat,
+                integrity_policy: options.integrityPolicy,
+                ...(options.maxSemanticNodes === undefined
+                  ? {}
+                  : { max_semantic_nodes: options.maxSemanticNodes }),
+                ...(options.maxSemanticNodesPerFile === undefined
+                  ? {}
+                  : {
+                      max_semantic_nodes_per_file:
+                        options.maxSemanticNodesPerFile,
+                    }),
+                ...(options.maxSemanticUnknowns === undefined
+                  ? {}
+                  : { max_semantic_unknowns: options.maxSemanticUnknowns }),
+                ...(options.maxSemanticUnknownsPerFile === undefined
+                  ? {}
+                  : {
+                      max_semantic_unknowns_per_file:
+                        options.maxSemanticUnknownsPerFile,
+                    }),
+                ...(sourcePaths.value === undefined
+                  ? {}
+                  : { source_paths: sourcePaths.value }),
+                ...(options.maxHeapMb === undefined
+                  ? {}
+                  : { max_heap_mb: options.maxHeapMb }),
+                ...(options.analysisTimeoutMs === undefined
+                  ? {}
+                  : { analysis_timeout_ms: options.analysisTimeoutMs }),
+              },
+              environment,
+              signal,
+              delivery.value,
+            );
+          },
         ),
       ),
   });
 };
 
-const electronObservationContext = async (
+const createCliElectronObservationProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
 ) => {
   const { createElectronObservationProvider } =
     await import("../composition/electronObservation.js");
-  return { provider: createElectronObservationProvider(environment) };
+  return createElectronObservationProvider(environment);
 };
 
 const inputError = (

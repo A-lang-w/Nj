@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import {
   machoSelectionContainsRange,
   selectedSliceAgreesWithReport,
@@ -12,20 +12,6 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
-
-/** Map reader architecture names into Evidence identity; unknown names stay unknown. */
-export const goArchitectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
-};
 
 const sourceRangeSchema = z.strictObject({
   offset: z.int().nonnegative(),
@@ -105,7 +91,7 @@ export const goBinarySchema = z
       (!selectedSliceAgreesWithReport(
         slice,
         report.format,
-        goArchitectureForSubject(report.architecture),
+        binaryMetadataArchitecture(report.architecture),
       ) ||
         !machoSelectionContainsRange(
           slice,
@@ -158,12 +144,7 @@ export const goBinarySchema = z
       ["module_bytes_base64", info.module_location, "module"],
     ] as const) {
       const encoded = info[field];
-      const padding = encoded.endsWith("==")
-        ? 2
-        : encoded.endsWith("=")
-          ? 1
-          : 0;
-      if ((encoded.length / 4) * 3 - padding !== range.bytes)
+      if (Buffer.byteLength(encoded, "base64") !== range.bytes)
         context.addIssue({
           code: "custom",
           path: ["build_info", field],

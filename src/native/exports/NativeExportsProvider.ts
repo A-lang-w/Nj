@@ -1,13 +1,19 @@
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
-  ArtifactFileCleanupFailure,
+  readStableArtifact,
+  completedStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
+import {
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import type { NativeExportsPort } from "../../application/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -27,7 +33,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
-import { NATIVE_EXPORTS_PROVIDER } from "../../application/InvestigationProviders.js";
+import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -81,7 +87,7 @@ export class NativeExportsProvider implements NativeExportsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeExportsFailure(cause, input, options?.signal));
+      return err(nativeExportsFailure(cause, input));
     }
   }
 }
@@ -92,18 +98,28 @@ const fileSizeRemediation = (input: InspectNativeExportsInput): string =>
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
 const nativeExportsFailurePrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   input: InspectNativeExportsInput,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(
       OPERATION,
       input.path,
       cause.message,
       { cause },
     );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
@@ -138,7 +154,10 @@ const nativeExportsFailurePrimary = (
             message: `Selected artifact ${input.path}: ${cause.message}`,
           },
         ]);
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -161,11 +180,7 @@ const nativeExportsFailurePrimary = (
       return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: ["path"],
@@ -186,18 +201,21 @@ const nativeExportsFailurePrimary = (
 const nativeExportsFailure = (
   cause: unknown,
   input: InspectNativeExportsInput,
-  signal: AbortSignal | undefined,
 ): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? nativeExportsFailurePrimary(
-          cause.fileCleanupFailure.outcome.cause,
-          input,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : nativeExportsFailurePrimary(cause, input);
+  const primary = nativeExportsFailurePrimary(
+    artifactFilePrimaryFacts(cause),
+    input,
+  );
+  const snapshot = completedStableArtifact(cause);
+  if (snapshot !== undefined)
+    primary.retainPartialObservation(
+      fileSnapshotPartialObservationSchema.parse({
+        kind: "file-snapshot-hash",
+        path: input.path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      }),
+    );
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(

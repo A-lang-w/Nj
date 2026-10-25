@@ -10,7 +10,7 @@ import {
   READ_BYTES,
 } from "./limits.ts";
 
-test("refuses oversized declared header length before issuing the large read", async () => {
+await test("refuses oversized declared header length before issuing the large read", async () => {
   const prefix = Buffer.from(await recording()).subarray(0, 17);
   prefix.writeBigUInt64LE(BigInt(READ_BYTES + 1), 9);
   const requests: bigint[] = [];
@@ -27,7 +27,7 @@ test("refuses oversized declared header length before issuing the large read", a
   assert.deepEqual(requests, [17n]);
 });
 
-test("refuses invalid ranges and short reads without inventing a digest", async () => {
+await test("refuses invalid ranges and short reads without inventing a digest", async () => {
   const readable = new BoundedReadable(new TempBuffer(Buffer.alloc(4)));
   for (const [offset, length] of [
     [-1n, 1n],
@@ -45,7 +45,7 @@ test("refuses invalid ranges and short reads without inventing a digest", async 
   assert.deepEqual(short.reads, []);
 });
 
-test("applies a cumulative read limit even when every individual read fits", async () => {
+await test("applies a cumulative read limit even when every individual read fits", async () => {
   const readable = new BoundedReadable(
     new TempBuffer(Buffer.alloc(READ_BYTES)),
   );
@@ -53,7 +53,7 @@ test("applies a cumulative read limit even when every individual read fits", asy
   await assert.rejects(readable.read(0n, 1n), /Cumulative reads/);
 });
 
-test("accounts for JSON escaping and base64 expansion", async () => {
+await test("accounts for JSON escaping and base64 expansion", async () => {
   assert.throws(
     () => boundedJson({ text: "\u0000".repeat(OUTPUT_BYTES / 6) }),
     /JSON output exceeds/,

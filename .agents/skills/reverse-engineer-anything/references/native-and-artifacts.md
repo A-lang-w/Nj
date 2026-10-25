@@ -4,8 +4,10 @@ For release comparisons, export `list_procedures` Evidence from each target befo
 closing it. Close clears session records: import both bundles after collecting the
 two targets, or supply portable inline Evidence. `match_native_functions` pairs unique exact names and, when supplied,
 complete observed body bytes. Reuse optional same-context `list_names`,
-`procedure_info`, `read_bytes` and existing `analyze_function` Evidence; avoid
-decompiling every function merely to match it. Its summary retains a parent for
+`procedure_info`, `read_bytes` and existing `analyze_function` dossiers as
+`left_observations`/`right_observations`; an MCP `analyze_function` summary
+reply contributes its `parent_evidence_id` as a `retained-evidence` reference,
+not the summary itself. Avoid decompiling every function merely to match it. Its summary retains a parent for
 `inspect_analysis_view` `function-matches` collections `matches` and `functions`.
 Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
@@ -96,6 +98,46 @@ dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
 identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
 
+## PE Authenticode certificate tables
+
+Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
+question concerns the Authenticode certificate table, WIN_CERTIFICATE types, or
+embedded PKCS#7 signer and X.509 identity fields. No `open_binary`, Windows SDK,
+or target execution is required. The CLI equivalent is
+`inspect-pe-certificates PATH`. Preserve artifact SHA-256, table file ranges,
+payload hashes, original validity-time spellings, and
+`subject_key_identifier_hex` when the signer uses that form. A missing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` directory is observed absence of that table,
+not proof the image is unsigned in every catalog or overlay sense. Signatures,
+chains, timestamps, and Authenticode digest coverage remain unobserved. See
+[PE Authenticode certificate tables](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+
+## PE import and delay-load tables
+
+Use `inspect_pe_imports` for an explicit local PE32/PE32+ image when the
+question concerns imported DLL and function names, ordinals, delay-load
+descriptors, or the pefile import hash. No `open_binary`, Windows SDK, or
+target execution is required. The CLI equivalent is `inspect-pe-imports PATH`.
+Preserve artifact SHA-256, directory file ranges, original DLL spellings, and
+ILT/IAT RVAs. A missing `IMAGE_DIRECTORY_ENTRY_IMPORT` directory is observed
+absence of that table, not proof the image never imported APIs through another
+table or overlay. Bound snapshots, loaded IAT contents, and export-forward
+resolution remain unobserved. See
+[PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
+
+## PE TLS callbacks and load configuration
+
+Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the
+question concerns code that runs before the entry point through TLS callbacks,
+or the security cookie, SafeSEH, CFG, EH-continuation and XFG declarations in
+the load configuration. No `open_binary`, Windows SDK, or target execution is
+required. The CLI equivalent is `inspect-pe-load-config PATH`. Preserve artifact
+SHA-256, directory and callback-array file ranges, and callback VAs as
+hexadecimal strings. Fields outside the declared `Size` are `null`. Guard-flag
+mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
+See
+[PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
@@ -106,6 +148,61 @@ descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+
+## Apple IPS crash reports
+
+Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
+question concerns crash metadata, exception and termination facts, threads,
+usedImages, lossless registers, or documented crash classes. No `open_binary`,
+Xcode, atos, or target execution is required. The CLI equivalent is
+`inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
+uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
+`bug_type` `"309"` yields a crash body; other DiagnosticReports types return
+no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
+[Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
+
+## Linux kernel modules
+
+Use `inspect_kernel_module` for an explicit local ELF32/ELF64 relocatable
+object when the question concerns `.modinfo` license, vermagic, alias,
+depends, or parm strings, the `__versions` symbol CRCs, or an appended module
+signature trailer. No `open_binary`, Linux host, or `modinfo` program is
+required. The CLI equivalent is `inspect-kernel-module PATH`. Preserve
+artifact SHA-256, key order, duplicate keys, CRC hex, and section file ranges.
+A missing section is observed absence when section names are known, not proof
+the module never carried that metadata. `.gnu.linkonce.this_module` is reported
+as present or absent; `struct module` stays unknown because its layout changes
+with the kernel version. `__ksymtab` records are not decoded. The PKCS#7 range
+and its SHA-256 are observed; certificate, signer, and digest coverage remain
+unvalidated. An absent trailer is not proof the module is unsigned in another
+container. gzip, xz, and zstd whole-file containers are unsupported and name
+`external_decompression` as the next probe: use an external codec utility to
+decompress into a separate file, then call `inspect_kernel_module` on that file. See
+[Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+
+## CPython pyc files
+
+Use `inspect_python_pyc` for an explicit local CPython 3.7–3.13 `.pyc` when the
+question concerns the header magic, PEP 552 source hash or timestamp, nested
+code-object names, or bytecode identity. No `open_binary`, Python installation,
+or target execution is required. The CLI equivalent is `inspect-python-pyc PATH`.
+Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
+bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
+the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+
+## Erlang BEAM files
+
+Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
+question concerns IFF chunks, atom names, exports, imports, lambdas, or the
+Code header. No `open_binary`, Erlang installation, or bytecode execution is
+required. The CLI equivalent is `inspect-erlang-beam PATH`. Preserve artifact
+SHA-256, chunk file ranges, 1-based atom indices, and original atom spellings.
+Missing optional tables stay null. For a few facts, use `detail: "summary"` with
+a `beam` view selecting a collection, exact names/indices and fields; read later
+pages from `parent_evidence_id` or the complete Evidence bundle. Same-name
+exports retain every arity and original atom index. CLI summary delivery requires
+`--evidence_output`. Null table counts remain distinct from decoded empty tables. See
+[Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
 ## SQLite snapshots
 
@@ -161,6 +258,30 @@ and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
 
+## Offline APK signatures
+
+Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. Default MCP summaries
+retain complete Evidence. Select `view.collection: signers/digests/lineage`,
+with scheme or ID batches, fields and paging; use `inspect_analysis_view` kind
+`apk-signature` for retained reads after deletion. IDs retain artifact/scheme
+scope and signer links; `fields: []` keeps identity links. Empty pages preserve
+partial decoding reasons and unknown authenticity. CLI compact delivery needs
+`--evidence_output` to preserve the complete parent.
+It reads the APK
+Signing Block (v2/v3/v3.1) and v1 `META-INF` signing without executing anything,
+and reports each signer's certificate facts (for v1, the certificate the PKCS#7
+block's SignerInfo names), the declared v3 rotation lineage,
+the declared source-stamp certificate and, for SHA-256/SHA-512 digests, whether
+the declared content digest matches the current bytes. That match is not a
+signature verification: anyone who changes the bytes can recompute the digest.
+`posture` summarises v1-only signing (which cannot tell a v1-only APK from one
+whose v2/v3 block was removed), observed signer agreement across schemes,
+whether the v1 signer equals the block-scheme signer (`false` is notable),
+whether every differing signer appears in a declared (unverified) rotation
+lineage, and the strongest scheme.
+It never claims authenticity: no signature or lineage is cryptographically
+verified.
+
 ## Native targets
 
 After `open_binary`, use focused search, procedure, or function tools directly.
@@ -173,6 +294,9 @@ unknown rather than false.
 For a completed `analyze_function` dossier, use `inspect_analysis_view` with
 `view: {kind: "native", facet: "value_flow_operations", offset: 0, limit: 32}`
 and the exact retained Evidence ID to read selected facts without reanalysis.
+The default MCP reply is already a summary of that dossier: its
+`normalized_result.parent_evidence_id` is the retained ID to page, and its
+null counts mark facets the provider did not record or declared unavailable.
 Native facets also include procedure, pseudocode, assembly, basic blocks,
 comments, callers/callees, references, unresolved calls, referenced strings and
 names, the native API record, and value-flow summaries. Pseudocode offsets and limits count UTF-16
@@ -192,6 +316,10 @@ run, use `observe_native_calls` with explicit breakpoints and a bounded
 `duration_ms`/`max_events`. It launches a new process under LLDB, so the target
 runs and may change files or use the network. Hardened-runtime targets need the
 `get-task-allow` entitlement.
+Function breakpoints use exact LLDB runtime names: a Darwin C `_main` static symbol
+may be `main` at runtime. REA does not translate names. Set `module` to the image
+file name when selecting that image only; otherwise loaded system images also
+match. Inspect retained locations and module paths before attributing a call.
 
 Use `binary_session` with no arguments to check the open target, selected
 provider, and alignment. Its default `result.tool_availability` carries a
@@ -214,14 +342,18 @@ providers. Top-level session capabilities describe the current route, and
 bridge startup, and readiness. The default 330,000 ms is configurable through
 `REA_GHIDRA_STARTUP_TIMEOUT_MS`; a smaller query still needs the same cold import.
 
-Preserve useful Evidence before closing the session or restarting REA. Check
-`close_binary` and resolve reported cleanup failures. Set a larger startup budget
-in the environment that launches REA, then restart REA and reconnect the MCP
-client before reopening the same target. Closing and reopening a binary in the
-existing server keeps its original configuration and starts import again.
-Environment changes in an agent's shell do not update an already running MCP
-server. If its launch configuration cannot be changed, report that constraint
-and the exact retry setting instead of claiming a fixed technical limit.
+When the error names `ghidra.startup_timeout_ms`, call
+`update_analysis_settings` with `action: "set"` and a larger value within the
+reported bounds. Resolve retained cleanup before the next startup attempt.
+No REA restart is needed; an already accepted startup keeps its original
+budget. A new attempt repeats import. Preserve useful Evidence before closing
+and reopening the target when remediation requires that lifecycle step.
+
+For a per-function timeout, update `ghidra.decompile_timeout_seconds` and retry
+the same function on the existing Program. Explicit `null` removes that
+per-function deadline. Inspection is optional when the error supplies the
+setting and bounds. Runtime updates disappear when REA exits; environment
+changes only seed future REA processes.
 
 The client's tool-call deadline must allow startup plus the requested query;
 server settings and progress notifications cannot override it. CLI analysis
@@ -237,6 +369,35 @@ their missing coverage is acceptable and retain the resulting limitations.
 Exported C and embedded resources remain useful independent evidence, but a
 timeout does not establish complete analysis or absence of code. See the
 [deadline and client guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
+## Bridge request ceiling
+
+Hopper and Cutter share `REA_BRIDGE_MAX_REQUEST_BYTES`. Unset, both sides use
+16777216 bytes. The payload budget excludes the terminating LF. A decimal
+integer from 7464 to 536870887 raises or lowers that ceiling. The floor fits
+the largest bounded symbol-name command. A tight Cutter status still returns
+its session id and up to 64 completion receipts. Its path is included when it
+fits, and is unknown when it does not, so an older descriptor path is not
+paired with the new generation. The maximum is the encoded payload, one byte under Node's string ceiling so
+the framing LF still fits. Cutter measures, signs, and writes a fitting
+response in bounded chunks. The bridge searches only the newly read bytes
+for the framing LF. The client unescapes each socket chunk into one response
+string before parsing it, so this ceiling does not keep the paged wire frame
+and another concatenated copy. Invalid values are configuration errors and do not fall back to 16777216. Set the variable in the environment that starts REA, restart REA,
+and start Hopper or Cutter from that same environment. An out-of-band bridge
+without the setting stays at 16777216 bytes. The client reports that mismatch
+during discovery only after the hello proves a live authenticated bridge, and
+does not send a status request or the command. A stale descriptor is ignored.
+Discovery fails if any such live ceiling differs, even when another live
+session matches. A command response discarded for that ceiling stays an
+unknown execution with `output_truncated`. A hello
+that never sends its authenticated frame does not hold the accept loop.
+At most 8 connection threads run; a further accept is closed, and a failure
+to start a thread does not stop the listener. `completed_connection` is the
+longest prefix of connections that have terminated. Dense scalar replies are
+encoded in bounded batches.
+The 25000 ms Cutter request deadline and the 256-candidate discovery budget
+still have no runtime override.
 
 ## Static memory and original file bytes
 

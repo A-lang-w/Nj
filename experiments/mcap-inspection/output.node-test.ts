@@ -12,7 +12,7 @@ import { OUTPUT_BYTES } from "./limits.ts";
 
 const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-test("final output overflow preserves source, ranges and cleanup failure", async (t) => {
+await test("final output overflow preserves source, ranges and cleanup failure", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-output-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = join(folder, "input.mcap");
@@ -72,7 +72,7 @@ syncBuiltinESMExports();
   }
 });
 
-test("large reader diagnostics keep their reason and provenance within the output budget", async (t) => {
+await test("large reader diagnostics keep their reason and provenance within the output budget", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-output-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = join(folder, "unindexed.mcap");

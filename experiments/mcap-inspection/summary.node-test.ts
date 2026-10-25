@@ -5,7 +5,7 @@ import { TempBuffer } from "@mcap/core";
 import { recording, timestamp } from "./fixtures.ts";
 import { inspectSummary } from "./summary.ts";
 
-test("reports declared facts without merging channels that share a topic", async () => {
+await test("reports declared facts without merging channels that share a topic", async () => {
   const result = await inspectSummary(new TempBuffer(await recording()));
   if (!result.ok) throw result.error;
   const report = result.value;
@@ -32,7 +32,7 @@ test("reports declared facts without merging channels that share a topic", async
   assert.equal(report.schemas[0]?.data_base64, null);
 });
 
-test("selected schema bytes round-trip without UTF-8 replacement", async () => {
+await test("selected schema bytes round-trip without UTF-8 replacement", async () => {
   const data = Buffer.from([0xff, 0x00, 0x80, 0x41]);
   const result = await inspectSummary(
     new TempBuffer(await recording({}, data)),
@@ -46,7 +46,7 @@ test("selected schema bytes round-trip without UTF-8 replacement", async () => {
   );
 });
 
-test("missing statistics remain unknown, not zero", async () => {
+await test("missing statistics remain unknown, not zero", async () => {
   const result = await inspectSummary(
     new TempBuffer(await recording({ useStatistics: false })),
   );
@@ -58,7 +58,7 @@ test("missing statistics remain unknown, not zero", async () => {
   );
 });
 
-test("schemas omitted from the summary remain unresolved", async () => {
+await test("schemas omitted from the summary remain unresolved", async () => {
   const bytes = await recording({ repeatSchemas: false });
   const result = await inspectSummary(new TempBuffer(bytes));
   if (!result.ok) throw result.error;
@@ -72,7 +72,7 @@ test("schemas omitted from the summary remain unresolved", async () => {
   if (!selected.ok) assert.equal(selected.error.kind, "selection");
 });
 
-test("chunk compression is reported without loading a decompressor", async () => {
+await test("chunk compression is reported without loading a decompressor", async () => {
   const result = await inspectSummary(
     new TempBuffer(
       await recording({
@@ -91,7 +91,7 @@ test("chunk compression is reported without loading a decompressor", async () =>
   assert.equal(result.value.coverage.data_section, "not_scanned");
 });
 
-test("a valid recording with no summary is explicitly unsupported", async () => {
+await test("a valid recording with no summary is explicitly unsupported", async () => {
   const bytes = await recording({
     useChunks: false,
     useStatistics: false,
@@ -107,7 +107,7 @@ test("a valid recording with no summary is explicitly unsupported", async () => 
   }
 });
 
-test("rejects malformed magic, truncated footer, and summary CRC corruption", async () => {
+await test("rejects malformed magic, truncated footer, and summary CRC corruption", async () => {
   const bytes = await recording();
   const magic = Buffer.from(bytes);
   magic[0] = 0;

@@ -16,7 +16,7 @@ import { recording } from "./fixtures.ts";
 
 const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-test("CLI rejects a real symbolic link", async (t) => {
+await test("CLI rejects a real symbolic link", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-symlink-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const target = join(folder, "target.mcap");
@@ -46,7 +46,7 @@ test("CLI rejects a real symbolic link", async (t) => {
   assert.deepEqual(readFileSync(target), bytes);
 });
 
-test("CLI returns attributable JSON and leaves the recording unchanged", async (t) => {
+await test("CLI returns attributable JSON and leaves the recording unchanged", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = join(folder, "two sensors.mcap");
@@ -75,7 +75,7 @@ test("CLI returns attributable JSON and leaves the recording unchanged", async (
   assert.deepEqual(readFileSync(path), bytes);
 });
 
-test("CLI rejects missing inputs, directories, malformed files and invalid options", async (t) => {
+await test("CLI rejects missing inputs, directories, malformed files and invalid options", async (t) => {
   const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const bad = join(folder, "bad.mcap");
