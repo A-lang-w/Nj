@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.8.0",
   "base": "27dc42d10249f0410904a75c0997842eb03b931c",
-  "target": "9750486e789828d66880156a6183d907437477a2",
+  "target": "8e6a95788688439baeeec8e54c9b3e845226f79d",
   "commits": [
     {
       "sha": "8f7d12e30d63f3d3b4cfe2a90336362841438f56",
@@ -33292,6 +33292,23 @@
         }
       ],
       "pullRequests": [3806]
+    },
+    {
+      "sha": "8e6a95788688439baeeec8e54c9b3e845226f79d",
+      "subject": "fix(release): exclude Copilot from human contribution credits",
+      "body": "fix(release): exclude Copilot from human contribution credits\n\nPreserve GitHub User metadata for Copilot while excluding it from generated human thanks and accepted prose credits. Extend the real inventory/render/check regression and document the known agent identity.\n",
+      "parents": ["9750486e789828d66880156a6183d907437477a2"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
     }
   ],
   "pullRequests": [
