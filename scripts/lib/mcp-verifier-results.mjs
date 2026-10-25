@@ -55,14 +55,21 @@ export const expandMcpSessionStatus = (status) => ({
   tool_availability: expandToolAvailability(status.tool_availability),
 });
 
-/** Expand provider capability groups while retaining candidate identity/state. */
+/**
+ * Expand provider capability groups while retaining candidate identity/state.
+ * A summary candidate carries no capability sets; it stays without them.
+ */
 export const expandProviderCandidates = (candidates) =>
-  candidates.map((candidate) => ({
-    ...candidate,
-    capabilities: expandProviderCapabilities(
-      providerCapabilitySet.array().parse(candidate.capabilities),
-    ),
-  }));
+  candidates.map((candidate) =>
+    Object.hasOwn(candidate, "capabilities")
+      ? {
+          ...candidate,
+          capabilities: expandProviderCapabilities(
+            providerCapabilitySet.array().parse(candidate.capabilities),
+          ),
+        }
+      : candidate,
+  );
 
 /** Expand CLI provider capability groups at the same owning boundary. */
 export const expandProviderOutput = (providers) => ({

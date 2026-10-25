@@ -25,6 +25,18 @@ import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.j
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "../../../src/contracts/sessionStatusContract.js";
+import {
+  toolContract,
+  TOOL_CONTRACTS,
+} from "../../../src/contracts/toolContracts.js";
+import {
+  analysisProviderCandidate,
+  analysisProviderCandidateSummary,
+  expandToolAvailability,
+  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 let directory: string | undefined;
@@ -233,6 +245,197 @@ it("offers admitted providers and retains unconfigured rejections", async () => 
     },
   });
   expect(starts).toEqual([]);
+});
+
+const sessionStatusOf = async (
+  mcp: Client,
+  arguments_: Record<string, unknown>,
+) => {
+  const reply = await mcp.callTool({
+    name: "binary_session",
+    arguments: arguments_,
+  });
+  expect(reply.isError).not.toBe(true);
+  const parsed = toolContract("binary_session").outputSchema.parse(
+    reply.structuredContent,
+  ).result;
+  const text = reply.content?.[0];
+  if (text?.type !== "text") throw new Error("binary_session omitted text");
+  expect(JSON.parse(text.text)).toEqual(reply.structuredContent);
+  return { parsed, bytes: Buffer.byteLength(text.text) };
+};
+
+type SessionStatus = Awaited<ReturnType<typeof sessionStatusOf>>;
+
+/** Per-tool decision facts that both projections must carry. */
+const toolStatus = (inventory: Parameters<typeof expandToolAvailability>[0]) =>
+  expandToolAvailability(inventory)
+    .map(
+      ({
+        name,
+        available,
+        reason,
+        remediation,
+        modes,
+        client_requirements,
+      }) => ({
+        name,
+        available,
+        reason,
+        remediation,
+        modes,
+        client_requirements,
+      }),
+    )
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+
+/** Per-candidate decision facts that both projections must carry. */
+const candidateStatus = (candidates: unknown) =>
+  analysisProviderCandidateSummary.array().parse(
+    z
+      .array(z.record(z.string(), z.unknown()))
+      .parse(candidates)
+      .map(({ provider, selected, availability, target_support }) => {
+        const state = (value: unknown) => {
+          const { status, code, reason } = z
+            .object({
+              status: z.string(),
+              code: z.unknown(),
+              reason: z.unknown(),
+            })
+            .parse(value);
+          return { status, code, reason };
+        };
+        return {
+          provider,
+          selected,
+          availability: state(availability),
+          target_support: state(target_support),
+        };
+      }),
+  );
+
+const expectSummaryKeepsDecisionFacts = (
+  summary: SessionStatus,
+  complete: SessionStatus,
+  open: boolean,
+) => {
+  expect(summary.parsed).toMatchObject({
+    open,
+    detail: "summary",
+    omitted_fields: [...BINARY_SESSION_SUMMARY_OMITTED_FIELDS],
+  });
+  expect(complete.parsed.detail).toBe("complete");
+  expect(Object.hasOwn(complete.parsed, "omitted_fields")).toBe(false);
+  expect(summary.bytes).toBeLessThan(complete.bytes);
+  expect(JSON.stringify(summary.parsed)).not.toContain('"diagnostics"');
+
+  // Summary candidates parse only as summaries and keep status, code and reason.
+  expect(
+    analysisProviderCandidateSummary
+      .array()
+      .parse(summary.parsed.analysis_provider_candidates),
+  ).toEqual(candidateStatus(complete.parsed.analysis_provider_candidates));
+  // Route capabilities and the binding stay inline at both levels of detail.
+  expect(summary.parsed.capabilities).toEqual(complete.parsed.capabilities);
+  expect(summary.parsed.analysis_provider_binding).toEqual(
+    complete.parsed.analysis_provider_binding,
+  );
+
+  const summaryTools = toolAvailabilitySummaryInventory.parse(
+    summary.parsed.tool_availability,
+  );
+  const completeTools = toolAvailabilityInventory.parse(
+    complete.parsed.tool_availability,
+  );
+  expect(summaryTools.groups.length).toBeLessThan(completeTools.groups.length);
+  expect(toolStatus(summaryTools)).toEqual(toolStatus(completeTools));
+  expect(toolStatus(summaryTools).map(({ name }) => name)).toEqual(
+    TOOL_CONTRACTS.map(({ name }) => name).toSorted((left, right) =>
+      left.localeCompare(right),
+    ),
+  );
+};
+
+const connectDetailFixture = async (starts: string[]) => {
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      candidate("alpha", starts),
+      candidate("beta", starts, false),
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "session-detail", version: "1.0.0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  return mcp;
+};
+
+describe("binary_session detail over MCP", () => {
+  it("defaults to a summary that keeps every decision fact and names what complete detail adds", async () => {
+    directory = await createTestTempDirectory("rea-session-detail-mcp-");
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const mcp = await connectDetailFixture(starts);
+
+    for (const open of [false, true]) {
+      if (open) {
+        const opened = await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        });
+        expect(opened.isError).not.toBe(true);
+      }
+      const summary = await sessionStatusOf(mcp, {});
+      const explicit = await sessionStatusOf(mcp, { detail: "summary" });
+      const complete = await sessionStatusOf(mcp, { detail: "complete" });
+      expect(explicit.parsed).toEqual(summary.parsed);
+      expectSummaryKeepsDecisionFacts(summary, complete, open);
+      expect(
+        analysisProviderCandidate
+          .array()
+          .parse(complete.parsed.analysis_provider_candidates),
+      ).toMatchObject([
+        {
+          provider: { id: "alpha" },
+          selected: open,
+          availability: {
+            status: "available",
+            diagnostics: { executable_path: "/opt/alpha/bin/analyze" },
+          },
+          capabilities: [{ provider: { id: "alpha" } }],
+        },
+        {
+          provider: { id: "beta" },
+          selected: false,
+          availability: {
+            status: "unavailable",
+            code: "not_configured",
+            reason: "beta is not configured",
+          },
+        },
+      ]);
+    }
+    expect(starts).toEqual([]);
+  });
+
+  it("rejects an unknown detail without starting a provider", async () => {
+    const starts: string[] = [];
+    const mcp = await connectDetailFixture(starts);
+    const rejected = await mcp.callTool({
+      name: "binary_session",
+      arguments: { detail: "verbose" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(starts).toEqual([]);
+  });
 });
 
 const candidate = (
@@ -455,7 +658,10 @@ it.each(["ready", "cancelled", "physical"] as const)(
       if (mode !== "ready") {
         closing = session.close();
         const during = structured(
-          await mcp.callTool({ name: "binary_session", arguments: {} }),
+          await mcp.callTool({
+            name: "binary_session",
+            arguments: { detail: "complete" },
+          }),
         );
         expect(during.result).toMatchObject({
           cleanup_pending: true,
@@ -465,6 +671,23 @@ it.each(["ready", "cancelled", "physical"] as const)(
               availability: {
                 status: "unknown",
                 diagnostics: { finalization: "in_progress" },
+              },
+            },
+          ],
+        });
+        // The summary keeps the unknown status and its reason, not diagnostics.
+        const summary = structured(
+          await mcp.callTool({ name: "binary_session", arguments: {} }),
+        );
+        expect(summary.result).toMatchObject({
+          cleanup_pending: true,
+          analysis_provider_candidates: [
+            {
+              provider: { id: "alpha" },
+              availability: {
+                status: "unknown",
+                code: null,
+                reason: expect.stringContaining("finalization is in progress"),
               },
             },
           ],
