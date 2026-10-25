@@ -14,6 +14,7 @@ describe("reference-source import error projection", () => {
       "invalid-root": "invalid_input",
       unsupported: "unsupported_provider",
       io: "execution_failure",
+      limit: "resource_constraint",
       parse: "execution_failure",
     } as const;
     for (const [code, category] of Object.entries(expectedCategories)) {
@@ -30,7 +31,7 @@ describe("reference-source import error projection", () => {
         "EIO while reading /selected/source/src/main.ts",
       );
       expect(projected.message).toMatch(
-        /try again|when ready|Check that|REA on Linux/u,
+        /try again|when ready|Check that|REA on Linux|Exclude large files/u,
       );
     }
   });
