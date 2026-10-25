@@ -1,20 +1,23 @@
+import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
-import { byteEntropySummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
-import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
-import { nativeFunctionMatchingSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
-import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
-import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
-import { nativeInventorySummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
-import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
-import { z } from "zod";
-import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
+  byteEntropySummaryViewResultSchema,
+  nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummaryViewResultSchema,
+  nativeInventorySummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   interfaceBuilderSummaryViewResultSchema,
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
+import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
+import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
+import { functionDossierSchema } from "../domain/hopperValues.js";
+import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
+import { z } from "zod";
+import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
 import {
   BINARY_ARCHITECTURES,
@@ -46,6 +49,7 @@ import {
   referenceEdgeSchema,
   unresolvedCallSchema,
   procedureIdentitySchema,
+  containingProcedureResolutionSchema,
 } from "../domain/hopperValues.js";
 import { nativeApiInspectionResultSchema } from "../domain/native/nativeApiBoundary.js";
 import {
@@ -77,6 +81,7 @@ import { changedBehaviorResultSchema } from "../domain/changedBehavior.js";
 import { callPathResultSchema } from "../domain/callPathSchemas.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerificationSchemas.js";
+import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -84,7 +89,6 @@ import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestiga
 import {
   addressList,
   addressedEntry,
-  containingProcedureResolution,
   functionDossierOutput,
   graphNode,
   lifecycleResultOf,
@@ -204,9 +208,11 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     }),
   ),
   procedure_pseudo_code: evidenceResultOf(nullableText),
-  resolve_containing_procedure: evidenceResultOf(containingProcedureResolution),
+  resolve_containing_procedure: evidenceResultOf(
+    containingProcedureResolutionSchema,
+  ),
   search_procedures: analysisDetailOutputSchemaOf(
-    z.array(z.object({ address: z.string(), value: z.string() })),
+    nativeInventoryRowsSchemas.names,
     nativeInventorySummaryViewResultSchema.extend({
       parent_operation: z.literal("search_procedures"),
     }),
@@ -231,18 +237,12 @@ const literalTraceOutput = evidenceResultOf(
   z.object({
     query: z.string(),
     search_mode: z.literal("literal"),
-    matches: z.array(
-      z.object({
-        type: z.enum(["string", "procedure"]),
-        address: z.string(),
-        value: z.string(),
-      }),
-    ),
+    matches: z.array(literalFeatureMatchSchema),
     references: z.array(
       z.object({
         target_address: z.string(),
         source_address: z.string(),
-        containing_procedure: containingProcedureResolution,
+        containing_procedure: containingProcedureResolutionSchema,
       }),
     ),
     truncated: z.boolean(),
@@ -312,6 +312,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   trace_native_ui_action: evidenceResultOf(nativeInvestigationTraceSchema),
   get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
+  decompile_all: evidenceResultOf(decompileDirectoryManifestSchema),
   batch_decompile: evidenceResultOf(
     z.object({
       items: z.array(
@@ -405,7 +406,10 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       string_count: z.int().min(0),
     }),
   ),
-  analyze_function: functionDossierOutput,
+  analyze_function: analysisDetailOutputSchemaOf(
+    functionDossierSchema,
+    nativeFunctionSummaryViewResultSchema,
+  ),
   inspect_native_api: evidenceResultOf(nativeApiInspectionResultSchema),
   trace_feature: literalTraceOutput,
   trace_call_path: callPathTraceOutput,
@@ -496,7 +500,7 @@ const lifecycleTargetFields = {
 };
 const detectedLifecycleTargetSchema = z.object({
   ...lifecycleTargetFields,
-  format: targetFormatSchema.exclude(["raw-binary"]),
+  format: targetFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
   architecture: z
     .enum(BINARY_ARCHITECTURES)
     .exclude([...RAW_ONLY_ARCHITECTURES])
@@ -511,14 +515,30 @@ const rawLifecycleTargetSchema = z.object({
     "Canonical caller-selected address where raw file offset 0 is mapped and execution is seeded.",
   ),
 });
+const dolLifecycleTargetSchema = z.object({
+  ...lifecycleTargetFields,
+  format: z.literal("gamecube-dol"),
+  kind: z.literal("executable"),
+  architecture: z.literal("powerpc"),
+  entry_point: rawBinaryEntryPointSchema.describe(
+    "Canonical entry address taken from the caller-selected DOL header.",
+  ),
+});
+
+/**
+ * Every open-target variant. open_binary and binary_session share this list so
+ * a target that open_binary returns is always valid in binary_session status.
+ */
+const openLifecycleTargetVariants = [
+  detectedLifecycleTargetSchema,
+  rawLifecycleTargetSchema,
+  dolLifecycleTargetSchema,
+] as const;
 
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
   open_binary: lifecycleResultOf(
-    z.discriminatedUnion("format", [
-      detectedLifecycleTargetSchema,
-      rawLifecycleTargetSchema,
-    ]),
+    z.discriminatedUnion("format", [...openLifecycleTargetVariants]),
   ),
   open_bundle_resources: lifecycleResultOf(bundleResourceRootSchema),
   close_binary: lifecycleResultOf(
@@ -552,14 +572,9 @@ export const sessionOutputSchemas = {
         session_kind: z.literal("bundle_resources"),
         resource_root: bundleResourceRootSchema,
       }),
-      sessionProvider.extend({
-        open: z.literal(true),
-        ...detectedLifecycleTargetSchema.shape,
-      }),
-      sessionProvider.extend({
-        open: z.literal(true),
-        ...rawLifecycleTargetSchema.shape,
-      }),
+      ...openLifecycleTargetVariants.map((variant) =>
+        sessionProvider.extend({ open: z.literal(true), ...variant.shape }),
+      ),
     ]),
   ),
   export_evidence_bundle: lifecycleResultOf(

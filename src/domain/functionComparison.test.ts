@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
+import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import { canonicalJson } from "./comparisonSemantics.js";
@@ -16,6 +18,13 @@ import type { RelationshipCoverage } from "./relationshipCoverage.js";
 const procedure = (address: string, name: string) => ({
   address,
   name,
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported" as const,
+  },
   classification: null,
   body: {
     available: false as const,
@@ -115,10 +124,26 @@ const observe = (
       path: `/tmp/function-${digit}`,
       sha256: digit.repeat(64),
       format: "mach-o",
+      architecture: "arm64",
     },
     { id: providerId, name: providerId, version: "1" },
     {
       operation: "analyze_function",
+      analysisProfile: createAnalysisProfile(
+        { id: providerId, name: providerId, version: "1" },
+        {
+          architecture: "arm64",
+          loader: "auto-from-header",
+          function_coordinate_context: createFunctionCoordinateContext({
+            loader: "auto-from-header",
+            language_id: "auto-from-header",
+            compiler_spec_id: "auto-default",
+            load_segment: null,
+            address_coordinates: null,
+            entry_point: null,
+          }),
+        },
+      ),
       parameters: enhancedInputSchemas.analyze_function.parse({
         procedure: "main",
       }),
@@ -154,9 +179,16 @@ const keepsGeneratedNamesAmbiguous = (): void => {
         locals: [],
       },
     });
+  const unknownOrigin = (base: "0x1000" | "0x2000", name: string) => {
+    const value = named(base, name);
+    return functionDossierSchema.parse({
+      ...value,
+      procedure: { ...value.procedure, symbol: null },
+    });
+  };
   const generated = compareFunctions(
-    functionSnapshotFixture(observe("1", named("0x1000", "sub_1000"))),
-    functionSnapshotFixture(observe("2", named("0x2000", "sub_2000"))),
+    functionSnapshotFixture(observe("1", unknownOrigin("0x1000", "sub_1000"))),
+    functionSnapshotFixture(observe("2", unknownOrigin("0x2000", "sub_2000"))),
   );
   expect(generated.function_match.status).toBe("ambiguous");
   expect(generated.status).toBe("unknown");
@@ -247,7 +279,13 @@ describe("function comparison normalized identity", () => {
     keepsGeneratedNamesAmbiguous,
   );
 
-  it.each(["sub_deallocate", "sub_deadbeef_handler", "fcn.dispatch"])(
+  it.each([
+    "sub_deallocate",
+    "sub_deadbeef_handler",
+    "fcn.dispatch",
+    "EntryPoint",
+    "FUN_deadBEEF",
+  ])(
     "recognizes the explicit symbol %s without a generated-name prefix false positive",
     (name) => {
       const named = (base: "0x1000" | "0x2000") =>
@@ -274,14 +312,15 @@ describe("function comparison normalized identity", () => {
     },
   );
 
-  it.each(["sub_deadbeef", "fcn.00401000", "FUN_deadBEEF"])(
-    "keeps %s as an address-derived name",
+  it.each(["sub_deadbeef", "fcn.00401000", "FUN_deadBEEF", "EntryPoint"])(
+    "keeps unqualified label %s unknown regardless of spelling",
     (name) => {
       const generated = (base: "0x1000" | "0x2000") =>
         functionDossierSchema.parse({
           ...dossier("return 0;", base),
           procedure: {
             ...procedure(base, name),
+            symbol: null,
             name,
             signature: "int helper(void)",
             locals: [],
@@ -301,21 +340,42 @@ describe("function comparison normalized identity", () => {
 
 describe("function comparison address-derived call names", () => {
   it.each([
-    { name: "sub_deallocate", status: "unchanged", diagnostic: undefined },
+    {
+      name: "sub_deallocate",
+      source: "imported",
+      status: "unchanged",
+      diagnostic: undefined,
+    },
     {
       name: "sub_deadbeef",
+      source: "default",
       status: "unknown",
       diagnostic: "Provider retained an unresolved call target.",
     },
-    { name: "FUN_00401000", status: "unknown", diagnostic: undefined },
-    { name: "FUN_initialize", status: "unchanged", diagnostic: undefined },
+    {
+      name: "FUN_00401000",
+      source: "default",
+      status: "unknown",
+      diagnostic: undefined,
+    },
+    {
+      name: "FUN_initialize",
+      source: "imported",
+      status: "unchanged",
+      diagnostic: undefined,
+    },
   ])(
     "preserves the calls dimension for callee $name",
-    ({ name, status, diagnostic }) => {
+    ({ name, source, status, diagnostic }) => {
       const calling = (base: "0x1000" | "0x2000") =>
         functionDossierSchema.parse({
           ...dossier("return helper();", base),
-          callees: [procedure(base === "0x1000" ? "0x1010" : "0x2010", name)],
+          callees: [
+            {
+              ...procedure(base === "0x1000" ? "0x1010" : "0x2010", name),
+              symbol: { ...procedure(base, name).symbol, source },
+            },
+          ],
         });
       const result = compareFunctions(
         functionSnapshotFixture(observe("6", calling("0x1000"))),
@@ -338,7 +398,7 @@ describe("function comparison address-derived call names", () => {
         expect(calls).toMatchObject({
           status: "unknown",
           limitations: expect.arrayContaining([
-            "Address-derived callee or caller names cannot be matched safely.",
+            "Unnamed relationship endpoints, generated symbols and unknown symbol origins have no stable identity outside a common executable coordinate context.",
             `Right: ${diagnostic}`,
           ]),
         });
@@ -496,7 +556,9 @@ describe("function collection collation ties", () => {
     const canonicalProjection = callees
       .map(({ name }) => ({
         direction: "out",
-        endpoint: { kind: "name", name, ambiguous: false },
+        source: null,
+        target: { kind: "name", name, ambiguous: false },
+        kind: null,
       }))
       .sort((left, right) =>
         compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
@@ -602,7 +664,7 @@ describe("function comparison ordering controls", () => {
           parameters: enhancedInputSchemas.analyze_function.parse({
             procedure: "dispatch",
           }),
-          result: jsonValueSchema.parse(result),
+          result,
           confidence: "derived",
           authority: "shipped-artifact",
           relationshipCoverage: { status: "complete" },
@@ -627,7 +689,7 @@ describe("function comparison ordering controls", () => {
     ).toMatchObject({
       status: "unknown",
       limitations: expect.arrayContaining([
-        expect.stringContaining("Unnamed reference endpoints"),
+        expect.stringContaining("Unnamed relationship endpoints"),
       ]),
     });
     expect(comparison.status).toBe("unknown");
@@ -976,6 +1038,7 @@ describe("function comparison identity and malformed CFG", () => {
         ...dossier("return 0;", base),
         procedure: {
           ...procedure(base, "sub_1000"),
+          symbol: null,
           name: "sub_1000",
           signature: "int helper(void)",
           locals: [],
@@ -1469,7 +1532,9 @@ describe("function call endpoint identity", () => {
         right_count: 2,
         left_digest: null,
         right_digest: null,
-        limitations: [expect.stringContaining("does not uniquely identify")],
+        limitations: [
+          expect.stringContaining("unique comparable procedure entry"),
+        ],
       });
     },
   );
@@ -1508,7 +1573,9 @@ describe("function call endpoint identity", () => {
         result.dimensions.find((value) => value.dimension === dimension),
       ).toMatchObject({
         status: "unknown",
-        limitations: [expect.stringContaining("does not uniquely identify")],
+        limitations: [
+          expect.stringContaining("unique comparable procedure entry"),
+        ],
       });
   });
 });

@@ -73,10 +73,17 @@ cliTest.skipIf(process.platform !== "linux").for([false, true])(
       { evidence: mcpEvidence, result: mcpExtraction },
     ]) {
       expect(
+        result.limitations.some((limitation) =>
+          limitation.includes("nested archive contents remain"),
+        ),
+      ).toBe(false);
+      expect(
         result.artifacts.map(({ relative_path }) => relative_path),
       ).toEqual([...files.keys()]);
       for (const [path, bytes] of files)
-        expect(await readFile(join(result.output_root, path))).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(join(result.output_root, path)), bytes),
+        ).toBe(0);
       for (const limitations of [result.limitations, evidence.limitations]) {
         expect(
           limitations.some((value) => value.includes("not valid UTF-8")),
@@ -158,10 +165,17 @@ cliTest.for([false, true])(
       { evidence: mcpEvidence, result: mcpExtraction },
     ]) {
       expect(
+        result.limitations.some((limitation) =>
+          limitation.includes("nested archive contents remain"),
+        ),
+      ).toBe(false);
+      expect(
         result.artifacts.map(({ relative_path }) => relative_path),
       ).toEqual(files.map(([path]) => path));
       for (const [path, bytes] of files) {
-        expect(await readFile(join(result.output_root, path))).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(join(result.output_root, path)), bytes),
+        ).toBe(0);
         expect(
           result.artifacts.find((file) => file.relative_path === path),
         ).toMatchObject({

@@ -1,17 +1,37 @@
+import type { NativeSymbolMetadata } from "../../../src/domain/native/nativeSymbol.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
+import { createFunctionCoordinateContext } from "../../../src/domain/native/functionCoordinateContext.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
+import {
+  createAnalysisProfile,
+  type AnalysisProfileCommitment,
+} from "../../../src/domain/analysisProfile.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 const example = FUNCTION_COMPARISON_EXAMPLE.left;
 const dossier = functionDossierSchema.parse(example.normalized_result);
+const provider = { ...example.provider, version: "1" };
+const mapping = {
+  loader: "auto-from-header",
+  language_id: "auto-from-header",
+  compiler_spec_id: "auto-default",
+  load_segment: null,
+  address_coordinates: null,
+  entry_point: null,
+};
+const profile = createAnalysisProfile(provider, {
+  architecture: "arm64",
+  ...mapping,
+  function_coordinate_context: createFunctionCoordinateContext(mapping),
+});
 type Reference = (typeof dossier.outgoing_references)[number];
 type Classification = "call" | "data" | "unknown";
 
@@ -25,9 +45,20 @@ const createHarness = async () => {
   return harness;
 };
 
-const procedure = (address: string, name: string) => ({
+const procedure = (
+  address: string,
+  name: string,
+  symbol: NativeSymbolMetadata | null = {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported",
+  },
+) => ({
   address,
   name,
+  symbol,
   classification: null,
   body: dossier.procedure.body,
 });
@@ -39,6 +70,7 @@ const reference = (
   options: {
     readonly sourceName?: string;
     readonly targetName?: string | null;
+    readonly targetSymbol?: NativeSymbolMetadata | null;
     readonly sourceEntryAddress?: string;
     readonly targetEntryAddress?: string;
   } = {},
@@ -58,6 +90,7 @@ const reference = (
       : procedure(
           options.targetEntryAddress ?? targetAddress,
           options.targetName ?? "helper",
+          options.targetSymbol,
         ),
   kind:
     classification === "unknown"
@@ -90,32 +123,46 @@ const evidence = (
     readonly incoming?: readonly Reference[];
     readonly procedureAddress?: string;
     readonly procedureName?: string;
-    readonly callers?: readonly ReturnType<typeof procedure>[];
-    readonly callees?: readonly ReturnType<typeof procedure>[];
+    readonly procedureSymbol?: NativeSymbolMetadata | null;
+    readonly architecture?: "arm64" | "x86_64" | null;
+    readonly format?: "mach-o" | "mach-o-universal";
+    readonly profile?: AnalysisProfileCommitment | null;
+    readonly callees?: readonly (typeof dossier.callees)[number][];
+    readonly callers?: readonly (typeof dossier.callers)[number][];
   } = {},
 ) =>
   createEvidence(
     {
       path: `/fixture/function-reference/${id}`,
       sha256: digest.repeat(64),
-      format: "mach-o",
+      format: options.format ?? "mach-o",
+      ...(options.architecture === null
+        ? {}
+        : { architecture: options.architecture ?? "arm64" }),
     },
-    example.provider,
+    provider,
     {
       operation: "analyze_function",
+      ...(options.profile === null
+        ? {}
+        : { analysisProfile: options.profile ?? profile }),
       parameters: { ...example.parameters, observation: id },
-      result: jsonValueSchema.parse({
+      result: {
         ...dossier,
         procedure: {
           ...dossier.procedure,
           address: options.procedureAddress ?? dossier.procedure.address,
           name: options.procedureName ?? dossier.procedure.name,
+          symbol:
+            options.procedureSymbol === undefined
+              ? dossier.procedure.symbol
+              : options.procedureSymbol,
         },
+        callees: [...(options.callees ?? [])],
+        callers: [...(options.callers ?? [])],
         incoming_references: [...(options.incoming ?? [])],
         outgoing_references: [...outgoing],
-        callers: [...(options.callers ?? dossier.callers)],
-        callees: [...(options.callees ?? dossier.callees)],
-      }),
+      },
       confidence: "derived",
       authority: "shipped-artifact",
       relationshipCoverage: { status: "complete" },
@@ -167,8 +214,12 @@ const verifyDimension = async (
   client: Client,
   comparisonEvidenceId: string,
   status: "pass" | "fail" | "unknown",
-  observedStatus: "unchanged" | "changed" | "unknown",
-  dimension: "references" | "calls" = "references",
+  dimension: "references" | "calls" | "identity" = "references",
+  observedStatus: "unchanged" | "changed" | "unknown" = status === "pass"
+    ? "unchanged"
+    : status === "fail"
+      ? "changed"
+      : "unknown",
 ) => {
   const claimId = `${dimension}-${comparisonEvidenceId}`;
   const response = await client.callTool({
@@ -234,12 +285,7 @@ it("preserves reference identity uncertainty and same-artifact coordinates", asy
   );
   const namedToNull = await compare(client, named, unnamedElsewhere);
   expectReferences(namedToNull, "unknown");
-  await verifyDimension(
-    client,
-    namedToNull.evidence.evidence_id,
-    "unknown",
-    "unknown",
-  );
+  await verifyDimension(client, namedToNull.evidence.evidence_id, "unknown");
   const nullToNamed = await compare(client, unnamedElsewhere, named);
   expectReferences(nullToNamed, "unknown");
 
@@ -284,16 +330,24 @@ it("preserves reference identity uncertainty and same-artifact coordinates", asy
   expectReferences(await compare(client, namedRight, namedLeft), "unchanged");
 });
 
-it("keeps generated and ambiguous procedure names from proving cross-artifact identity", async () => {
+it("keeps unqualified and ambiguous procedure names from proving cross-artifact identity", async () => {
   const { client } = await createHarness();
   for (const [index, name] of ["sub_1010", "fcn.1010", "FUN_1010"].entries()) {
     const left = evidence(`auto-left-${index}`, "1", [
-      reference("0x1000", "0x1010", "call", { targetName: name }),
+      reference("0x1000", "0x1010", "call", {
+        targetName: name,
+        targetSymbol: null,
+      }),
     ]);
     const right = evidence(
       `auto-right-${index}`,
       "2",
-      [reference("0x2000", "0x2020", "call", { targetName: name })],
+      [
+        reference("0x2000", "0x2020", "call", {
+          targetName: name,
+          targetSymbol: null,
+        }),
+      ],
       { procedureAddress: "0x2000" },
     );
     expectReferences(await compare(client, left, right), "unknown");
@@ -305,7 +359,12 @@ it("keeps generated and ambiguous procedure names from proving cross-artifact id
         evidence(
           `auto-different-${index}`,
           "3",
-          [reference("0x2000", "0x2020", "call", { targetName: otherName })],
+          [
+            reference("0x2000", "0x2020", "call", {
+              targetName: otherName,
+              targetSymbol: null,
+            }),
+          ],
           { procedureAddress: "0x2000" },
         ),
       ),
@@ -343,10 +402,12 @@ it("keeps generated and ambiguous procedure names from proving cross-artifact id
     client,
     evidence("generated-function-left", "7", [], {
       procedureName: "sub_1000",
+      procedureSymbol: null,
     }),
     evidence("generated-function-right", "8", [], {
       procedureAddress: "0x2000",
       procedureName: "FUN_2000",
+      procedureSymbol: null,
     }),
   );
   expect.soft(generatedFunctions.result.function_match).toMatchObject({
@@ -441,7 +502,7 @@ it("preserves call endpoint identity through public comparisons and selected rec
             left_digest: null,
             right_digest: null,
             limitations: [
-              expect.stringContaining("does not uniquely identify"),
+              expect.stringContaining("unique comparable procedure entry"),
             ],
           }
         : {}),
@@ -450,8 +511,8 @@ it("preserves call endpoint identity through public comparisons and selected rec
       client,
       compared.evidence.evidence_id,
       test.verification,
-      test.status,
       "calls",
+      test.status,
     );
     for (const source of [test.left, test.right])
       expect(
@@ -575,12 +636,7 @@ it("keeps known reference changes decisive beside unrelated unknown kinds", asyn
   );
   const compared = await compare(client, left, right);
   expectReferences(compared, "changed");
-  await verifyDimension(
-    client,
-    compared.evidence.evidence_id,
-    "fail",
-    "changed",
-  );
+  await verifyDimension(client, compared.evidence.evidence_id, "fail");
 });
 
 it("keeps ambiguous duplicate edge kinds unknown independent of input order", async () => {
@@ -628,3 +684,295 @@ it("keeps ambiguous duplicate edge kinds unknown independent of input order", as
   );
   expectReferences(changed, "changed");
 });
+
+it("uses shared endpoint identity for selected calls and references claims", async () => {
+  const { client } = await createHarness();
+  const observed = (
+    id: string,
+    digest: string,
+    target: string,
+    name = "helper",
+    options: Parameters<typeof evidence>[3] = {},
+  ) =>
+    evidence(
+      id,
+      digest,
+      [reference("0x1000", target, "call", { targetName: name })],
+      {
+        callees: [procedure(target, name)],
+        ...options,
+      },
+    );
+  const baseline = observed("identity-baseline", "a", "0x1010");
+  const cases = [
+    {
+      name: "retarget",
+      right: observed("identity-retarget", "a", "0x1020"),
+      expected: "fail",
+    },
+    {
+      name: "rename",
+      right: observed("identity-rename", "a", "0x1010", "renamed"),
+      expected: "pass",
+    },
+    {
+      name: "relocated-symbol",
+      right: observed("identity-relocated", "b", "0x2020"),
+      expected: "pass",
+    },
+    {
+      name: "different-slice",
+      right: observed("identity-slice", "a", "0x1010", "helper", {
+        architecture: "x86_64",
+        profile: createAnalysisProfile(provider, {
+          ...profile.parameters,
+          architecture: "x86_64",
+        }),
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "unknown-architecture",
+      right: observed("identity-no-arch", "a", "0x1010", "helper", {
+        architecture: null,
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "rename-without-mapping",
+      right: observed("identity-rename-no-profile", "a", "0x1010", "renamed", {
+        profile: null,
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "unknown-mapping",
+      right: observed("identity-no-profile", "a", "0x1010", "helper", {
+        profile: null,
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "unrelated-analysis-options",
+      right: observed("identity-options", "a", "0x1010", "helper", {
+        profile: createAnalysisProfile(provider, {
+          ...profile.parameters,
+          analysis_options: {
+            disabled_analyzers: ["Decompiler Switch Analysis"],
+          },
+        }),
+      }),
+      expected: "pass",
+    },
+    {
+      name: "different-mapping",
+      right: observed("identity-mapping", "a", "0x1010", "helper", {
+        profile: createAnalysisProfile(provider, {
+          architecture: "arm64",
+          ...mapping,
+          function_coordinate_context: createFunctionCoordinateContext({
+            ...mapping,
+            load_segment: "0x2000",
+          }),
+        }),
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "duplicate-name",
+      right: observed("identity-duplicate", "b", "0x1010", "helper", {
+        callees: [procedure("0x1010", "helper")],
+        incoming: [
+          reference("0x3030", "0x1000", "call", {
+            sourceName: "helper",
+            targetName: "main",
+          }),
+        ],
+      }),
+      expected: "unknown",
+    },
+    {
+      name: "empty-name",
+      right: observed("identity-empty", "b", "0x1010", ""),
+      expected: "unknown",
+    },
+  ] as const;
+  for (const scenario of cases) {
+    const comparison = await compare(client, baseline, scenario.right);
+    for (const dimension of ["calls", "references"] as const) {
+      // The duplicate-name reference also adds an edge, a known multiplicity change.
+      const expected =
+        scenario.name === "duplicate-name" && dimension === "references"
+          ? "fail"
+          : scenario.expected;
+      await verifyDimension(
+        client,
+        comparison.evidence.evidence_id,
+        expected,
+        dimension,
+      );
+    }
+  }
+});
+
+it("keeps empty function labels ambiguous and selected identity unknown", async () => {
+  const { client } = await createHarness();
+  const comparison = await compare(
+    client,
+    evidence("empty-function-left", "a", [], { procedureName: "" }),
+    evidence("empty-function-right", "b", [], { procedureName: "" }),
+  );
+  expect(comparison.result.function_match.status).toBe("ambiguous");
+  expect(
+    comparison.result.dimensions.find(
+      ({ dimension }) => dimension === "identity",
+    ),
+  ).toMatchObject({ status: "unknown" });
+  await verifyDimension(
+    client,
+    comparison.evidence.evidence_id,
+    "unknown",
+    "identity",
+  );
+});
+
+it("retains caller entries and independent contradictions beside unknown endpoints", async () => {
+  const { client } = await createHarness();
+  const left = evidence("caller-left", "a", [], {
+    callers: [procedure("0x1010", "caller")],
+  });
+  const right = evidence("caller-right", "a", [], {
+    callers: [procedure("0x1020", "caller")],
+  });
+  const retargeted = await compare(client, left, right);
+  await verifyDimension(
+    client,
+    retargeted.evidence.evidence_id,
+    "fail",
+    "calls",
+  );
+
+  const knownAndUnknown = (id: string, digest: string, name: string) =>
+    evidence(id, digest, [], {
+      callees: [
+        procedure("0x1010", name),
+        procedure("0x1010", name),
+        procedure("0x1020", "sub_1020", null),
+      ],
+    });
+  const mixed = await compare(
+    client,
+    knownAndUnknown("calls-mixed-left", "a", "known_left"),
+    knownAndUnknown("calls-mixed-right", "b", "known_right"),
+  );
+  await verifyDimension(client, mixed.evidence.evidence_id, "fail", "calls");
+});
+
+it("keeps equal coordinates in distinct same-architecture universal slices unknown", async () => {
+  const { client } = await createHarness();
+  const selection = {
+    kind: "macho-selected-image-v1" as const,
+    container: "fat" as const,
+    offset: 4096,
+    byte_length: 256,
+    cpu_type: 0x0100000c,
+    cpu_subtype: 0,
+    container_table_sha256: "c".repeat(64),
+  };
+  const atSlice = (id: string, selected: typeof selection) =>
+    evidence(id, "a", [reference("0x1000", "0x1010")], {
+      format: "mach-o-universal",
+      callees: [procedure("0x1010", "helper")],
+      profile: createAnalysisProfile(provider, {
+        architecture: "arm64",
+        function_coordinate_context: createFunctionCoordinateContext(
+          { loader_arguments: ["-l", "Mach-O", "--aarch64"] },
+          selected,
+        ),
+      }),
+    });
+  const left = atSlice("slice-arm64-left", selection);
+  for (const [id, selected, expected] of [
+    ["same", selection, "pass"],
+    ["different", { ...selection, offset: 8192, cpu_subtype: 2 }, "unknown"],
+  ] as const) {
+    const comparison = await compare(
+      client,
+      left,
+      atSlice(`slice-arm64-${id}`, selected),
+    );
+    for (const dimension of ["calls", "references"] as const)
+      await verifyDimension(
+        client,
+        comparison.evidence.evidence_id,
+        expected,
+        dimension,
+      );
+  }
+});
+
+it.each([null, "default", "imported"] as const)(
+  "native comparison uses observed symbol origin %s for EntryPoint labels",
+  async (source) => {
+    const harness = await createHarness();
+    const edge = (base: "0x1000" | "0x2000", name: string) => {
+      const value = reference(
+        base,
+        base === "0x1000" ? "0x1010" : "0x2010",
+        "call",
+        { targetName: name },
+      );
+      if (value.target_procedure === null)
+        throw new Error("Missing fixture target");
+      value.target_procedure.symbol =
+        source === null
+          ? null
+          : {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "function",
+              source,
+            };
+      return value;
+    };
+    const leftEdge = edge(
+      "0x1000",
+      source === "imported" ? "EntryPoint" : "_main",
+    );
+    const rightEdge = edge("0x2000", "EntryPoint");
+    if (
+      leftEdge.target_procedure === null ||
+      rightEdge.target_procedure === null
+    )
+      throw new Error("Missing fixture target");
+    const compared = await compare(
+      harness.client,
+      evidence("origin-left", "1", [leftEdge], {
+        procedureAddress: "0x1000",
+        callees: [leftEdge.target_procedure],
+      }),
+      evidence("origin-right", "2", [rightEdge], {
+        procedureAddress: "0x2000",
+        callees: [rightEdge.target_procedure],
+      }),
+    );
+    const status = source === "imported" ? "unchanged" : "unknown";
+    expectReferences(compared, status);
+    expect(
+      compared.result.dimensions.find((value) => value.dimension === "calls"),
+    ).toMatchObject({ status });
+    await verifyDimension(
+      harness.client,
+      compared.evidence.evidence_id,
+      source === "imported" ? "pass" : "unknown",
+      "references",
+    );
+    await verifyDimension(
+      harness.client,
+      compared.evidence.evidence_id,
+      source === "imported" ? "pass" : "unknown",
+      "calls",
+    );
+  },
+);

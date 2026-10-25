@@ -19,12 +19,50 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../ArtifactReader.js";
+
+it.each([0, 1, 2])(
+  "identifies malformed CArchive compression at table index %i",
+  async (index) => {
+    const original = cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: ["a", "b", "c"].map((name) => ({
+        name,
+        typeCode: "x",
+        payload: Buffer.from(name),
+        compress: false,
+      })),
+    });
+    const toc = 64 + original.readUInt32BE(original.length - 88 + 12);
+    let record = toc;
+    for (let row = 0; row < index; row++)
+      record += original.readUInt32BE(record);
+    await withPyInstallerReader(original, async (reader) => {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toHaveLength(3);
+    });
+    const malformed = Buffer.from(original);
+    malformed[record + 16] = 2;
+    await expect(
+      withPyInstallerReader(malformed, async (reader) => {
+        for await (const _entry of reader.entries()) {
+          /* force TOC admission */
+        }
+      }),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(
+        `table index ${index} at TOC offset ${record - toc}`,
+      ),
+    });
+  },
+);
 
 it.each([
   ["empty", Buffer.alloc(0)],
@@ -199,34 +237,44 @@ it("keeps compressed source locations unknown when stored and decoded lengths co
   );
 });
 
-it("bounds an admitted drive-prefixed CArchive path before diagnostic serialization", async () => {
-  await withPyInstallerReader(
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      members: [
-        {
-          name: "C:" + "x".repeat(10 * 1024 * 1024),
-          typeCode: "x",
-          payload: Buffer.from("x"),
-          compress: false,
-        },
-      ],
-    }),
-    async (reader) => {
-      const failure = await reader
-        .entries()
-        [Symbol.asyncIterator]()
-        .next()
-        .then(
-          () => undefined,
-          (cause: unknown) => cause,
-        );
-      expect(failure).toMatchObject({ reason: "path" });
-      expect((failure as Error).message.length).toBeLessThan(1024);
-    },
-  );
-});
+it.each([
+  ["admitted drive-prefixed path", 1024 * 1024, "path"],
+  ["directory facts above their retained allowance", 10 * 1024 * 1024, "limit"],
+] as const)(
+  "bounds %s before diagnostic serialization",
+  async (_case, length, reason) => {
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            // ELF carrier names use POSIX semantics: C:relative is a literal
+            // name, while C:/absolute is refused by the logical-path owner.
+            name: "C:/" + "x".repeat(length),
+            typeCode: "x",
+            payload: Buffer.from("x"),
+            compress: false,
+          },
+        ],
+      }),
+      async (reader) => {
+        const failure = await reader
+          .entries()
+          [Symbol.asyncIterator]()
+          .next()
+          .then(
+            () => undefined,
+            (cause: unknown) => cause,
+          );
+        expect(failure).toMatchObject({ reason });
+        if (reason === "limit")
+          expect(failure).toMatchObject({ boundary: "memory" });
+        expect((failure as Error).message.length).toBeLessThan(1024);
+      },
+    );
+  },
+);
 
 it.each(["magic", "marshal"])(
   "reuses the private bytes of an opaque outer-compressed PYZ (%s)",
@@ -316,7 +364,7 @@ it.each([true, false])(
               parameters: { page: index },
               confidence: "observed",
               authority: "shipped-artifact",
-              result: jsonValueSchema.parse({
+              result: {
                 ...inventory,
                 nodes: index === 0 ? inventory.nodes : [],
                 edges: index === 0 ? inventory.edges : [],
@@ -329,7 +377,7 @@ it.each([true, false])(
                         row,
                       ]
                     : [row],
-              }),
+              },
             },
           ),
         );
@@ -523,7 +571,9 @@ for (const typeCode of ["o", "d"] as const) {
           path,
           inventory,
         );
-        expect(await readFile(join(output, realPath))).toEqual(payload);
+        expect(
+          Buffer.compare(await readFile(join(output, realPath)), payload),
+        ).toBe(0);
       },
     );
   });
@@ -746,8 +796,11 @@ it.each(["x", "s", "empty-module"])(
           inventory,
         );
         expect(
-          (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
-        ).toEqual(Buffer.from("readable module"));
+          Buffer.compare(
+            (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
+            Buffer.from("readable module"),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -1331,7 +1384,9 @@ it.each([true, false])(
           source,
           inventory,
         );
-        expect(await readFile(join(output, path))).toEqual(file.payload);
+        expect(
+          Buffer.compare(await readFile(join(output, path)), file.payload),
+        ).toBe(0);
       },
     );
   },

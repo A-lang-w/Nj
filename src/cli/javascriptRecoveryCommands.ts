@@ -1,5 +1,5 @@
-import { z } from "incur";
 import { javascriptRecoveryInputSchema } from "../domain/javascript/javascriptRecovery.js";
+import { z } from "incur";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -22,27 +22,22 @@ export const registerJavaScriptRecoveryCommands = (
     description:
       "Recover readable JavaScript modules with source provenance and verified files",
     args: z.object({
-      path: z
-        .string()
-        .describe("Absolute UTF-8 JavaScript input; never executed"),
-      outputDirectory: z.string().describe("Absolute absent output directory"),
+      path: javascriptRecoveryInputSchema.shape.path,
+      outputDirectory: javascriptRecoveryInputSchema.shape.output_directory,
     }),
     options: z.object({
-      additionalPath:
-        javascriptRecoveryInputSchema.shape.additional_paths.describe(
-          "Related absolute UTF-8 JavaScript file; repeat for multiple chunks",
-        ),
-      extractionMode: z
-        .enum(["structural", "heuristic", "inspection"])
+      additionalPath: javascriptRecoveryInputSchema.shape.additional_paths,
+      extractionMode: javascriptRecoveryInputSchema.shape.extraction_mode
+        .removeDefault()
         .optional()
         .describe(
-          "Structural boundaries, heuristic fallback, or inspection-only regions",
+          javascriptRecoveryInputSchema.shape.extraction_mode.description!,
         ),
-      rewriteLevel: z
-        .enum(["minimal", "standard", "aggressive"])
+      rewriteLevel: javascriptRecoveryInputSchema.shape.rewrite_level
+        .removeDefault()
         .optional()
         .describe(
-          "Upstream syntax recovery level; runtime equivalence remains unknown",
+          javascriptRecoveryInputSchema.shape.rewrite_level.description!,
         ),
     }),
     run: ({ args, options }) =>

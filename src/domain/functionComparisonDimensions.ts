@@ -1,16 +1,15 @@
+import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
-import { compareFunctionReferences } from "./functionReferenceComparison.js";
 import {
-  functionEndpointIdentity,
-  type FunctionEndpointIdentity,
-} from "./functionEndpointIdentity.js";
+  compareFunctionRelationships,
+  type FunctionRelationshipComparison,
+} from "./functionRelationshipComparison.js";
 import { diffLines } from "diff";
 
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import {
   commentProjection,
   identityProjection,
-  isAutoName,
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
@@ -37,7 +36,7 @@ export const compareDimensions = (
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension[] => {
-  const endpointIdentity = functionEndpointIdentity(left, right);
+  const relationships = compareFunctionRelationships(left, right);
   return [
     compareIdentity(left, right, context),
     compareText(
@@ -53,8 +52,8 @@ export const compareDimensions = (
       context,
     ),
     compareComments(left, right, context),
-    compareCalls(left, right, context, endpointIdentity),
-    compareReferences(left, right, context, endpointIdentity),
+    compareCalls(left, right, relationships.calls, context),
+    compareReferences(relationships.references, context),
     compareStringsAndNames(left, right, context),
     compareCfg(left, right, context),
   ].map((result) => {
@@ -526,12 +525,9 @@ const swiftLiteralCoverage = (
       : "complete";
 
 const compareReferences = (
-  left: FunctionSnapshot,
-  right: FunctionSnapshot,
+  compared: FunctionRelationshipComparison,
   context: ComparisonContext,
-  identity: FunctionEndpointIdentity,
 ): FunctionDimension => {
-  const compared = compareFunctionReferences(left, right, identity);
   if (compared.status === "unknown")
     return unresolvedDimension({
       dimension: "references",
@@ -554,8 +550,14 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    isAutoName(left.dossier.procedure.name) ||
-    isAutoName(right.dossier.procedure.name)
+    !hasStableNativeSymbol(
+      left.dossier.procedure.name,
+      left.dossier.procedure.symbol,
+    ) ||
+    !hasStableNativeSymbol(
+      right.dossier.procedure.name,
+      right.dossier.procedure.symbol,
+    )
   )
     return unresolvedDimension({
       dimension: "identity",
@@ -563,7 +565,7 @@ const compareIdentity = (
       leftCount: null,
       rightCount: null,
       limitations: [
-        "Address-derived function names are not stable cross-version identity.",
+        "Empty names, generated symbols and unknown symbol origins do not establish cross-version identity.",
       ],
     });
   return compareValues(
@@ -577,11 +579,9 @@ const compareIdentity = (
 const compareCalls = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
+  comparison: FunctionRelationshipComparison,
   context: ComparisonContext,
-  identity: FunctionEndpointIdentity,
 ): FunctionDimension => {
-  const leftValues = callProjection(left, identity);
-  const rightValues = callProjection(right, identity);
   const coverageLimitations = [
     ...left.callCoverageBlockers.map((reason) => `Left: ${reason}`),
     ...right.callCoverageBlockers.map((reason) => `Right: ${reason}`),
@@ -594,65 +594,26 @@ const compareCalls = (
     return unresolvedDimension({
       dimension: "calls",
       links: context.links,
-      leftCount: leftValues.length,
-      rightCount: rightValues.length,
+      leftCount: comparison.leftCount,
+      rightCount: comparison.rightCount,
       limitations: [...coverageLimitations, ...coverageDiagnostics],
     });
-  const endpoints = [...leftValues, ...rightValues].map(
-    ({ endpoint }) => endpoint,
-  );
-  const unknown = endpoints.filter((endpoint) => endpoint.kind === "unknown");
-  const ambiguous = endpoints.some(
-    (endpoint) => endpoint.kind === "name" && endpoint.ambiguous,
-  );
-  if (unknown.length > 0 || ambiguous)
+  if (comparison.status === "unknown")
     return unresolvedDimension({
       dimension: "calls",
       links: context.links,
-      leftCount: leftValues.length,
-      rightCount: rightValues.length,
-      limitations: [
-        ...(unknown.some((endpoint) => endpoint.reason === "unparsed_address")
-          ? [
-              "Call procedure entry coordinates could not be parsed, so their identity remains unknown.",
-            ]
-          : []),
-        ...(unknown.some((endpoint) => endpoint.reason === "generated_name")
-          ? ["Address-derived callee or caller names cannot be matched safely."]
-          : []),
-        ...(unknown.some((endpoint) => endpoint.reason === "missing_name")
-          ? ["Empty callee or caller names cannot be matched safely."]
-          : []),
-        ...(ambiguous
-          ? [
-              "A callee or caller name does not uniquely identify an observed procedure entry, so matching names do not establish equal call endpoints.",
-            ]
-          : []),
-        ...coverageDiagnostics,
-      ],
+      leftCount: comparison.leftCount,
+      rightCount: comparison.rightCount,
+      limitations: [...comparison.limitations, ...coverageDiagnostics],
     });
-  return compareValues(
-    "calls",
-    sorted(leftValues),
-    sorted(rightValues),
-    context,
-    coverageDiagnostics,
-  );
+  return dimensionResult({
+    dimension: "calls",
+    ...comparison,
+    ...context,
+    textDelta: null,
+    limitations: [...comparison.limitations, ...coverageDiagnostics],
+  });
 };
-
-const callProjection = (
-  snapshot: FunctionSnapshot,
-  identity: FunctionEndpointIdentity,
-) => [
-  ...snapshot.dossier.callers.map((procedure) => ({
-    direction: "in" as const,
-    endpoint: identity.endpoint(procedure, procedure.address),
-  })),
-  ...snapshot.dossier.callees.map((procedure) => ({
-    direction: "out" as const,
-    endpoint: identity.endpoint(procedure, procedure.address),
-  })),
-];
 
 const compareCfg = (
   left: FunctionSnapshot,

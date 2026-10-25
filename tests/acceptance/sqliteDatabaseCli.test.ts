@@ -21,8 +21,11 @@ import {
 
 import {
   createSqliteApplicationCollationFixture,
+  createSqliteLongNameFixture,
   SQLITE_NATIVE_LIMITS_AVAILABLE,
 } from "../fixtures/sqlite/database.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
+import { sqliteDatabaseSchema } from "../../src/domain/sqlite/sqliteDatabase.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -319,7 +322,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { path, table: "selected", columns: ["ID"] },
     ])
       expect((await call("inspect_sqlite_database", input)).isError).toBe(true);
-    expect(await readFile(path)).toEqual(before);
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );
 
@@ -629,7 +632,7 @@ cliTest
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(response.structuredContent).toEqual(result.json);
-    expect(await readFile(path)).toEqual(original);
+    expect(Buffer.compare(await readFile(path), original)).toBe(0);
   },
 );
 
@@ -1071,7 +1074,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         },
       },
     });
-    expect(await readFile(path)).toEqual(before);
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );
 
@@ -1133,7 +1136,48 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(response.structuredContent).toEqual(result.json);
     }
-    expect(await readFile(path)).toEqual(original);
+    expect(Buffer.compare(await readFile(path), original)).toBe(0);
+  },
+);
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "returns complete UTF-16 schemas through the worker and public CLI when JSON fits",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-large-catalog-");
+    for (const [encoding, scope] of [
+      ["UTF-16le", "inventory"],
+      ["UTF-16be", "database"],
+    ] as const) {
+      const { path, names } = createSqliteLongNameFixture(root, encoding);
+      const response = await runFileCli(cli, {
+        arguments: [
+          "inspect-sqlite-database",
+          path,
+          "--schema-scope",
+          scope,
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      const evidence = parseEvidence(response.json);
+      const report = sqliteDatabaseSchema.parse(evidence.normalized_result);
+      expect(evidence.parameters.schema_scope).toBe(scope);
+      expect(report.database_encoding).toBe(encoding);
+      expect(report.schema).toMatchObject({ scope, completeness: "complete" });
+      expect(report.schema.tables).toHaveLength(names.length);
+      expect(report.schema.tables.map((table) => table.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      expect(
+        report.schema.tables.every(
+          (table) =>
+            table.columns_completeness ===
+            (scope === "inventory" ? "not_requested" : "complete"),
+        ),
+      ).toBe(true);
+      expect(report.rows).toBeNull();
+    }
   },
 );
 
@@ -1294,7 +1338,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       const response = await call("inspect_sqlite_database", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(response.structuredContent).toEqual(result.json);
-      expect(await readFile(path)).toEqual(original);
+      expect(Buffer.compare(await readFile(path), original)).toBe(0);
     }
   },
 );

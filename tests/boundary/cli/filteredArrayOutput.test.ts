@@ -22,11 +22,16 @@ const freezeRecursively = <T>(value: T): T => {
 const runFilteredCli = async (
   value: unknown,
   format: "json" | "jsonl" | "yaml" | "toon" | "md",
-  filter: string,
+  filter?: string,
 ): Promise<string> => {
   const cli = Cli.create("filtered-array-test", { sync: false });
   cli.command("rows", { run: () => value });
-  const args = ["rows", "--format", format, "--filter-output", filter];
+  const args = [
+    "rows",
+    "--format",
+    format,
+    ...(filter === undefined ? [] : ["--filter-output", filter]),
+  ];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
     parseCliOutputArguments(args),
@@ -53,6 +58,38 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it("renders only each record's own fields in heterogeneous Markdown tables", async () => {
+  const value: unknown = JSON.parse(
+    '[{"name":"first","constructor":"ctor","toString":"text","__proto__":"proto","enabled":false,"count":0},{"name":"second"},{"name":"third","constructor":0,"toString":false,"__proto__":null}]',
+  );
+  freezeRecursively(value);
+  const json = await runFilteredCli(value, "json");
+  expect(JSON.parse(json)).toEqual(value);
+  const markdown = await runFilteredCli(value, "md");
+  const rows = markdown
+    .trim()
+    .split("\n")
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    );
+  expect(rows[0]).toEqual([
+    "name",
+    "constructor",
+    "toString",
+    "__proto__",
+    "enabled",
+    "count",
+  ]);
+  expect(rows.slice(2)).toEqual([
+    ["first", "ctor", "text", "proto", "false", "0"],
+    ["second", "", "", "", "", ""],
+    ["third", "0", "false", "null", "", ""],
+  ]);
+});
 
 it.each(
   (["json", "jsonl"] as const).flatMap((format) =>
@@ -97,7 +134,19 @@ it.each(
       },
     });
     const text = Buffer.concat(chunks).toString("utf8");
-    if (full)
+    if (full && format === "jsonl") {
+      const records = text
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records.slice(0, -1)).toEqual([1, null, null]);
+      expect(records.at(-1)).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "metadata",
+        records: { path: ["data"], emitted: 3, source: 3, filter: "selected" },
+        context: { ok: true, meta: { command: "rows" } },
+      });
+    } else if (full)
       expect(JSON.parse(text)).toMatchObject({
         ok: true,
         data: [1, null, null],
@@ -288,7 +337,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -312,6 +364,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual([1, null, null]);
+    else if (format === "md") expect(output).toBe("[1,null,null]\n");
     else expect(output).toBe(`${Formatter.format(selected, format)}\n`);
     expect(value).toEqual([{ selected: 1 }, {}, { selected: null }]);
   },
@@ -344,7 +397,10 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .split("\n")
           .map((line) => JSON.parse(line)),
       ).toEqual(expected);
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else if (format === "md") {
+      expect(outputs[0]).toContain(`| ${JSON.stringify(expected[0]!.rows)} |`);
+      expect(outputs[0]).not.toContain("[object Object]");
+    } else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );

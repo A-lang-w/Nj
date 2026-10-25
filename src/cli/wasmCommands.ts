@@ -1,3 +1,4 @@
+import { localPathStringSchema } from "../domain/localPath.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -12,7 +13,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import {
   inspectWasmArtifactInputSchema,
-  MAX_WASM_ARTIFACT_PATHS,
+  wasmArtifactPathsSchema,
 } from "../domain/wasm/wasmArtifact.js";
 
 /** Resolve all caller-selected artifact paths through the shared workflow. */
@@ -37,6 +38,7 @@ export const registerWasmCommands = (
           const input = await parseCliJsonInput(
             args.input,
             "compare_wasm_interfaces",
+            signal,
           );
           if (!input.ok) return input.error;
           const result = await compareWasmInterfaces(input.value, { signal });
@@ -48,18 +50,14 @@ export const registerWasmCommands = (
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
-      path: z.string().describe("Local WASM artifact"),
+      path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
       commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
-      glue_paths: z
-        .array(z.string())
-        .max(MAX_WASM_ARTIFACT_PATHS)
+      glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),
-      candidate_paths: z
-        .array(z.string())
-        .max(MAX_WASM_ARTIFACT_PATHS)
+      candidate_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Explicit local WASM candidates"),
     }),

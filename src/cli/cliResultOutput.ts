@@ -16,8 +16,11 @@ import {
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
   jsonOutputParts,
+  isTerminalOutput,
   writeJsonOutput,
   writeOutputText,
 } from "./jsonOutput.js";
@@ -40,6 +43,13 @@ export interface CliResultOutput {
   readonly handled: boolean;
   readonly failed: boolean;
   readonly error: AnalysisErrorProjection | undefined;
+  /** Start another completed invocation on a reusable command registry. */
+  begin(options: ParsedCliOutputArguments): void;
+  /** SDK generators retain their own streaming event protocol. */
+  delegateStreaming(): void;
+  /** Retain one-shot SDK output until the SDK supplies its authoritative status. */
+  captureSdkOutput(text: string): boolean;
+  finishSdkOutput(exitCode: number): Promise<void>;
   write(value: unknown, metadata: CliResultOutputMetadata): Promise<boolean>;
   /** Recover only before any delegated stdout has been written. */
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
@@ -70,8 +80,10 @@ const wrapCommand = (
       typeof result === "object" &&
       result !== null &&
       Symbol.asyncIterator in result
-    )
+    ) {
+      output.delegateStreaming();
       return result;
+    }
     return Promise.resolve(result).then(async (value: unknown) => {
       if (
         typeof value === "object" &&
@@ -100,14 +112,18 @@ const wrapCommand = (
 
 /** Preserve Incur output controls and stream JSON while framing failures. */
 export const createCliResultOutput = (
-  options: ParsedCliOutputArguments,
+  initialOptions: ParsedCliOutputArguments,
   destination: Writable,
 ): CliResultOutput | undefined => {
-  if (options.parseError || !options.validation.ok) return undefined;
-  const format = options.format as "json" | "jsonl" | "yaml" | "toon" | "md";
+  let options = initialOptions;
+  if (!options.validation.ok) return undefined;
+  let format = options.format as "json" | "jsonl" | "yaml" | "toon" | "md";
   let handled = false;
   let failed = false;
   let error: AnalysisErrorProjection | undefined;
+  let streaming = false;
+  const sdkParts: string[] = [];
+  let sdkCompletion: Promise<void> | undefined;
   let completed:
     | {
         readonly metadata: CliResultOutputMetadata;
@@ -160,7 +176,10 @@ export const createCliResultOutput = (
       : error;
     // Recovery must remain actionable even when a token window/count was
     // requested. Do not apply those controls to this small typed failure.
-    const text = formatCliOutput(document, format);
+    const text = formatCliOutput(
+      format === "jsonl" ? jsonLinesErrorRecord(document) : document,
+      format,
+    );
     handled = true;
     try {
       await writeOutputText(destination, `${text}\n`);
@@ -193,6 +212,61 @@ export const createCliResultOutput = (
     get error() {
       return error;
     },
+    begin(nextOptions) {
+      options = nextOptions;
+      format = options.format as typeof format;
+      handled = false;
+      failed = false;
+      error = undefined;
+      completed = undefined;
+      streaming = false;
+      sdkParts.length = 0;
+      sdkCompletion = undefined;
+    },
+    delegateStreaming() {
+      streaming = true;
+    },
+    captureSdkOutput(text) {
+      if (format !== "jsonl" || streaming || handled) return false;
+      // Incur already materializes one-shot documents. Retain references only;
+      // generator events bypass this buffer and remain incremental.
+      if (text.length > 0) sdkParts.push(text);
+      return true;
+    },
+    finishSdkOutput(exitCode) {
+      return (sdkCompletion ??= (async () => {
+        const parts = sdkParts.splice(0);
+        try {
+          if (parts.length === 0) {
+            // SDK writes outside the JSONL buffer still share this destination.
+            // A write callback runs after earlier queued writes have completed,
+            // so the launcher's explicit exit cannot discard a pending pipe tail.
+            await writeOutputText(destination, "");
+            return;
+          }
+          if (exitCode === 0) {
+            for (const part of parts) await writeOutputText(destination, part);
+          } else {
+            const text = parts.join("");
+            let result: unknown = text;
+            try {
+              result = JSON.parse(text);
+            } catch {
+              /* Preserve non-JSON SDK diagnostics verbatim. */
+            }
+            await writeJsonOutput(
+              jsonLinesErrorRecord(result),
+              destination,
+              "jsonl",
+            );
+          }
+        } catch (cause: unknown) {
+          handled = true;
+          failed = true;
+          throw cause;
+        }
+      })());
+    },
     write,
     recoverFormattingFailure,
   };
@@ -209,7 +283,7 @@ export const createCliResultOutput = (
       ? Filter.parse(options.filterOutput)
       : undefined;
     const operationFailure =
-      options.fullOutput || filterPaths !== undefined
+      format === "jsonl" || options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
@@ -222,6 +296,7 @@ export const createCliResultOutput = (
     if (
       operationFailure === undefined &&
       metadata.renderOutput === false &&
+      format !== "jsonl" &&
       !options.fullOutput &&
       !options.tokenCount
     )
@@ -254,54 +329,25 @@ export const createCliResultOutput = (
       !ownsSuccessfulTokenWindow
     )
       return false;
-    if (options.tokenCount) {
-      // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
-      // allowing that allocation, independently of UTF-8 bytes. Other formats
-      // retain Incur's materializing behavior.
-      const tokenValue = failure ?? filtered;
-      let characters = 0;
-      if (
-        tokenValue !== undefined &&
-        tokenValue !== null &&
-        typeof tokenValue !== "function" &&
-        typeof tokenValue !== "symbol"
-      ) {
-        if (format === "json" || format === "jsonl") {
-          for (const part of jsonOutputParts(
-            tokenValue,
-            format,
-            format === "json",
-          ))
-            characters += part.length;
-          characters = Math.max(0, characters - 1);
-        }
-      }
-      if (characters <= constants.MAX_STRING_LENGTH) {
-        const count = estimateTokenCount(formatCliOutput(tokenValue, format));
-        handled = true;
-        try {
-          await writeOutputText(destination, `${count}\n`);
-          return true;
-        } catch (cause: unknown) {
-          failed = true;
-          throw cause;
-        }
-      }
-      error = projectAnalysisError(
-        new AnalysisResourceConstraintError(
-          metadata.command,
-          "memory",
-          "Token counting requires a formatted string larger than the runtime permits.",
+    if (format === "jsonl") {
+      handled = true;
+      try {
+        error = await writeCliJsonLines(
           {
-            formatted_characters: characters,
-            max_string_characters: constants.MAX_STRING_LENGTH,
+            ...options,
+            source: value,
+            selected: filtered,
+            operationFailure,
+            command: metadata.command,
+            duration: metadata.duration,
           },
-          {
-            remediationAction:
-              "Remove --token-count to stream the complete JSON result, or narrow it with --filter-output.",
-          },
-        ),
-      );
+          destination,
+        );
+      } catch (cause: unknown) {
+        failed = true;
+        throw cause;
+      }
+      return true;
     }
     const meta = {
       command: metadata.command,
@@ -330,6 +376,66 @@ export const createCliResultOutput = (
           typeof filtered === "symbol"
         ? {}
         : filtered;
+    if (options.tokenCount) {
+      // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
+      // allowing that allocation, independently of UTF-8 bytes. Other formats
+      // retain Incur's materializing behavior.
+      const tokenValue = document;
+      let characters = 0;
+      if (
+        tokenValue !== undefined &&
+        tokenValue !== null &&
+        typeof tokenValue !== "function" &&
+        typeof tokenValue !== "symbol"
+      ) {
+        if (format === "json") {
+          for (const part of jsonOutputParts(
+            tokenValue,
+            format,
+            isTerminalOutput(destination),
+          ))
+            characters += part.length;
+        }
+      }
+      if (characters <= constants.MAX_STRING_LENGTH) {
+        let formatted: string;
+        if (format === "json") {
+          // Reuse the writer's exact representation after its capacity admission.
+          // tokenx requires one string; retain only this bounded formatted value.
+          formatted = "";
+          for (const part of jsonOutputParts(
+            tokenValue,
+            format,
+            isTerminalOutput(destination),
+          ))
+            formatted += part;
+        } else formatted = formatCliOutput(tokenValue, format);
+        const count = estimateTokenCount(formatted);
+        handled = true;
+        try {
+          await writeOutputText(destination, `${count}\n`);
+          return true;
+        } catch (cause: unknown) {
+          failed = true;
+          throw cause;
+        }
+      }
+      error = projectAnalysisError(
+        new AnalysisResourceConstraintError(
+          metadata.command,
+          "memory",
+          "Token counting requires a formatted string larger than the runtime permits.",
+          {
+            formatted_characters: characters,
+            max_string_characters: constants.MAX_STRING_LENGTH,
+          },
+          {
+            remediationAction:
+              "Remove --token-count to stream the complete JSON result, or narrow it with --filter-output.",
+          },
+        ),
+      );
+    }
     if (ownsSuccessfulTokenWindow) {
       const formatted = formatCliOutput(filtered, format);
       const window = sliceTextByTokenWindow(
@@ -343,7 +449,7 @@ export const createCliResultOutput = (
         return false;
 
       const sliced = window.truncated
-        ? `${window.text}\n[truncated: showing tokens ${options.tokenOffset ?? 0}–${window.end} of ${window.total}]`
+        ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
         : formatted;
       const outputDocument = options.fullOutput
         ? formatCliOutput(
@@ -382,8 +488,7 @@ export const createCliResultOutput = (
     const formattedText =
       format === "md" ||
       ((operationFailure !== undefined || ownsFilteredOutput) &&
-        format !== "json" &&
-        format !== "jsonl")
+        format !== "json")
         ? formatCliOutput(document, format)
         : undefined;
     if (
@@ -435,7 +540,7 @@ const fullFailureEnvelope = (
   const nextOffset = window.end < window.total ? window.end : undefined;
   return {
     ok: false,
-    error: `${window.text}\n[truncated: showing tokens ${offset}–${window.end} of ${window.total}]`,
+    error: `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`,
     meta: { ...meta, ...(nextOffset === undefined ? {} : { nextOffset }) },
   };
 };

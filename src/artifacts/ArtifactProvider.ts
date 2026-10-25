@@ -41,7 +41,10 @@ import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
 import { freezeJsonSnapshot } from "../domain/immutableJson.js";
-import { createArtifactInspection } from "../domain/artifactInspection.js";
+import {
+  artifactInspectionSources,
+  createArtifactInspection,
+} from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
@@ -127,6 +130,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
               bundlePath: this.root.canonicalPath,
               targetSha256: null,
               resourceRoot,
+              resources: this.#resourceScope,
               limits: interfaceBuilderLimitsSchema.parse(parameters),
               ...(options?.signal === undefined
                 ? {}
@@ -139,6 +143,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
                 resourceRoot,
                 parameters,
                 platform: this.platform,
+                resources: this.#resourceScope,
                 ...(options?.signal === undefined
                   ? {}
                   : { signal: options.signal }),
@@ -149,6 +154,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
                   targetSha256: null,
                   resourceRoot,
                   environment: this.environment,
+                  resources: this.#resourceScope,
                   page: parameters,
                   ...(options?.signal === undefined
                     ? {}
@@ -227,6 +233,7 @@ class ArtifactClient implements AnalysisClient {
           bundlePath: this.target.sourcePath ?? this.target.path,
           targetSha256: this.target.sha256,
           limits,
+          resources: this.#resourceScope,
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
         });
         return ok(
@@ -267,6 +274,7 @@ class ArtifactClient implements AnalysisClient {
             ? { ...parameters, path: basename(this.target.path) }
             : parameters,
           platform: this.platform,
+          resources: this.#resourceScope,
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
         });
         if (standalone && result.archive_sha256 !== this.target.sha256)
@@ -375,6 +383,7 @@ class ArtifactClient implements AnalysisClient {
     const result = await analyzeAppleAssetCatalogs({
       environment: this.environment,
       bundlePath,
+      resources: this.#resourceScope,
       targetSha256: this.target.sha256,
       page: parameters,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
@@ -466,6 +475,7 @@ class ArtifactClient implements AnalysisClient {
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         rawResult: null,
         limitations: result.limitations,
+        sourceEvidence: artifactInspectionSources(result),
         subject,
         locations: [],
       }),

@@ -72,7 +72,7 @@ it("admits a header produced by the upstream ASAR serializer", async () => {
     headerBytes: original.readUInt32LE(4),
     jsonBytes: original.readUInt32LE(12),
   });
-  expect(await readFile(archive)).toEqual(original);
+  expect(Buffer.compare(await readFile(archive), original)).toBe(0);
 });
 
 it("rejects every truncated prefix of a real serialized header", async () => {
@@ -250,9 +250,7 @@ it("keeps unrelated artifact limit recovery distinct from header admission", () 
         "Directory traversal reached its examined-entry budget",
       ),
     ).message,
-  ).toBe(
-    "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.",
-  );
+  ).toBe("Directory traversal reached its examined-entry budget");
 });
 
 afterEach(() => {

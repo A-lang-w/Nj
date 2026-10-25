@@ -1,5 +1,8 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import {
+  createAnalysisProfile,
+  analysisProfilesEqual,
+} from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   isElfMetadataArchitecture,
@@ -21,10 +24,8 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { createHash } from "node:crypto";
+import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";
 import { isDeepStrictEqual } from "node:util";
-import { analysisProfilesEqual } from "../domain/analysisProfile.js";
-import canonicalize from "canonicalize";
 import type { Result } from "../domain/result.js";
 import {
   readIdaConfiguration,
@@ -41,10 +42,12 @@ import {
 } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { privateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
+} from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
@@ -236,6 +239,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
       target_kind: target.kind,
       target_format: target.format,
     };
+    if (target.format === "gamecube-dol")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
+        diagnostics,
+      };
     if (
       target.kind === "executable" &&
       (isElfMetadataArchitecture(target.architecture) ||
@@ -345,9 +356,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
             : "database-supervisor",
       database_revision: null,
       cache_policy: "live",
-      registration_digest: createHash("sha256")
-        .update(canonicalize(config.value) ?? "")
-        .digest("hex"),
+      registration_digest: idaRegistrationDigest(config.value),
     });
     if (options?.scope !== undefined)
       this.#registrationByScope.delete(options.scope);

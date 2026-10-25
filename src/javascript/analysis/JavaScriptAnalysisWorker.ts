@@ -1,5 +1,8 @@
 import { WorkerFrameSignal } from "../../process/WorkerFrameSignal.js";
-import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
+import type {
+  JavaScriptSemanticProjectionCapacity,
+  JavaScriptSemanticFileProjection,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,7 +14,6 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { estimateJavaScriptStaticApplicationProjection } from "../../domain/javascript/javascriptApplicationProjectionResources.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import type {
   JavaScriptAnalyzedSource,
   JavaScriptSourceAnalysisFailure,
@@ -257,6 +259,7 @@ export class JavaScriptAnalysisWorker {
     file: JavaScriptArtifactFile,
     capacity: JavaScriptSemanticProjectionCapacity,
     signal?: AbortSignal,
+    onPhase?: (phase: string) => Promise<void>,
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -343,6 +346,7 @@ export class JavaScriptAnalysisWorker {
           );
         if (response.kind === "phase") {
           this.#phase = response.phase;
+          await onPhase?.(response.phase);
           continue;
         }
         if (response.kind === "static") {
@@ -361,6 +365,9 @@ export class JavaScriptAnalysisWorker {
                 ...this.#limits(),
                 parent_result_budget_bytes: this.#resultBudgetBytes,
                 parent_result_budget_exhausted: true,
+              },
+              {
+                remediationAction: JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
               },
             );
           offeredResultBudget =
@@ -534,7 +541,7 @@ export class JavaScriptAnalysisWorker {
         this.#runtime.retainForCleanup();
         const error = this.#cleanupError(message(cause));
         this.#runtime.bindCleanupFailure(error);
-        return err({
+        result = err({
           javascript,
           module,
           projection,
@@ -1032,6 +1039,19 @@ export class JavaScriptAnalysisWorker {
     response: Extract<JavaScriptWorkerMessage, { kind: "failure" }>,
     phase: string,
   ): AnalysisError {
+    if (response.reason === "io")
+      return new ProviderAdapterError(PROVIDER, OPERATION, {
+        capturedOutput: this.#captured(),
+        userMessage: `Owned JavaScript worker storage failed for ${path} during ${phase}. Retained observations and cleanup status are reported separately.`,
+        remediationAction:
+          "Check the availability and permissions of REA's private temporary storage, correct the reported I/O failure, and retry. Changing the selected source is not required by this storage failure.",
+        diagnostics: {
+          source_path: path,
+          phase,
+          worker_failure_reason: response.reason,
+          message: response.message,
+        },
+      });
     if (response.reason === "resource") {
       const reported = response.limits;
       const limits = { ...this.#limits(), ...reported };
@@ -1176,6 +1196,7 @@ export class JavaScriptAnalysisWorker {
       },
       {
         operation: OPERATION,
+        ...(original === undefined ? {} : { cleanupPrimary: original }),
         cause: new Error(
           reason,
           original === undefined ? undefined : { cause: original },

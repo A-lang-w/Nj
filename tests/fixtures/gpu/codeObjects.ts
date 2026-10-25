@@ -210,9 +210,9 @@ export const cubinFixture = (
   }
   return result;
 };
-export const amdFixture = (
+/** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
+export const amdNoteFixture = (
   hidden = false,
-  trailingNote?: Buffer,
   target: string | null = "amdgcn-amd-amdhsa--gfx900",
 ): Buffer => {
   const args = [
@@ -247,6 +247,14 @@ export const amdFixture = (
   note.writeUInt32LE(32, 8);
   note.write("AMDGPU\0", 12);
   metadata.copy(note, 20);
+  return note;
+};
+export const amdFixture = (
+  hidden = false,
+  trailingNote?: Buffer,
+  target: string | null = "amdgcn-amd-amdhsa--gfx900",
+): Buffer => {
+  const note = amdNoteFixture(hidden, target);
   return elfFixture(224, [
     {
       name: ".note",
@@ -320,6 +328,16 @@ export const hipFixture = (
   head.write("__CLANG_OFFLOAD_BUNDLE__");
   head.writeBigUInt64LE(2n, 24);
   return Buffer.concat([head, ...headers, payload]);
+};
+/** Representation recognition only; these bytes do not establish valid LLVM IR. */
+export const llvmBitcodeFixture = (wrapped = false): Buffer => {
+  const raw = Buffer.from([0x42, 0x43, 0xc0, 0xde, 0, 0, 0, 0]);
+  if (!wrapped) return raw;
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0x0b17c0de, 0);
+  header.writeUInt32LE(20, 8);
+  header.writeUInt32LE(raw.length, 12);
+  return Buffer.concat([header, raw]);
 };
 export const ccobFixture = (
   version: 1 | 2 | 3 = 2,

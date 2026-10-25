@@ -23,11 +23,11 @@ import {
 } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import {
   arrayItemSchemaError,
-  booleanLiteralSchemaError,
+  unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 interface AdvertisedTool {
@@ -108,7 +108,7 @@ const compactServer = (): EvidenceMcpServer =>
     { name: "compact-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
   );
 
@@ -117,7 +117,7 @@ const fullServer = (): EvidenceMcpServer =>
     { name: "full-profile", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
   );
 
 describe("MCP compact input schema profile", () => {
@@ -284,7 +284,7 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
       expect(
-        booleanLiteralSchemaError(tool.inputSchema, tool.name),
+        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
       ).toBeUndefined();
       expect(
         ajv.validateSchema(tool.inputSchema),

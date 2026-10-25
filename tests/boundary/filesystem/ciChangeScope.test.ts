@@ -1247,6 +1247,50 @@ it.each([
     { code: true, fixtures: false, readiness: true, package: false },
   ],
   [
+    "scripts/verify-reconstruction-readiness.mjs",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadinessExample.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.test.ts",
+    { code: true, readiness: false, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/no-return.c",
     { code: true, fixtures: false, readiness: false, package: false },
   ],
@@ -1312,6 +1356,30 @@ it.each([
     expect(await classify(directory, base, head)).toMatchObject({
       code: true,
       ...expected,
+    });
+  },
+);
+
+it.each(["knip:production", "lint:typed"])(
+  "keeps the %s analysis command within static checks",
+  async (script) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: false,
+      package: false,
+      evm: false,
+      browser: false,
     });
   },
 );

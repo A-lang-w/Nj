@@ -341,7 +341,7 @@ const requireEngineArchive = async (
             ),
         },
         options.signal,
-        async (handle) => {
+        async ({ handle, initial }) => {
           try {
             // Metadata enumeration borrows this descriptor. The file workflow
             // alone owns admission, final close, cancellation and failed retry.
@@ -349,7 +349,7 @@ const requireEngineArchive = async (
               jar,
               "zip",
               JAR_METADATA_READ_MAX_BYTES,
-              { handle, initial: await handle.stat() },
+              { handle, initial },
             );
             const missing = new Set([
               "com/atxx/jhmcp/JadxSession.class",
@@ -595,7 +595,9 @@ const resolveJava = async (
       Object.entries(environment).find(
         ([key]) => key.toLowerCase() === "path",
       )?.[1] ?? "";
-    for (const directory of [process.cwd(), ...path.split(delimiter)]) {
+    for (const directory of path
+      .split(delimiter)
+      .filter((entry) => entry !== "")) {
       throwIfJadxInterrupted(signal);
       // Windows PATH commonly quotes individual entries containing spaces.
       const selected =

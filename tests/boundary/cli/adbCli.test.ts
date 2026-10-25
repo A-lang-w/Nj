@@ -188,6 +188,27 @@ it.each(["string:key", ":", "string"])(
   },
 );
 
+it("admits 16 activity extras through the CLI before checking adb availability", async () => {
+  const result = await serve(
+    [
+      "start-adb-activity",
+      "emulator-5554",
+      "android.intent.action.VIEW",
+      ...Array.from({ length: 16 }, (_, index) => [
+        "--extra",
+        `string:key${index}:value`,
+      ]).flat(),
+      "--format",
+      "json",
+    ],
+    { REA_ADB_PATH: "/path/that/does/not/exist" },
+  );
+
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    code: "capability_unavailable",
+  });
+});
+
 it.skipIf(process.platform === "win32")(
   "starts an explicitly selected nested Android activity through the CLI",
   async () => {

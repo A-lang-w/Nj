@@ -1,4 +1,11 @@
-import { javaScriptSemanticUnknownOmissionsSchema } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import {
+  javaScriptSemanticUnknownOmissionsSchema,
+  javaScriptSemanticNodeSchema,
+  javaScriptSemanticRelationSchema,
+  javaScriptSemanticUnknownSchema,
+  javaScriptSemanticFingerprintSchema,
+  javaScriptSemanticEvidenceContextSchema,
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -8,13 +15,6 @@ import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticValueTypes.js";
-import {
-  javaScriptSemanticNodeSchema,
-  javaScriptSemanticRelationSchema,
-  javaScriptSemanticUnknownSchema,
-  javaScriptSemanticFingerprintSchema,
-  javaScriptSemanticEvidenceContextSchema,
-} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 
 const range =
   javaScriptSemanticNodeSchema.shape.identity.shape.source_range.unwrap();
@@ -67,10 +67,17 @@ const locatedHandler = {
   ]),
   handler_location: range,
 };
+const ipcReceiver = z
+  .strictObject({
+    kind: z.enum(["web-contents", "main-frame"]),
+    owner_location: range,
+  })
+  .exactOptional();
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -79,6 +86,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     }),
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -296,6 +304,7 @@ const electron = z
   }));
 const referenceShape = {
   ...findingContext,
+  operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
   kind: z.enum([
     "static-import",
@@ -628,6 +637,7 @@ const callable = z.strictObject({
   containerScopeId: z.string(),
   bodyScopeId: z.string().nullable(),
   location: range,
+  computedKeyLocation: range.nullable(),
   returnSites: z.array(
     z.strictObject({
       returnSiteId: z.string(),
