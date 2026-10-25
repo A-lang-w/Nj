@@ -1,12 +1,15 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { promisify } from "node:util";
 
 import { AdbDeviceAnalysisService } from "../dist/application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../dist/composition/adb.js";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 
+const execFileAsync = promisify(execFile);
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
   process.stdout.write(
@@ -40,7 +43,82 @@ const run = async (operation, input) => {
   return result.value.normalized_result;
 };
 
-let primaryFailure;
+// Remove the verifier's own transfer probe with the provider-reported adb
+// client, then confirm through the directory listing that it is gone.
+const removeDeviceProbe = async (binary, serial, devicePath) => {
+  const name = "verifier transfer probe removed";
+  if (typeof binary !== "string" || binary === "") {
+    check(name, false, `${devicePath}: adb client path unavailable`);
+    return;
+  }
+  try {
+    await execFileAsync(
+      binary,
+      ["-s", serial, "shell", "rm", "--", devicePath],
+      {
+        timeout: 30_000,
+      },
+    );
+  } catch (cause) {
+    check(name, false, `${devicePath}: ${formatFailure(cause)}`);
+    return;
+  }
+  const listing = await run("list_adb_directory", {
+    serial,
+    device_path: posix.dirname(devicePath),
+  });
+  if (listing !== null)
+    check(
+      name,
+      listing.coverage === "complete" &&
+        !listing.entries.some(
+          (entry) => entry.name === posix.basename(devicePath),
+        ),
+      devicePath,
+    );
+};
+
+const verifyTransferRoundtrip = async ({
+  adbBinary,
+  serial,
+  payload,
+  devicePath,
+  outputDirectory,
+}) => {
+  const pushed = await run("push_adb_file", {
+    serial,
+    local_path: payload,
+    device_path: devicePath,
+    overwrite: false,
+  });
+  if (pushed === null) return;
+  // A successful no-overwrite push proves the verifier created this exact
+  // destination; pull_adb_file deliberately retains device originals.
+  try {
+    check(
+      "push reports matching device-side digest",
+      pushed.device_digest_source === "device_sha256sum" &&
+        pushed.device_sha256 === pushed.sha256,
+      `${pushed.bytes} bytes`,
+    );
+    const pulled = await run("pull_adb_file", {
+      serial,
+      device_path: devicePath,
+      output_directory: outputDirectory,
+    });
+    if (pulled !== null)
+      check(
+        "pulled file digest matches the pushed digest",
+        pulled.sha256 === pushed.sha256,
+        `${pulled.bytes} bytes`,
+      );
+  } finally {
+    await removeDeviceProbe(adbBinary, serial, devicePath);
+  }
+};
+
+let verifierFailed = false;
+let verifierFailure;
 try {
   const client = await run("inspect_adb_client", {});
   if (client !== null) {
@@ -244,31 +322,13 @@ try {
         fs.writeFile(payload, payloadBytes),
       );
       const deviceTarget = `/data/local/tmp/rea-verify-${Date.now()}.txt`;
-      const pushed = await run("push_adb_file", {
+      await verifyTransferRoundtrip({
+        adbBinary: client?.client.binary_path,
         serial,
-        local_path: payload,
-        device_path: deviceTarget,
-        overwrite: false,
+        payload,
+        devicePath: deviceTarget,
+        outputDirectory: transferRoot,
       });
-      if (pushed !== null) {
-        check(
-          "push reports matching device-side digest",
-          pushed.device_digest_source === "device_sha256sum" &&
-            pushed.device_sha256 === pushed.sha256,
-          `${pushed.bytes} bytes`,
-        );
-        const pulled = await run("pull_adb_file", {
-          serial,
-          device_path: deviceTarget,
-          output_directory: transferRoot,
-        });
-        if (pulled !== null)
-          check(
-            "pulled file digest matches the pushed digest",
-            pulled.sha256 === pushed.sha256,
-            `${pulled.bytes} bytes`,
-          );
-      }
       const screenRoot = await mkdtemp(join(tmpdir(), "rea-adb-screen-"));
       try {
         const screen = await run("capture_adb_screen", {
@@ -374,26 +434,24 @@ try {
     }
   }
 } catch (cause) {
-  primaryFailure = cause;
+  verifierFailed = true;
+  verifierFailure = cause;
+} finally {
+  try {
+    await closeVerifierResources([() => provider.close()]);
+  } catch (cause) {
+    process.stderr.write(`[FAIL] verifier cleanup — ${formatFailure(cause)}\n`);
+    failures += 1;
+  }
 }
-
-let cleanupFailure;
-try {
-  await closeVerifierResources([() => provider.close()], primaryFailure);
-} catch (cause) {
-  cleanupFailure = cause;
-}
-
-if (primaryFailure !== undefined || cleanupFailure !== undefined) {
-  const causes =
-    cleanupFailure instanceof AggregateError
-      ? cleanupFailure.errors
-      : [cleanupFailure ?? primaryFailure];
+if (verifierFailed) {
   process.stderr.write(
-    `ADB device verification failed: ${causes.map((cause) => (cause instanceof Error ? cause.message : String(cause))).join("; ")}\n`,
+    `[FAIL] verifier aborted — ${formatFailure(verifierFailure)}\n`,
   );
-  process.exitCode = 1;
-} else if (failures > 0) {
+  failures += 1;
+}
+
+if (failures > 0) {
   process.stdout.write(`\n${failures} check(s) failed\n`);
   process.exitCode = 1;
 } else {
@@ -420,4 +478,18 @@ function parseArguments(argv) {
     }
   }
   return parsed;
+}
+
+function formatFailure(cause) {
+  if (cause instanceof AggregateError)
+    return `${cause.message}: ${cause.errors.map(formatFailure).join("; ")}`;
+  if (cause instanceof Error) {
+    const resources = cause.cleanupResources ?? cause.resources;
+    const details = Array.isArray(resources)
+      ? ` resources=${resources.join(", ")}`
+      : "";
+    const reason = cause.diagnostics?.reason;
+    return `${cause.name}: ${cause.message}${details}${typeof reason === "string" ? ` reason=${reason}` : ""}`;
+  }
+  return String(cause);
 }

@@ -1,4 +1,9 @@
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import {
+  projectRetainedAnalysis,
+  requireAnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewService.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -31,12 +36,13 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import { deliverObservationEvidence } from "./observationEvidenceDelivery.js";
+import { deliverEvidenceResult } from "./contractToolHandler.js";
 
 interface BrowserToolRegistration {
   readonly logger: Logger;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly browser: BrowserObservationPort | undefined;
+  readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly withAdmittedAnalysis?: WithAdmittedAnalysis;
 }
@@ -96,11 +102,26 @@ export const registerBrowserTools = (
         registration,
         analyzeContract,
         { input, context },
-        (parsed, { signal, progress }) =>
-          analyzeWebBundle(options.browser, parsed, {
+        async ({ detail, view, ...request }, { signal, progress }) => {
+          const retention = {
+            recordEvidence: options.recordEvidence,
+            evidenceById: options.evidenceById,
+          };
+          if (detail === "summary") {
+            const ready = requireAnalysisViewRetention(
+              analyzeContract.name,
+              retention,
+            );
+            if (!ready.ok) return ready;
+          }
+          const analyzed = await analyzeWebBundle(options.browser, request, {
             signal,
             progress,
-          }),
+          });
+          return analyzed.ok && view !== undefined
+            ? projectRetainedAnalysis(analyzed.value, retention, view)
+            : analyzed;
+        },
       ),
   );
   server.registerTool(
@@ -202,10 +223,10 @@ const runBrowserTool = async <Input>(
           progress: mcpProgressReporter(context),
         }),
       );
-      return deliverObservationEvidence(
+      return deliverEvidenceResult(
         options.server,
-        contract,
         result,
+        contract,
         options.recordEvidence,
       );
     },

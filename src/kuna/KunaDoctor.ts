@@ -1,15 +1,19 @@
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, lstat, stat } from "node:fs/promises";
+import { dirname, posix, win32 } from "node:path";
 
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readKunaConfiguration } from "./KunaConfiguration.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
 import {
+  createKunaResourceScope,
   inspectKunaInstallation,
+  kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -30,79 +34,114 @@ const REGISTRATION_SETTINGS = [
   "REA_KUNA_JOBS",
 ] as const;
 
-/** Readiness failed and doctor has no lifecycle owner for the hash descriptor. */
-export class KunaDoctorHashCleanupFailure extends Error {
-  constructor(
-    readonly readinessFailure: KunaReadinessFailure,
-    readonly owner: OwnedFileHandle,
-    readonly cleanupCause: unknown,
-  ) {
-    super(
-      `${readinessFailure.reason}; the executable hash descriptor could not be closed`,
-      {
-        cause:
-          readinessFailure.code === "hash_cleanup_failed"
-            ? readinessFailure.hashCleanupFailure
-            : cleanupCause,
-      },
-    );
-    this.name = "KunaDoctorHashCleanupFailure";
-  }
-}
-
 /** Project Kuna readiness into the doctor contract without writing anything. */
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
-  adoptFileHandle?: (
-    resource: string,
-    handle: OwnedFileHandle,
-  ) => Promise<boolean>,
+  options: {
+    readonly resourceScope: RetainedResourceScope;
+    readonly signal?: AbortSignal;
+  },
 ): Promise<DoctorProviderInspection> => {
-  const installation = await inspectKunaInstallation(environment, {
-    platform,
-  });
-  const configured =
-    environment.REA_KUNA_COMMAND !== undefined &&
-    environment.REA_KUNA_COMMAND.length > 0;
-  if (!installation.ok) {
-    let cleanupDetail: string | undefined;
-    const hashFailure =
-      installation.error.code === "hash_cleanup_failed"
-        ? installation.error.hashCleanupFailure
-        : undefined;
-    if (hashFailure !== undefined) {
-      if (adoptFileHandle === undefined) {
-        throw new KunaDoctorHashCleanupFailure(
-          installation.error,
-          hashFailure.owner,
-          hashFailure.cleanupCause,
-        );
-      } else {
-        const closed = await adoptFileHandle(
-          hashFailure.path,
-          hashFailure.owner,
-        );
-        if (!closed)
-          cleanupDetail = "Executable hash cleanup is still pending.";
-      }
+  const kunaResources = createKunaResourceScope(options.resourceScope);
+  let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
+  try {
+    installation = await inspectKunaInstallation(environment, {
+      platform,
+      resourceScope: kunaResources.owner,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (cause: unknown) {
+    const retainedCleanup = kunaRetainedResourceCleanupError(cause, "doctor");
+    if (retainedCleanup !== undefined)
+      return {
+        id: KUNA_PROVIDER_ID,
+        configured: environment.REA_KUNA_COMMAND !== undefined,
+        available: false,
+        providerVersion: null,
+        registrationEnvironment: {},
+        checks: [
+          {
+            name: "installation",
+            ok: false,
+            code: "cleanup_incomplete",
+            detail: retainedCleanup.message,
+            remediation: null,
+            classification: "config_drift",
+            details: {
+              cleanup_incomplete: true,
+              cleanup_resources: [...retainedCleanup.cleanupResources],
+            },
+          },
+        ],
+      };
+    if (!(cause instanceof RegularFileCleanupFailure)) {
+      const cancellation = kunaResources.installationCancellationError(
+        cause,
+        "doctor",
+      );
+      if (cancellation !== undefined) throw cancellation;
+      throw cause;
     }
     return {
       id: KUNA_PROVIDER_ID,
-      configured,
+      configured: environment.REA_KUNA_COMMAND !== undefined,
       available: false,
       providerVersion: null,
       registrationEnvironment: {},
       checks: [
-        installationFailure(installation.error, configured, cleanupDetail),
+        {
+          name: "installation",
+          ok: false,
+          code: "cleanup_incomplete",
+          detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
+          remediation: null,
+          classification: "config_drift",
+          details: {
+            cleanup_incomplete: true,
+            ...kunaInstallationFailureDiagnostics(cause),
+          },
+        },
+      ],
+    };
+  }
+  const configured =
+    environment.REA_KUNA_COMMAND !== undefined &&
+    environment.REA_KUNA_COMMAND.length > 0;
+  const base = {
+    id: KUNA_PROVIDER_ID,
+    configured,
+    available: false,
+    providerVersion: null,
+    registrationEnvironment: {},
+  } as const;
+  if (!installation.ok) {
+    const check = installationFailure(installation.error, configured);
+    const cleanupResources = kunaResources.cleanupResources;
+    if (!kunaResources.hasPending) return { ...base, checks: [check] };
+    return {
+      ...base,
+      checks: [
+        {
+          ...check,
+          code: "cleanup_incomplete",
+          details: {
+            ...installation.error.diagnostics,
+            cleanup_incomplete: true,
+            ...(cleanupResources === undefined
+              ? {}
+              : { cleanup_resources: [...cleanupResources] }),
+          },
+        },
       ],
     };
   }
   const { value } = installation;
+  const cache = await cacheCheck(environment, platform);
   return {
     id: KUNA_PROVIDER_ID,
     configured,
-    available: true,
+    available: cache.ok,
     providerVersion: value.version,
     registrationEnvironment: Object.fromEntries(
       REGISTRATION_SETTINGS.flatMap((name) => {
@@ -129,7 +168,7 @@ export const inspectKunaProvider = async (
           sha256: value.sha256,
         },
       },
-      await cacheCheck(environment, platform),
+      cache,
     ],
   };
 };
@@ -137,21 +176,18 @@ export const inspectKunaProvider = async (
 const installationFailure = (
   failure: KunaReadinessFailure,
   configured: boolean,
-  cleanupDetail?: string,
 ): DoctorProviderCheck => ({
   name: "installation",
   ok: false,
   code: failure.code,
-  detail:
-    cleanupDetail === undefined
-      ? failure.reason
-      : `${failure.reason} ${cleanupDetail}`,
+  detail: failure.reason,
   remediation:
-    failure.code === "unsupported_host"
+    failure.remediation ??
+    (failure.code === "unsupported_host"
       ? KUNA_UNSUPPORTED_HOST_REMEDIATION
       : failure.code === "version_unresolved"
         ? KUNA_VERSION_PROBE_REMEDIATION
-        : KUNA_COMMAND_REMEDIATION,
+        : KUNA_COMMAND_REMEDIATION),
   classification:
     failure.code === "unsupported_host"
       ? "unsupported_host"
@@ -178,8 +214,10 @@ const cacheCheck = async (
     };
   const { cacheRoot, cacheMaxBytes } = configuration.value;
   const details = { cache_root: cacheRoot, cache_max_bytes: cacheMaxBytes };
+  // A trailing separator makes lstat follow a dangling link and report ENOENT.
+  const inspected = cacheRootWithoutTrailingSeparator(cacheRoot, platform);
   try {
-    if (!(await stat(cacheRoot)).isDirectory())
+    if (!(await stat(inspected)).isDirectory())
       return {
         name: "cache",
         ok: false,
@@ -190,10 +228,10 @@ const cacheCheck = async (
         classification: "config_drift",
         details,
       };
-    await access(cacheRoot, constants.W_OK | constants.X_OK);
+    await access(inspected, constants.W_OK | constants.X_OK);
   } catch (cause: unknown) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-      const creatable = await nearestDirectoryWritable(cacheRoot);
+    if (isMissing(cause)) {
+      const creatable = await nearestDirectoryWritable(inspected);
       return creatable.ok
         ? {
             name: "cache",
@@ -237,13 +275,18 @@ const cacheCheck = async (
   };
 };
 
-/** Whether the nearest existing ancestor is a directory REA may create entries in. */
+/**
+ * Whether the nearest existing entry on `path` is a directory REA may create
+ * entries in. A missing target is only absent when no entry occupies its name;
+ * a dangling symbolic link blocks creation just as a regular file does.
+ * `path` must not end in a separator, or lstat follows a dangling link.
+ */
 const nearestDirectoryWritable = async (
   path: string,
 ): Promise<
   { readonly ok: true } | { readonly ok: false; readonly reason: string }
 > => {
-  let candidate = dirname(path);
+  let candidate = path;
   for (;;) {
     try {
       if (!(await stat(candidate)).isDirectory())
@@ -251,15 +294,50 @@ const nearestDirectoryWritable = async (
       await access(candidate, constants.W_OK | constants.X_OK);
       return { ok: true };
     } catch (cause: unknown) {
-      const missing =
-        cause instanceof Error && "code" in cause && cause.code === "ENOENT";
       const parent = dirname(candidate);
-      if (!missing || parent === candidate)
+      const absent = isMissing(cause) ? await entryAbsent(candidate) : false;
+      if (absent !== true || parent === candidate)
         return {
           ok: false,
-          reason: `${candidate} is not writable: ${cause instanceof Error ? cause.message : String(cause)}`,
+          reason:
+            typeof absent === "string"
+              ? absent
+              : `${candidate} is not writable: ${cause instanceof Error ? cause.message : String(cause)}`,
         };
       candidate = parent;
     }
   }
+};
+
+const isMissing = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+
+/** True when nothing occupies `path`; otherwise why its name is unusable. */
+const entryAbsent = async (path: string): Promise<true | string> => {
+  try {
+    return (await lstat(path)).isSymbolicLink()
+      ? `${path} is a symbolic link whose target does not exist.`
+      : `${path} exists but cannot be resolved.`;
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? true
+      : `${path} cannot be inspected: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+};
+
+/**
+ * Drop a terminal separator without turning a filesystem root into its parent.
+ * On Darwin and Linux, `\` is a filename character, so only `/` is removed.
+ */
+const cacheRootWithoutTrailingSeparator = (
+  cacheRoot: string,
+  platform: NodeJS.Platform,
+): string => {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const root = pathApi.parse(cacheRoot).root;
+  const separator = pathApi.sep.charCodeAt(0);
+  let end = cacheRoot.length;
+  while (end > root.length && cacheRoot.charCodeAt(end - 1) === separator)
+    end -= 1;
+  return end === cacheRoot.length ? cacheRoot : cacheRoot.slice(0, end);
 };

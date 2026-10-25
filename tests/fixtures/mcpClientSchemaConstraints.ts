@@ -2,18 +2,21 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
-} from "../../src/contracts/inputSchemaPresentation.js";
+} from "../../src/contracts/jsonSchemaKeywords.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** VS Code Copilot requires truthy items even for Draft 2020-12 tuples. */
+/** VS Code Copilot rejects falsy `items` for any type that admits arrays. */
 export const arrayItemSchemaError = (
   schema: unknown,
   path: string,
 ): string | undefined => {
   if (!isRecord(schema)) return undefined;
-  if (schema.type === "array" && !schema.items)
+  const admitsArrays =
+    schema.type === "array" ||
+    (Array.isArray(schema.type) && schema.type.includes("array"));
+  if (admitsArrays && !schema.items)
     return `${path}: tool parameters array type must have items`;
   for (const [key, value] of Object.entries(schema)) {
     const children =
@@ -37,18 +40,21 @@ export const arrayItemSchemaError = (
   return undefined;
 };
 
-/** Reject Gemini-incompatible boolean literals in advertised input positions. */
-export const booleanLiteralSchemaError = (
+/** Reject Gemini-incompatible boolean and empty-string input literals. */
+export const unsupportedInputLiteralSchemaError = (
   schema: unknown,
   path: string,
 ): string | undefined => {
   if (!isRecord(schema)) return undefined;
   if (typeof schema.const === "boolean") return `${path}.const is boolean`;
+  if (schema.const === "") return `${path}.const is an empty string`;
   if (
     Array.isArray(schema.enum) &&
     schema.enum.some((value) => typeof value === "boolean")
   )
     return `${path}.enum contains a boolean`;
+  if (Array.isArray(schema.enum) && schema.enum.includes(""))
+    return `${path}.enum contains an empty string`;
   for (const [key, value] of Object.entries(schema)) {
     const children =
       schemaMaps.has(key) && isRecord(value)
@@ -63,7 +69,10 @@ export const booleanLiteralSchemaError = (
             ? [[key, value] as const]
             : [];
     for (const [suffix, child] of children) {
-      const error = booleanLiteralSchemaError(child, `${path}.${suffix}`);
+      const error = unsupportedInputLiteralSchemaError(
+        child,
+        `${path}.${suffix}`,
+      );
       if (error !== undefined) return error;
     }
   }

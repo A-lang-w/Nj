@@ -9,12 +9,17 @@ import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceS
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticObjectPropertyReferences,
+  semanticArrayPropertyReferences,
+  type JavaScriptSemanticObjectReference as Reference,
+} from "./javascriptSemanticObjectReferences.js";
 import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import type {
-  GetterQueryJob,
+import {
   SemanticGetterQuery,
+  type GetterQueryJob,
 } from "./javascriptSemanticGetterQueries.js";
 
 type ClassNode = t.ClassDeclaration | t.ClassExpression;
@@ -55,6 +60,10 @@ export interface GetterResultResolvers {
     isStatic: boolean,
   ) => boolean;
   readonly bases: (node: t.Node) => readonly ClassNode[];
+  readonly containerReferences?: (
+    node: t.ObjectExpression | t.ArrayExpression,
+    path: PropertyPath,
+  ) => readonly Reference[];
 }
 
 /** Branch syntax contributes alternatives without evaluating application code. */
@@ -75,7 +84,7 @@ const resultBranches = (node: t.Node): readonly t.Node[] | undefined => {
 
 /** Each walk owns local aliases; getter-to-getter traversal belongs to the query worklist. */
 class GetterResultWalker {
-  readonly #pending: GetterWork[];
+  readonly #pending: GetterWork[] = [];
   readonly #aliases = new Map<string, Set<string>>();
   readonly #scope: string | undefined;
 
@@ -83,10 +92,12 @@ class GetterResultWalker {
     readonly job: GetterQueryJob,
     readonly query: SemanticGetterQuery,
     readonly resolvers: GetterResultResolvers,
+    roots: readonly {
+      readonly node: t.Node | null;
+    }[] = semanticCallableResultExpressions(job.invocation.getter),
   ) {
-    this.#pending = semanticCallableResultExpressions(
-      job.invocation.getter,
-    ).flatMap(({ node }) => (node === null ? [] : [{ node, path: job.path }]));
+    for (const { node } of roots)
+      if (node !== null) this.#enqueue(() => ({ node, path: job.path }));
     this.#scope = query.state.scopeByNode.get(job.invocation.getter)?.scopeId;
   }
 
@@ -95,6 +106,25 @@ class GetterResultWalker {
       const current = this.#pending[cursor];
       if (current !== undefined) this.#visit(current);
     }
+  }
+
+  #enqueue(create: () => GetterWork): void {
+    if (!this.query.reserveResult()) return;
+    const work = create();
+    // The fallback escapes receiver roots. Keeping local suffix permutations
+    // here would repeat the precise expansion inside a single getter.
+    this.#pending.push(
+      this.query.widening
+        ? {
+            ...work,
+            path: [],
+            escapes: true,
+            ...(work.privateRead === undefined
+              ? {}
+              : { privateRead: { ...work.privateRead, path: [] } }),
+          }
+        : work,
+    );
   }
 
   #retain(current: GetterWork, reference: Reference): void {
@@ -149,12 +179,12 @@ class GetterResultWalker {
     if (previous !== undefined) {
       // Growing aliases can reach arbitrarily deep children of the same roots.
       if (current.path.length > previous.pathLength && !current.escapes)
-        this.#pending.push({
+        this.#enqueue(() => ({
           ...current,
           path: [],
           aliases: undefined,
           escapes: true,
-        });
+        }));
       return true;
     }
     const key = JSON.stringify([
@@ -195,15 +225,15 @@ class GetterResultWalker {
         (origin) => !semanticReferenceSourcesInactive(origin, state),
       ),
     ])
-      this.#pending.push({
+      this.#enqueue(() => ({
         ...current,
         node: initializer.node,
         path: [...initializer.projection, ...current.path],
         aliases,
-      });
+      }));
   }
 
-  #ownsThis(expression: t.ThisExpression): boolean {
+  #ownsThis(expression: t.ThisExpression | t.Super): boolean {
     let owner = this.query.state.parentsByNode.get(expression);
     while (
       owner !== undefined &&
@@ -239,7 +269,10 @@ class GetterResultWalker {
         });
   }
 
-  #thisValue(current: GetterWork, expression: t.ThisExpression): void {
+  #thisValue(
+    current: GetterWork,
+    expression: t.ThisExpression | t.Super,
+  ): void {
     if (!this.#ownsThis(expression)) return;
     const { getter, owner, receiver = owner } = this.job.invocation;
     if (current.privateRead !== undefined && t.isClass(owner)) {
@@ -305,33 +338,43 @@ class GetterResultWalker {
       t.isPrivateName(expression.property) &&
       t.isClass(this.job.invocation.owner)
     ) {
-      this.#pending.push({
+      const name = expression.property.id.name;
+      this.#enqueue(() => ({
         ...current,
         node: expression.object,
         path: [],
         privateRead: {
           node: expression,
-          name: expression.property.id.name,
+          name,
           path: current.path,
         },
-      });
+      }));
       return;
     }
     if (!this.#superValue(current, expression))
-      this.#pending.push({
+      this.#enqueue(() => ({
         ...current,
         node: expression.object,
         path: [
           semanticStaticPropertyKey(expression.property, expression.computed),
           ...current.path,
         ],
-      });
+      }));
   }
 
   #visit(current: GetterWork): void {
     const expression = unwrapJavaScriptExpression(current.node).node;
     if (t.isIdentifier(expression) && this.#alias(current, expression)) return;
-    if (t.isThisExpression(expression)) this.#thisValue(current, expression);
+    if (t.isForOfStatement(expression)) {
+      this.#enqueue(() => ({
+        ...current,
+        node: expression.right,
+        path: [null, ...current.path],
+      }));
+      return;
+    }
+    if (t.isThisExpression(expression) || t.isSuper(expression))
+      this.#thisValue(current, expression);
     else if (
       t.isMemberExpression(expression) ||
       t.isOptionalMemberExpression(expression)
@@ -340,9 +383,24 @@ class GetterResultWalker {
     else {
       const branches = resultBranches(expression);
       if (branches !== undefined)
-        for (const node of branches) this.#pending.push({ ...current, node });
+        for (const node of branches)
+          this.#enqueue(() => ({ ...current, node }));
       else if (current.privateRead !== undefined) this.#privateRead(current);
-      else this.#retain(current, { node: expression, path: current.path });
+      else if (
+        current.path.length > 0 &&
+        (t.isObjectExpression(expression) || t.isArrayExpression(expression)) &&
+        this.resolvers.containerReferences !== undefined
+      ) {
+        for (const reference of this.resolvers.containerReferences(
+          expression,
+          current.path,
+        ))
+          this.#enqueue(() => ({
+            ...current,
+            node: reference.node,
+            path: reference.path,
+          }));
+      } else this.#retain(current, { node: expression, path: current.path });
     }
   }
 }
@@ -352,3 +410,46 @@ export const expandSemanticGetterResult = (
   query: SemanticGetterQuery,
   resolvers: GetterResultResolvers,
 ): void => new GetterResultWalker(job, query, resolvers).run();
+
+/** Project an effect operand through the same local aliases and `this` owner as getter results. */
+export const semanticGetterReceiverReferences = (
+  getter: t.ObjectMethod | t.ClassMethod,
+  operand: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly Reference[] => {
+  const parent = state.parentsByNode.get(getter);
+  const owner = t.isClassBody(parent)
+    ? state.parentsByNode.get(parent)
+    : parent;
+  if (!t.isObjectExpression(owner) && !t.isClass(owner)) return [];
+  const query = new SemanticGetterQuery(state);
+  let privateReceiver = false;
+  const references = query.run(
+    () => {
+      query.schedule({ getter, owner }, []);
+      return [];
+    },
+    (job) =>
+      new GetterResultWalker(
+        job,
+        query,
+        {
+          objectReferences: (_receiver, path) => [{ node: getter, path }],
+          classReferences: (_lookup, path) => [{ node: getter, path }],
+          privateReceiver: () => {
+            // Keep private-field initializer identity from the existing
+            // getter owner; private slots are not public property paths.
+            privateReceiver = true;
+            return true;
+          },
+          bases: () => [],
+          containerReferences: (node, path) =>
+            t.isObjectExpression(node)
+              ? semanticObjectPropertyReferences(node, path, state)
+              : semanticArrayPropertyReferences(node, path),
+        },
+        [{ node: operand }],
+      ).run(),
+  );
+  return references.filter(({ node }) => node === getter || privateReceiver);
+};
