@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -92,6 +93,42 @@ describe("FreeBuff configuration paths", () => {
       "freebuff",
     );
   });
+
+  it.skipIf(process.platform === "win32")(
+    "ignores dangling profile links while preserving explicit and ownership reads",
+    async () => {
+      const home = await createTestTempDirectory("rea-freebuff-profile-link-");
+      const profile = join(home, ".config", "freebuff-desktop");
+      await mkdir(dirname(profile), { recursive: true });
+      await symlink(join(home, "removed-profile"), profile, "dir");
+      const statuses = (options = {}) =>
+        readClientRegistrationStatuses(home, undefined, {
+          environment: {},
+          ...options,
+        });
+      expect((await detectClients(home)).map(({ name }) => name)).not.toContain(
+        "freebuff",
+      );
+      expect((await statuses()).map(({ client }) => client)).not.toContain(
+        "freebuff",
+      );
+      expect(
+        await statuses({ selectedClientIds: ["freebuff"] }),
+      ).toContainEqual(
+        expect.objectContaining({ client: "freebuff", state: "missing" }),
+      );
+      const shared = join(home, ".agents", "mcp.json");
+      await mkdir(dirname(shared), { recursive: true });
+      await symlink(join(home, "removed-registration"), shared);
+      expect(await statuses({ evidence: "ownership" })).toContainEqual(
+        expect.objectContaining({ client: "freebuff", state: "missing" }),
+      );
+      await mkdir(join(home, "removed-profile"));
+      expect(await statuses()).toContainEqual(
+        expect.objectContaining({ client: "freebuff", state: "missing" }),
+      );
+    },
+  );
 
   it("keeps shared registration storage out of applicability evidence", () => {
     for (const client of supportedClients("/home/a", "linux", {})) {

@@ -502,6 +502,69 @@ it("keeps one row per client when OpenCode is pointed at FreeBuff's file", async
   }
 });
 
+it.each([true, false])(
+  "projects only the shared table's outcome to ZCode (shared row owned: %s)",
+  async (sharedOwned) => {
+    const home = await createTestTempDirectory("rea-shared-table-outcome-");
+    const shared = join(home, ".agents", "mcp.json");
+    const zcodePath = join(home, ".zcode", "cli", "config.json");
+    await mkdir(dirname(shared), { recursive: true });
+    await mkdir(dirname(zcodePath), { recursive: true });
+    await writeFile(zcodePath, '{"mcp":{"servers":{}}}');
+    await writeFile(
+      shared,
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [sharedOwned ? "foreign-server" : "rea", "mcp"],
+          },
+        },
+        mcpServers: {
+          rea: {
+            command: sharedOwned ? "rea" : "foreign-server",
+            args: ["mcp"],
+          },
+        },
+      }),
+    );
+    const host = systemUninstallHost(
+      home,
+      undefined,
+      { HOME: home, OPENCODE_CONFIG: shared },
+      "linux",
+    );
+    try {
+      const result = await runUninstall(false, host);
+      expect(result.status).toBe("complete");
+      const zcode = result.items.find(({ name }) => name === "zcode");
+      expect(zcode?.status).toBe(sharedOwned ? "removed" : "retained");
+      expect(
+        zcode?.actions?.filter(
+          ({ configuration_path }) => configuration_path === shared,
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          status: sharedOwned ? "removed" : "retained",
+        }),
+      ]);
+      const remaining = JSON.parse(await readFile(shared, "utf8"));
+      expect(remaining.mcp).toEqual(
+        sharedOwned
+          ? { rea: { type: "local", command: ["foreign-server", "mcp"] } }
+          : {},
+      );
+      expect(remaining.mcpServers).toEqual(
+        sharedOwned
+          ? {}
+          : { rea: { command: "foreign-server", args: ["mcp"] } },
+      );
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
 it("does not treat a dangling FreeBuff profile link as installed", async () => {
   // Setup and doctor follow ~/.config/freebuff-desktop and reject a link whose
   // target is gone. Discovery must agree: counting the leftover link as an

@@ -4,6 +4,7 @@ import {
 } from "./ClientConfigurationCleanup.js";
 import {
   ClientConfigurationShapeError,
+  clientConfigurationServersKey,
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
@@ -126,8 +127,8 @@ export interface UninstallResult {
 /** Applicability established once from product-specific discovery evidence. */
 export interface UninstallClient extends SetupClient {
   readonly applicability?: "unverified";
-  /** Clients that load this same file as a fallback. The owner's outcome is
-   * their outcome too; they never inspect or edit the file again. */
+  /** Clients that load this same registration table as a fallback report the
+   * owner's outcome without inspecting or editing the file again. */
   readonly sharedWith?: readonly string[];
 }
 
@@ -257,16 +258,21 @@ const projectSharedRegistrations = (
   items: readonly UninstallItem[],
   clients: readonly UninstallClient[],
 ): UninstallItem[] => {
-  const readersByPath = new Map<string, readonly string[]>();
+  const readersByRegistration = new Map<string, readonly string[]>();
   for (const client of clients)
     if (client.sharedWith !== undefined && client.sharedWith.length > 0)
-      readersByPath.set(client.configPath, client.sharedWith);
-  if (readersByPath.size === 0) return [...items];
+      readersByRegistration.set(
+        JSON.stringify([client.name, client.configPath]),
+        client.sharedWith,
+      );
+  if (readersByRegistration.size === 0) return [...items];
   return items.flatMap((next) => {
     const readers =
       next.configuration_path === undefined
         ? undefined
-        : readersByPath.get(next.configuration_path);
+        : readersByRegistration.get(
+            JSON.stringify([next.name, next.configuration_path]),
+          );
     if (readers === undefined) return [next];
     const { name, ...action } = next;
     return [name, ...readers].map((reader) => ({ ...action, name: reader }));
@@ -404,7 +410,21 @@ const sharedConfigPaths = (
     // at FreeBuff's file through `OPENCODE_CONFIG`, and both then own the path
     // while writing different tables, so each keeps its own decision.
     if (owners.length > 0)
-      return owners.map((owner) => ({ owner, readers: fallbacks }));
+      return owners.map((owner) => {
+        const format = owner.client.format;
+        // ZCode's fallback reads mcpServers, never another table in the same
+        // file (for example OpenCode's mcp table). Use the format owner's
+        // mapping instead of reinterpreting table names here.
+        const readers =
+          format !== undefined &&
+          format !== "unsupported" &&
+          format !== "dsh" &&
+          clientConfigurationServersKey(format) ===
+            clientConfigurationServersKey("zcode_fallback")
+            ? fallbacks
+            : [];
+        return { owner, readers };
+      });
     const [only] = fallbacks;
     if (only === undefined)
       throw new Error("A configuration path has no claiming client.");

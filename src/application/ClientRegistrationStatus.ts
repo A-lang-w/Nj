@@ -7,7 +7,7 @@ import {
   effectiveClientServer,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
-import { lstat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 import { isAbsolute } from "node:path";
 
@@ -582,7 +582,7 @@ const unavailableStatus = (
   remediation: remediation(client),
 });
 
-/** Entry presence is independent of whether its target can currently be read. */
+/** Product discovery follows targets; configuration evidence retains entry presence. */
 const clientEvidencePresent = async (
   client: SetupClient,
   evidence: { readonly selected: boolean; readonly ownership: boolean },
@@ -593,6 +593,7 @@ const clientEvidencePresent = async (
   // client, so an unreadable config must surface as unreadable instead of
   // collapsing to absence. The probes below serve automatic discovery only.
   if (evidence.selected) return ok(true);
+  const discoveryPaths = new Set(client.discoveryPaths ?? []);
   const paths = [
     ...clientEvidencePaths(client),
     ...(evidence.ownership ? clientOwnershipEvidencePaths(client) : []),
@@ -602,7 +603,7 @@ const clientEvidencePresent = async (
     | undefined;
   for (const path of paths) {
     try {
-      await lstat(path);
+      await (discoveryPaths.has(path) ? stat(path) : lstat(path));
       return ok(true);
     } catch (cause: unknown) {
       if (!isMissing(cause))
