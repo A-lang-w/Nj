@@ -7,7 +7,6 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { AdbProvider } from "../../../src/adb/AdbProvider.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -144,13 +143,9 @@ const assertAdvertisedActivityExtras = async (
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
   const validateCompactInput = ajv.compile(advertised.inputSchema);
-  const validateFullInput = ajv.compile(
-    advertisedInputJsonSchema(toolContract("start_adb_activity")),
-  );
   expect(validateCompactInput(input)).toBe(true);
-  expect(validateFullInput(input)).toBe(true);
   expect(
-    validateFullInput({
+    validateCompactInput({
       ...input,
       extras: [
         { key: "bool", type: "boolean", value: "false" },
@@ -160,21 +155,6 @@ const assertAdvertisedActivityExtras = async (
       ],
     }),
   ).toBe(true);
-  for (const [type, value] of [
-    ["boolean", ""],
-    ["boolean", "yes"],
-    ["int", "1.5"],
-    ["long", ""],
-    ["float", "garbage"],
-  ])
-    expect(
-      validateFullInput({
-        ...input,
-        extras: [{ key: "invalid", type, value }],
-      }),
-      `${type}: ${value}`,
-    ).toBe(false);
-
   // The compact profile may omit nested union validation, but the canonical
   // handler must still reject the call before starting ADB.
   expect(

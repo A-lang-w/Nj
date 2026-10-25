@@ -237,13 +237,24 @@ goMcpTest(
       ajv.validate(inputSchema, { path: "/artifacts/program", execute: true }),
     ).toBe(false);
     expect(ajv.validate(inputSchema, { path: "/artifacts/\0program" })).toBe(
-      false,
+      true,
     );
     expect(advertised.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+    });
+    const nulPath = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/artifacts/\0program" },
+    });
+    expect(nulPath.isError).toBe(true);
+    expect(parseMcpToolError(nulPath)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      },
     });
     const root = await createTestTempDirectory("rea-go-mcp-");
     const path = join(root, "application");

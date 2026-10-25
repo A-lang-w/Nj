@@ -308,6 +308,7 @@ it("preserves arbitrary nested JSON values at the converted SDK boundary", async
 });
 
 it("keeps SDK-converted schemas valid and accepting canonical examples", async () => {
+  let checkedFullRestrictions = false;
   for (const profile of ["full", "compact"] as const) {
     const server = profile === "full" ? fullServer() : compactServer();
     registerCatalog(server);
@@ -336,7 +337,48 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           `${profile} profile, ${tool.name}: ${example.title}`,
         ).toBe(true);
     }
+    if (profile === "full") {
+      const adb = tools.find(({ name }) => name === "start_adb_activity");
+      const go = tools.find(({ name }) => name === "inspect_go_binary");
+      if (adb === undefined || go === undefined)
+        throw new Error("Missing ADB activity or Go inspection tool");
+      const validateAdb = ajv.compile(adb.inputSchema);
+      const activity = {
+        serial: "emulator-5554",
+        action: "android.intent.action.MAIN",
+      };
+      expect(
+        validateAdb({
+          ...activity,
+          extras: [
+            { key: "bool", type: "boolean", value: "false" },
+            { key: "int", type: "int", value: "-3" },
+            { key: "long", type: "long", value: "9007199254740993" },
+            { key: "float", type: "float", value: "-1.25" },
+          ],
+        }),
+      ).toBe(true);
+      for (const [type, value] of [
+        ["boolean", ""],
+        ["boolean", "yes"],
+        ["int", "1.5"],
+        ["long", ""],
+        ["float", "garbage"],
+      ])
+        expect(
+          validateAdb({
+            ...activity,
+            extras: [{ key: "invalid", type, value }],
+          }),
+          `${type}: ${value}`,
+        ).toBe(false);
+      const validateGo = ajv.compile(go.inputSchema);
+      expect(validateGo({ path: "/artifacts/program" })).toBe(true);
+      expect(validateGo({ path: "/artifacts/\0program" })).toBe(false);
+      checkedFullRestrictions = true;
+    }
   }
+  expect(checkedFullRestrictions).toBe(true);
 });
 
 it("omits Gemini-unsupported dependency keywords from both catalog profiles", async () => {
