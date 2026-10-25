@@ -353,7 +353,7 @@ export const projectBrowserScenarioView = (
         final_accessibility: focusAccessibility(capture.steps),
         events: eventCounts(capture),
         network: summarizeBrowserScenarioNetwork(capture),
-        limitation_count: capture.limitations.length,
+        limitation_count: shared.limitations.length,
       },
       coverage: completeWithinViewCoverage(1, 1),
     });

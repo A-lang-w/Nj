@@ -80,6 +80,19 @@ const view = async (
 };
 
 describe("browser scenario analysis views", () => {
+  it("counts inherited Evidence limitations alongside capture-local caveats", async () => {
+    const capture = scenarioCaptureFixture();
+    expect(capture.limitations).toEqual([]);
+    const summary = await view(capture, { kind: "summary" });
+    expect(summary).toMatchObject({
+      limitations: [
+        "Artifact identity is unavailable for this observation.",
+        "Browser host platform and architecture were not observed.",
+      ],
+      summary: { limitation_count: 2 },
+    });
+  });
+
   it("summarizes steps compactly and focuses the first failing step's nearest captured tree", async () => {
     const summary = await view(quizCapture(), { kind: "summary" });
     expect(summary).toMatchObject({

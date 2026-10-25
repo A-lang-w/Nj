@@ -86,6 +86,8 @@ export const registerBrowserScenarioCommands = (
             "rea-playwright-browser-scenario",
             OPERATION,
             signal,
+            undefined,
+            { failureProjection: "initial" },
           );
           if (!("evidence_id" in result))
             return { error: "Browser scenario capture failed", ...result };

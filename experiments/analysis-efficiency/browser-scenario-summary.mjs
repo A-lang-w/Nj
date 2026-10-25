@@ -30,6 +30,8 @@ assert.ok(
 const repo = resolve(values.repository);
 const mode = values.mode;
 const output = resolve(values.output);
+const appRoot = resolve(values.application);
+const executablePath = resolve(values.browser);
 assert.ok(["complete", "summary"].includes(mode));
 assert.ok(
   !values["verify-boundaries"] || mode === "summary",
@@ -43,7 +45,6 @@ const { Client } = await import(
 const { StdioClientTransport } = await import(
   pathToFileURL(require.resolve("@modelcontextprotocol/client/stdio")).href
 );
-const appRoot = resolve(values.application);
 await mkdir(output);
 const files = await readdir(appRoot);
 const server = createServer(async (request, response) => {
@@ -142,7 +143,7 @@ try {
   const scenario = {
     browser: {
       mode: "launch",
-      executable_path: resolve(values.browser),
+      executable_path: executablePath,
       headless: true,
     },
     start_url: { url: origin, query: [] },
@@ -200,6 +201,7 @@ try {
         final.value.text,
       );
       assert.equal(summary.events.retained, capture.events.retained);
+      assert.equal(summary.limitation_count, parent.limitations.length);
       assert.equal(summary.network.transactions, transactionIds.size);
       const source = { kind: "retained-evidence", evidence_id: parentId };
       const pagingStarted = performance.now();
@@ -255,10 +257,9 @@ try {
         },
         catalog.tools,
       );
-      assert.ok(
-        tx.normalized_result.items.rows.every((row) =>
-          transactionIds.has(row.transaction_id),
-        ),
+      assert.deepEqual(
+        tx.normalized_result.items.rows.map((row) => row.transaction_id),
+        [...transactionIds].slice(0, 2),
       );
       details.returned_summary = summary;
     }
@@ -375,7 +376,13 @@ try {
         repo,
         mode,
         application: appRoot,
-        browser: values.browser,
+        browser: executablePath,
+        input_paths: {
+          repository: values.repository,
+          application: values.application,
+          browser: values.browser,
+          output: values.output,
+        },
         origin,
         discovery_ms: discoveryMs,
         elapsed_ms: performance.now() - allStarted,

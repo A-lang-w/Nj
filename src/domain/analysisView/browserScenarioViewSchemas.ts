@@ -79,7 +79,9 @@ export const browserScenarioSummarySchema = z.strictObject({
     }),
   }),
   network: browserScenarioNetworkSummarySchema,
-  limitation_count: countSchema,
+  limitation_count: countSchema.describe(
+    "Number of parent Evidence limitations returned with this summary, including inherited provenance caveats.",
+  ),
 });
 
 const pageShape = {
