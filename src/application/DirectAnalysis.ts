@@ -1,6 +1,9 @@
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
@@ -8,7 +11,8 @@ import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { createEvidence } from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import {
@@ -30,7 +34,6 @@ import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
 import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
@@ -54,7 +57,6 @@ import {
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
   AnalysisCancelledError,
@@ -209,18 +211,19 @@ export const runProviderAnalysis = async (
       );
       await dispatchQueuedInterrupts();
       if (!original.ok) return cliError(original.error);
+      const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
         return cliError(
           new AnalysisCancelledError(tool, {
             cause: operationSignal.reason,
-            partialObservation: original.value,
+            partialObservation: evidence,
           }),
         );
       const result =
         delivery?.evidenceBundlePath === undefined
-          ? original
+          ? ok(evidence)
           : await deliverAnalysisEvidence(
-              original.value,
+              evidence,
               delivery.evidenceBundlePath,
               delivery.detail,
               operationSignal,
@@ -342,11 +345,14 @@ const runAnalysis = async (
       const execution = await session.execute(tool, arguments_, { signal });
       if (!execution.ok) return err(execution.error);
       return ok(
-        createAnalysisExecutionEvidence(
-          tool,
-          evidenceParameters,
-          execution.value,
-          "observed",
+        withEvidenceCallerInputPath(
+          createAnalysisExecutionEvidence(
+            tool,
+            evidenceParameters,
+            execution.value,
+            "observed",
+          ),
+          path,
         ),
       );
     }
@@ -411,7 +417,8 @@ const runAnalysis = async (
             : providerIdentityForRoute(route, tool),
           evidenceProfile,
         });
-        if (cached !== undefined) return ok(cached);
+        if (cached !== undefined)
+          return ok(withEvidenceCallerInputPath(cached, path));
       }
     }
     const openOptions = {
@@ -446,8 +453,14 @@ const runAnalysis = async (
       evidenceProfile,
     });
     if (!executed.ok) return executed;
-    const { evidence, cachePolicy } = executed.value;
-    const recorded = session.recordEvidence(evidence);
+    const { cachePolicy } = executed.value;
+    const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
+    // Provider execution may have already recorded the same semantic Evidence
+    // without this invocation's request path. Import replaces that metadata
+    // while retaining the authenticated result and snapshot binding.
+    const recorded = session.importEvidenceBundle(
+      createImmutableEvidenceBundle([evidence]),
+    );
     if (!recorded.ok)
       return err(recorded.error.retainPartialObservation(evidence));
     if (isWorkflowEvidenceTool(tool)) {
@@ -589,6 +602,9 @@ const executeAnalysisTool = async (input: {
       result: result.value.result,
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
+      ...(result.value.evidenceLinks === undefined
+        ? {}
+        : { upstreamEvidenceLinks: result.value.evidenceLinks }),
     });
     return ok({
       evidence,
@@ -626,30 +642,17 @@ const executeAnalysisTool = async (input: {
       );
   }
   if (!result.ok) return result;
-  const evidence = createEvidence(
-    result.value.subject === undefined
-      ? input.openedTarget
-      : (result.value.subject ?? undefined),
-    result.value.provider,
+  const evidence = createAnalysisExecutionEvidence(
+    tool,
+    input.evidenceParameters,
     {
-      operation: tool,
-      parameters: input.evidenceParameters,
-      result: result.value.result,
-      ...(result.value.analysisProfile === undefined
-        ? {}
-        : { analysisProfile: result.value.analysisProfile }),
-      rawResult: result.value.rawResult,
-      limitations: result.value.limitations,
-      ...(result.value.relationshipCoverage === undefined
-        ? {}
-        : { relationshipCoverage: result.value.relationshipCoverage }),
-      locations: result.value.locations,
-      evidenceLinks:
-        tool === "inspect_artifact"
-          ? artifactInspectionResultSchema.parse(result.value.result)
-              .evidence_links
-          : [],
+      ...result.value,
+      subject:
+        result.value.subject === undefined
+          ? input.openedTarget
+          : result.value.subject,
     },
+    "observed",
   );
   return ok({ evidence });
 };

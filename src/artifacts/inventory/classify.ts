@@ -7,6 +7,8 @@ import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.j
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
+import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
+import { locateNodeSea, readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
@@ -47,37 +49,6 @@ export interface RootInventorySource extends StableRegularFileDescriptor {
   readonly owner: OwnedFileHandle;
 }
 
-/** Classify and hash one file root through the same stable open descriptor. */
-export const classifyAndHashRoot = async (
-  path: string,
-  directory: boolean,
-  expectedMetadata: Stats,
-  options: Pick<ArtifactInventoryOptions, "resourceScope" | "signal">,
-): Promise<RootClassification> => {
-  return options.resourceScope.run(async () => {
-    const result = await classifyAndHashRootForInventory(
-      path,
-      directory,
-      expectedMetadata,
-      options,
-    );
-    const rootSource = result.rootSource;
-    if (rootSource !== undefined) {
-      const owner: ArtifactResourceOwner = {
-        kind: "file-handle",
-        handle: rootSource.owner,
-        resource: `root artifact descriptor for ${path}`,
-      };
-      const cleanupAttempt = await options.resourceScope.release(owner);
-      if (cleanupAttempt.kind === "failed")
-        throw options.resourceScope.cleanupFailure({ kind: "completed" }, [
-          cleanupAttempt,
-        ]);
-    }
-    return { format: result.format, digest: result.digest };
-  });
-};
-
 /** Classify a root and retain its admitted ZIP descriptor for child inventory. */
 export const classifyAndHashRootForInventory = async (
   path: string,
@@ -90,15 +61,15 @@ export const classifyAndHashRootForInventory = async (
 ): Promise<RootInventoryClassification> => {
   if (directory)
     return { format: "directory", digest: null, rootSource: undefined };
-  const ownedHandle = await openRootArtifact(
+  const source = await openRootArtifact(
     path,
     options.resourceScope,
     options.signal,
   );
-  const handle = ownedHandle.handle;
+  const { handle, initial } = source;
   const owner: ArtifactResourceOwner = {
     kind: "file-handle",
-    handle: ownedHandle,
+    handle: source.owner,
     resource: `root artifact descriptor for ${path}`,
   };
   let outcome:
@@ -108,7 +79,6 @@ export const classifyAndHashRootForInventory = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    const initial = await handle.stat();
     if (!sameRegularFileState(expectedMetadata, initial))
       throw new ArtifactReaderFailure(
         "integrity",
@@ -130,15 +100,14 @@ export const classifyAndHashRootForInventory = async (
       isZipPackageFormat(format) ||
       format === "mach-o-universal" ||
       format === "godot-pck" ||
-      format === "pyinstaller";
+      format === "pyinstaller" ||
+      format === "node-sea";
     outcome = {
       kind: "completed",
       value: {
         format,
         digest,
-        rootSource: retainSource
-          ? { handle, initial, owner: ownedHandle }
-          : undefined,
+        rootSource: retainSource ? source : undefined,
       },
     };
   } catch (cause: unknown) {
@@ -221,6 +190,15 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
+    const sea = await locateNodeSea(handle, archiveBytes, signal);
+    abortIfNeeded(signal);
+    if (sea !== undefined) {
+      await decodeNodeSeaBlob(
+        await readNodeSeaBlob(handle, sea, archiveBytes, signal),
+        signal,
+      );
+      return "node-sea";
+    }
     const packaged = await containsPyInstallerArchive(
       handle,
       archiveBytes,

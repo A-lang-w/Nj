@@ -4,14 +4,16 @@ import type { Logger } from "pino";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
-import type { FridaRemoteConnection } from "../application/frida/FridaInstrumentationPort.js";
+import type {
+  FridaInstrumentationPort,
+  FridaRemoteConnection,
+} from "../application/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 /** Register Frida device discovery and persistent instrumentation operations. */
 export const registerFridaTools = (
