@@ -7,14 +7,16 @@ import { randomBytes } from "node:crypto";
 import { constants, zstdCompressSync } from "node:zlib";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
 
 import {
   TextReader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
+  ZipReader,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -219,6 +221,46 @@ describe("ZIP Zstandard member streams", () => {
   it.each(["abort", "consumer-close"] as const)(
     "settles a streaming Zstandard read after %s and allows another read",
     async (stop) => {
+      const producers: { settled: boolean }[] = [];
+      const decoders: Duplex[] = [];
+      const toWeb = Duplex.toWeb;
+      const conversions = vi
+        .spyOn(Duplex, "toWeb")
+        .mockImplementation((stream, options) => {
+          decoders.push(stream);
+          return toWeb(stream, options);
+        });
+      onTestFinished(() => conversions.mockRestore());
+      const enumerate = ZipReader.prototype.getEntriesGenerator;
+      const enumeration = vi
+        .spyOn(ZipReader.prototype, "getEntriesGenerator")
+        .mockImplementation(async function* (
+          this: ZipReader<unknown>,
+          options,
+        ) {
+          for await (const entry of enumerate.call(this, options)) {
+            if (!entry.directory) {
+              const getData = entry.getData.bind(entry);
+              vi.spyOn(entry, "getData").mockImplementation((...args) => {
+                const producer = { settled: false };
+                producers.push(producer);
+                const result = getData(...args);
+                void result.then(
+                  () => {
+                    producer.settled = true;
+                  },
+                  () => {
+                    producer.settled = true;
+                  },
+                );
+                return result;
+              });
+            }
+            yield entry;
+          }
+          return true;
+        });
+      onTestFinished(() => enumeration.mockRestore());
       const content = randomBytes(512 * 1024);
       const root = await createTestTempDirectory("rea-zip-zstd-cancel-");
       const path = join(root, "method93.zip");
@@ -249,11 +291,33 @@ describe("ZIP Zstandard member streams", () => {
         if (!output.closed) await once(output, "close");
         expect(received).toBeGreaterThan(0);
         expect(received).toBeLessThan(content.length);
+        expect(producers).toHaveLength(1);
+        expect(decoders).toHaveLength(1);
+        // A fresh decoder can succeed while an abandoned producer is stuck.
+        // Verify the first actual getData and native close before starting it.
+        await vi.waitFor(
+          () => {
+            expect(producers[0]?.settled).toBe(true);
+            expect(decoders[0]?.closed).toBe(true);
+            expect(decoders[0]?.destroyed).toBe(true);
+          },
+          { timeout: 5_000 },
+        );
         const chunks: Buffer[] = [];
         for await (const chunk of await reader.open(entry))
           chunks.push(Buffer.from(chunk));
         expect(Buffer.concat(chunks).equals(content)).toBe(true);
+        expect(producers).toHaveLength(2);
+        expect(decoders).toHaveLength(2);
+        await vi.waitFor(
+          () => {
+            expect(producers.every(({ settled }) => settled)).toBe(true);
+            expect(decoders.every(({ closed }) => closed)).toBe(true);
+          },
+          { timeout: 5_000 },
+        );
       } finally {
+        controller.abort();
         await reader.close();
       }
     },
