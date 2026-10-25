@@ -755,6 +755,40 @@ it("budgets Rosetta registers with the ordinary registers they follow", () => {
   );
 });
 
+it("keeps valid registers around a malformed Rosetta member at the exact slot limit", () => {
+  const parsed = parse(
+    withBody(`{
+      "translated": true,
+      "threads": [{
+        "threadState": {
+          "flavor": "x86_THREAD_STATE",
+          "rip": { "value": 1 },
+          "rosetta": { "tmp0": { "value": 2 }, "tmp1": "invalid" },
+          "rsp": { "value": 3 }
+        }
+      }],
+      "usedImages": []
+    }`),
+    { max_registers: 4 },
+  );
+  expect(parsed.threads[0]?.registers.map(({ name }) => name)).toEqual([
+    "rip",
+    "rosetta.tmp0",
+    "rsp",
+  ]);
+  expect(parsed.coverage).toMatchObject({
+    status: "partial",
+    registers: 3,
+    type_mismatches: [
+      {
+        path: "body.threads[0].threadState.rosetta.tmp1",
+        expected: "integer or object with integer value",
+        observed: "string",
+      },
+    ],
+  });
+});
+
 it("refuses an over-budget collection before parsing the rows past the allowance", () => {
   // Rows after the allowance are invalid JSON; the budget must refuse first.
   const threads = withBody(`{"threads":[{},{},{},?],"usedImages":[]}`);

@@ -616,8 +616,7 @@ export class GhidraClient {
             path,
             this.#fileResources,
             signal,
-            async (handle) => {
-              const initial = await handle.stat();
+            async ({ handle, initial }) => {
               assertRegularFileActive(signal);
               if (!Number.isSafeInteger(initial.size) || initial.size < 0)
                 throw new RangeError("Snapshot size must be a safe integer");
@@ -859,7 +858,7 @@ export class GhidraClient {
     try {
       const result = await this.#startWithin(deadline);
       return result.ok && deadline.signal.aborted
-        ? this.#startupInterrupted(deadline)
+        ? await this.#startupInterrupted(deadline)
         : result;
     } catch (cause: unknown) {
       if (cause instanceof GhidraSessionError) return err(cause);
