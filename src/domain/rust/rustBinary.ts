@@ -99,6 +99,14 @@ export const rustBinarySchema = z
         ["bits"],
         "Word size is null exactly when the container is WebAssembly.",
       );
+    if ((report.format === "wasm") !== (report.architecture === "wasm"))
+      issue(
+        context,
+        ["architecture"],
+        "Architecture is wasm exactly when the container is WebAssembly.",
+      );
+    if (report.format === "wasm" && report.byte_order !== "little")
+      issue(context, ["byte_order"], "A WebAssembly module is little-endian.");
     const metadata = report.auditable_metadata;
     if (metadata !== null) {
       checkSection(report.artifact.bytes, metadata, context);
