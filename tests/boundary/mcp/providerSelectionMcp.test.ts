@@ -3,6 +3,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -262,7 +263,13 @@ const sessionStatusOf = async (
   const text = reply.content?.[0];
   if (text?.type !== "text") throw new Error("binary_session omitted text");
   expect(JSON.parse(text.text)).toEqual(reply.structuredContent);
-  return { parsed, bytes: Buffer.byteLength(text.text) };
+  return {
+    parsed,
+    raw: z
+      .object({ result: z.record(z.string(), z.unknown()) })
+      .parse(reply.structuredContent),
+    bytes: Buffer.byteLength(text.text),
+  };
 };
 
 type SessionStatus = Awaited<ReturnType<typeof sessionStatusOf>>;
@@ -424,6 +431,55 @@ describe("binary_session detail over MCP", () => {
       ]);
     }
     expect(starts).toEqual([]);
+  });
+
+  it("rejects results whose fields do not match their detail, canonically and as advertised", async () => {
+    const mcp = await connectDetailFixture([]);
+    const summary = (await sessionStatusOf(mcp, {})).raw.result;
+    const complete = (await sessionStatusOf(mcp, { detail: "complete" })).raw
+      .result;
+    const advertised = (await mcp.listTools()).tools.find(
+      ({ name }) => name === "binary_session",
+    )?.outputSchema;
+    if (advertised === undefined)
+      throw new Error("binary_session omitted its output schema");
+    const validate = new AjvJsonSchemaValidator().getValidator(
+      z.record(z.string(), z.unknown()).parse(advertised),
+    );
+    const canonical = toolContract("binary_session").outputSchema;
+    const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
+    const cases = {
+      summary,
+      complete,
+      "complete labelled summary": { ...complete, detail: "summary" },
+      "summary labelled complete": { ...summary, detail: "complete" },
+      "summary without omitted_fields": summaryWithoutOmissions,
+      "complete with omitted_fields": {
+        ...complete,
+        omitted_fields: summary.omitted_fields,
+      },
+      "summary with complete candidates": {
+        ...summary,
+        analysis_provider_candidates: complete.analysis_provider_candidates,
+      },
+      "summary with complete tool groups": {
+        ...summary,
+        tool_availability: complete.tool_availability,
+      },
+      "complete with summary candidates": {
+        ...complete,
+        analysis_provider_candidates: summary.analysis_provider_candidates,
+      },
+      "complete with summary tool groups": {
+        ...complete,
+        tool_availability: summary.tool_availability,
+      },
+    };
+    for (const [name, result] of Object.entries(cases)) {
+      const valid = name === "summary" || name === "complete";
+      expect(canonical.safeParse({ result }).success, name).toBe(valid);
+      expect(validate({ result }).valid, name).toBe(valid);
+    }
   });
 
   it("rejects an unknown detail without starting a provider", async () => {

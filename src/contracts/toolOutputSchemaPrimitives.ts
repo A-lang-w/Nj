@@ -21,7 +21,7 @@ import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
 import { objcClassImportIdentitySchema } from "../domain/native/objcSwiftMetadata.js";
-import { BINARY_SESSION_DETAILS } from "./sessionStatusContract.js";
+import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "./sessionStatusContract.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
@@ -558,7 +558,8 @@ export function expandToolAvailability(
   );
 }
 
-export const sessionProvider = z
+/** Session status facts shared by every detail level and session kind. */
+export const sessionProviderFacts = z
   .object({
     cleanup_pending: z.boolean(),
     capabilities: z.array(providerCapabilitySet),
@@ -576,16 +577,6 @@ export const sessionProvider = z
         analysis_profile: analysisProfileSchema,
       })
       .nullable(),
-    detail: z.enum(BINARY_SESSION_DETAILS),
-    omitted_fields: z.array(z.string().min(1)).min(1).optional(),
-    analysis_provider_candidates: z.union([
-      z.array(analysisProviderCandidate),
-      z.array(analysisProviderCandidateSummary),
-    ]),
-    tool_availability: z.union([
-      toolAvailabilityInventory,
-      toolAvailabilitySummaryInventory,
-    ]),
     client_features: z.object({
       elicitation_form: z.boolean(),
       elicitation_url: z.boolean(),
@@ -638,6 +629,34 @@ export const sessionProvider = z
     }),
   })
   .passthrough();
+
+/**
+ * Fields whose shape `detail` selects. A summary must list what it omits and
+ * carry only summary candidates and tool groups; complete detail must carry
+ * diagnostics, candidate capabilities and static tool flags, and no omission list.
+ */
+export const sessionStatusDetailShapes = [
+  {
+    detail: z.literal("summary"),
+    omitted_fields: z
+      .array(z.enum(BINARY_SESSION_SUMMARY_OMITTED_FIELDS))
+      .min(1),
+    analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
+    tool_availability: toolAvailabilitySummaryInventory,
+  },
+  {
+    detail: z.literal("complete"),
+    omitted_fields: z.never().optional(),
+    analysis_provider_candidates: z.array(analysisProviderCandidate),
+    tool_availability: toolAvailabilityInventory,
+  },
+] as const;
+
+/** Session status for either detail level, keyed by `detail`. */
+export const sessionProvider = z.discriminatedUnion("detail", [
+  sessionProviderFacts.extend(sessionStatusDetailShapes[0]),
+  sessionProviderFacts.extend(sessionStatusDetailShapes[1]),
+]);
 
 export const nullableText = z.string().nullable();
 export const addressList = z.array(z.string());

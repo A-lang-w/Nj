@@ -595,8 +595,10 @@ identity, selection, and availability and target-support `status`, `code`, and
 `reason`. It lists the fields it leaves out in `omitted_fields`: provider
 `diagnostics`, candidate `capabilities`, and each tool group's static `surface`,
 `effects`, and `annotations`. Omitted fields are not empty or false.
-`detail: "complete"` returns them inline and groups tools by those flags too.
-CLI `capabilities` and `providers` always return complete provider facts.
+`detail: "complete"` returns them inline, groups tools by those flags too, and
+has no `omitted_fields`. The output schema keys each result's candidate,
+tool-group and omission fields by its `detail`. CLI `capabilities` and
+`providers` always return complete provider facts.
 
 `get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
 Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,

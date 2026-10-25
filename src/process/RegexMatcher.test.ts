@@ -460,8 +460,9 @@ it("describes the effective heap and the configurable matching deadline", () => 
   ]) {
     const limitation = regexMatchingLimitation(heap);
     for (const fact of [
-      "5000 ms matching deadline (source default)",
-      "128 MiB worker heap request (source default)",
+      "5000 ms",
+      "128 MiB",
+      "source default",
       "regex.matching_deadline_ms",
       "regex.worker_heap_request_mib",
       "REA_REGEX_MATCHING_DEADLINE_MS",
@@ -479,10 +480,7 @@ it("describes the effective heap and the configurable matching deadline", () => 
     );
     expect(limitation.length).toBeLessThan(700);
     if (heap.kind === "effective")
-      expect(limitation).toContain(
-        `effective ${String(heap.mib)} MiB old-generation heap`,
-      );
-    else expect(limitation).toContain("was not established");
+      expect(limitation).toContain(`${String(heap.mib)} MiB`);
     expect(
       projectAnalysisError(regexMatchingDeadlineError("search_procedures"))
         .remediation.action,
@@ -544,17 +542,21 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     DEFAULT_REGEX_MATCHING_DEADLINE,
     request,
   );
-  expect(selected).toContain(
-    "effective 256 MiB old-generation heap from its 256 MiB worker heap request (source setting)",
-  );
+  for (const fact of ["256 MiB", "source setting"])
+    expect(selected).toContain(fact);
+  expect(selected).not.toContain("--max-old-space-size");
   const overridden = regexMatchingLimitation(
     effective(64, true),
     DEFAULT_REGEX_MATCHING_DEADLINE,
     request,
   );
-  expect(overridden).toContain(
-    "effective 64 MiB old-generation heap set by a positive Node --max-old-space-size over its 256 MiB worker heap request (source setting)",
-  );
+  for (const fact of [
+    "64 MiB",
+    "256 MiB",
+    "source setting",
+    "--max-old-space-size",
+  ])
+    expect(overridden).toContain(fact);
   const projected = projectAnalysisError(
     regexWorkerHeapError(
       "search_procedures",

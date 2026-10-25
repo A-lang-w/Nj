@@ -10,7 +10,7 @@ import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
   expandProviderCapabilities,
-  sessionProvider,
+  sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -27,11 +27,11 @@ import {
 } from "../../native/NativeMacOSProviderMetadata.js";
 
 const projectedStatusSchema = z.object({
-  capabilities: sessionProvider.shape.capabilities,
+  capabilities: sessionProviderFacts.shape.capabilities,
   analysis_provider_candidates: z.array(analysisProviderCandidate),
 });
 const summaryStatusSchema = z.object({
-  capabilities: sessionProvider.shape.capabilities,
+  capabilities: sessionProviderFacts.shape.capabilities,
   analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
 });
 

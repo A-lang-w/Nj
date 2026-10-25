@@ -45,31 +45,30 @@ const operationResultKey = (contract) => {
   return evidence ? "normalized_result" : "result";
 };
 
-/** Expand compact session metadata once at the verifier boundary. */
+/**
+ * Expand compact session metadata once at the verifier boundary. The caller
+ * has validated the status against the binary_session contract, so a summary
+ * carries summary candidates without capability sets; complete detail must
+ * still expand every candidate's capabilities.
+ */
 export const expandMcpSessionStatus = (status) => ({
   ...status,
   capabilities: expandProviderCapabilities(status.capabilities),
-  analysis_provider_candidates: expandProviderCandidates(
-    status.analysis_provider_candidates,
-  ),
+  analysis_provider_candidates:
+    status.detail === "summary"
+      ? status.analysis_provider_candidates
+      : expandProviderCandidates(status.analysis_provider_candidates),
   tool_availability: expandToolAvailability(status.tool_availability),
 });
 
-/**
- * Expand provider capability groups while retaining candidate identity/state.
- * A summary candidate carries no capability sets; it stays without them.
- */
+/** Expand provider capability groups while retaining candidate identity/state. */
 export const expandProviderCandidates = (candidates) =>
-  candidates.map((candidate) =>
-    Object.hasOwn(candidate, "capabilities")
-      ? {
-          ...candidate,
-          capabilities: expandProviderCapabilities(
-            providerCapabilitySet.array().parse(candidate.capabilities),
-          ),
-        }
-      : candidate,
-  );
+  candidates.map((candidate) => ({
+    ...candidate,
+    capabilities: expandProviderCapabilities(
+      providerCapabilitySet.array().parse(candidate.capabilities),
+    ),
+  }));
 
 /** Expand CLI provider capability groups at the same owning boundary. */
 export const expandProviderOutput = (providers) => ({
