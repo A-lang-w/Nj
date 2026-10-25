@@ -339,9 +339,12 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
     }
     if (profile === "full") {
       const adb = tools.find(({ name }) => name === "start_adb_activity");
-      const go = tools.find(({ name }) => name === "inspect_go_binary");
-      if (adb === undefined || go === undefined)
-        throw new Error("Missing ADB activity or Go inspection tool");
+      const managed = tools.find(
+        ({ name }) => name === "inspect_managed_members",
+      );
+      const wasm = tools.find(({ name }) => name === "inspect_wasm_artifact");
+      if (adb === undefined || managed === undefined || wasm === undefined)
+        throw new Error("Missing ADB, managed member, or WASM inspection tool");
       const validateAdb = ajv.compile(adb.inputSchema);
       const activity = {
         serial: "emulator-5554",
@@ -372,9 +375,42 @@ it("keeps SDK-converted schemas valid and accepting canonical examples", async (
           }),
           `${type}: ${value}`,
         ).toBe(false);
-      const validateGo = ajv.compile(go.inputSchema);
-      expect(validateGo({ path: "/artifacts/program" })).toBe(true);
-      expect(validateGo({ path: "/artifacts/\0program" })).toBe(false);
+      const validateManaged = ajv.compile(managed.inputSchema);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Missing.Type"],
+        }),
+      ).toBe(true);
+      expect(
+        validateManaged({
+          path: "/artifacts/program.dll",
+          type_names: ["Fixture.Program", "Fixture.Program"],
+        }),
+      ).toBe(false);
+      const validateWasm = ajv.compile(wasm.inputSchema);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "summary" }),
+      ).toBe(true);
+      expect(
+        validateWasm({ path: "/artifacts/program", detail: "brief" }),
+      ).toBe(false);
+      for (const command_timeout_ms of [1, 42_000, 2_147_483_647])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+        ).toBe(true);
+      for (const command_timeout_ms of [
+        0,
+        -1,
+        1.5,
+        2_147_483_648,
+        "1000",
+        null,
+      ])
+        expect(
+          validateWasm({ path: "/artifacts/program", command_timeout_ms }),
+          String(command_timeout_ms),
+        ).toBe(false);
       checkedFullRestrictions = true;
     }
   }

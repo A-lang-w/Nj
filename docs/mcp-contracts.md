@@ -1300,10 +1300,11 @@ Boundary tests pin every advertised compact schema to the budget, keep them
 valid JSON Schema that still accepts every canonical example. Client verification
 also checks provider-facing sizes and canonical examples after conversion by
 the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
-The SDK catalog test checks that full-profile schemas retain nested ADB extra
-and local-path restrictions. Compact MCP workflow tests verify that canonical
-validation rejects inputs admitted by the reduced advertisement before provider
-work.
+The SDK catalog test checks that full-profile schemas retain nested ADB extra,
+managed selection, and WASM timeout and detail restrictions. Path-contract tests
+check full-profile local-path rules. Compact MCP workflow tests verify canonical
+rejection of invalid inputs before provider work, independent of how much detail
+the selected advertisement retains.
 
 ### Output schemas
 

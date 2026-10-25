@@ -1,3 +1,4 @@
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
@@ -155,15 +156,7 @@ const assertAdvertisedActivityExtras = async (
       ],
     }),
   ).toBe(true);
-  // The compact profile may omit nested union validation, but the canonical
-  // handler must still reject the call before starting ADB.
-  expect(
-    validateCompactInput({
-      ...input,
-      extras: [{ key: "invalid", type: "boolean", value: "yes" }],
-    }),
-  ).toBe(true);
-
+  // Canonical validation rejects malformed extras before starting ADB.
   const callsBeforeInvalidExtra = await calls();
   const invalidExtra = await client.callTool({
     name: "start_adb_activity",
@@ -172,7 +165,10 @@ const assertAdvertisedActivityExtras = async (
       extras: [{ key: "invalid", type: "boolean", value: "yes" }],
     },
   });
-  expect(invalidExtra.isError).toBe(true);
+  expect(parseMcpToolError(invalidExtra).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
   expect(await calls()).toEqual(callsBeforeInvalidExtra);
 };
 
