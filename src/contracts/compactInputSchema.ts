@@ -360,19 +360,26 @@ const reducedArrayItems = (
         ? itemTypes(target.value, scope, new Set([...seen, node]))
         : undefined;
     }
-    if (node.items !== undefined && !Array.isArray(node.items))
-      return detectedTypes(node.items, references, scope, seen);
-    const branches = (
-      Array.isArray(node.anyOf)
-        ? node.anyOf
-        : Array.isArray(node.oneOf)
-          ? node.oneOf
-          : []
-    ).filter((branch) =>
-      detectedTypes(branch, references, scope, seen)?.includes("array"),
+    if (Array.isArray(node.prefixItems) || Array.isArray(node.items))
+      return undefined;
+    const alternatives = Array.isArray(node.anyOf)
+      ? node.anyOf
+      : Array.isArray(node.oneOf)
+        ? node.oneOf
+        : [];
+    if (alternatives.length === 0)
+      return node.items !== undefined
+        ? detectedTypes(node.items, references, scope, seen)
+        : undefined;
+    const branchTypes = alternatives.map((branch) =>
+      detectedTypes(branch, references, scope, seen),
     );
-    if (branches.length === 0) return undefined;
-    const types = branches.map((branch) => itemTypes(branch, scope, seen));
+    if (branchTypes.some((types) => types === undefined)) return undefined;
+    const arrayBranches = alternatives.filter((_, index) =>
+      branchTypes[index]?.includes("array"),
+    );
+    if (arrayBranches.length === 0) return undefined;
+    const types = arrayBranches.map((branch) => itemTypes(branch, scope, seen));
     return types.some((type) => type === undefined)
       ? undefined
       : [...new Set(types.flatMap((type) => type ?? []))];

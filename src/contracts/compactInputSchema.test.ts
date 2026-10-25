@@ -185,7 +185,11 @@ describe("compact advertised input schema", () => {
     const { schema } = compactAdvertisedInputSchema(
       {
         type: "object",
-        properties: { normalized_result: {}, literal: { const: {} } },
+        properties: {
+          normalized_result: {},
+          literal: { const: {} },
+          forbidden: { not: {} },
+        },
       },
       13312,
     );
@@ -195,6 +199,7 @@ describe("compact advertised input schema", () => {
       items: {},
     });
     expect(properties.literal).toEqual({ const: {} });
+    expect(properties.forbidden).toEqual({ not: {} });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     for (const normalized_result of [
       null,
@@ -204,8 +209,10 @@ describe("compact advertised input schema", () => {
       42,
       "result",
       [[null, true, 42, "nested"], { values: [[], [false]] }],
-    ])
+    ]) {
       expect(validate({ normalized_result })).toBe(true);
+      expect(validate({ forbidden: normalized_result })).toBe(false);
+    }
   });
 
   it("preserves independent validation constraints on reference siblings", () => {
@@ -399,12 +406,23 @@ describe("compact input schema budget and reduction", () => {
           type: "array",
           items: {},
         },
+        prefixed: {
+          type: "array",
+          prefixItems: [{ type: "number" }],
+          items: { type: "string" },
+        },
+        openUnion: {
+          type: "array",
+          anyOf: [{}, { type: "array", items: { type: "object" } }],
+        },
         nullable: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
       properties: {
         capture: { $ref: "#/$defs/pair", description: "Complete capture." },
         observations: { $ref: "#/$defs/observations" },
         unconstrained: { $ref: "#/$defs/unconstrained" },
+        prefixed: { $ref: "#/$defs/prefixed" },
+        openUnion: { $ref: "#/$defs/openUnion" },
         label: { $ref: "#/$defs/nullable" },
       },
     };
@@ -413,6 +431,10 @@ describe("compact input schema budget and reduction", () => {
       1024,
     );
     expect(presentation).toBe("reduced");
+    const fallbackItems = {
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: {},
+    };
     expect(schema.properties).toEqual({
       capture: { type: "object", description: "Complete capture." },
       observations: {
@@ -421,10 +443,15 @@ describe("compact input schema budget and reduction", () => {
       },
       unconstrained: {
         type: "array",
-        items: {
-          type: ["null", "boolean", "object", "array", "number", "string"],
-          items: {},
-        },
+        items: fallbackItems,
+      },
+      prefixed: {
+        type: "array",
+        items: fallbackItems,
+      },
+      openUnion: {
+        type: "array",
+        items: fallbackItems,
       },
       label: { type: ["string", "null"] },
     });
@@ -437,6 +464,8 @@ describe("compact input schema budget and reduction", () => {
         unconstrained: [
           [[null, true, 42, "nested"], { values: [[], [false]] }],
         ],
+        prefixed: [1, "tail"],
+        openUnion: ["text"],
         label: null,
       }),
     ).toBe(true);
@@ -450,7 +479,9 @@ describe("compact input schema budget and reduction", () => {
       false,
     );
   });
+});
 
+describe("compact input schema shallow fallback", () => {
   it("reduces structurally oversized schemas to the shallow property presentation", () => {
     const compacted = compactAdvertisedInputSchema(oversizedPairSchema(), 1024);
     expect(compacted.presentation).toBe("reduced");
