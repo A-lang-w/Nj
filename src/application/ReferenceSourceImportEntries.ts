@@ -313,6 +313,23 @@ interface ImportLookupRejection {
 }
 
 /**
+ * Cut an ESM specifier at the first raw `?` or `#`. The suffix, marker
+ * included, is not a pathname. This is the only split; lookup and unresolved
+ * spelling both use it.
+ */
+const splitEsmSpecifier = (
+  specifier: string,
+): { readonly pathname: string; readonly suffix: string } => {
+  const componentStart = specifier.search(/[?#]/u);
+  return componentStart === -1
+    ? { pathname: specifier, suffix: "" }
+    : {
+        pathname: specifier.slice(0, componentStart),
+        suffix: specifier.slice(componentStart),
+      };
+};
+
+/**
  * Parse one ESM specifier. Query and fragment end the pathname, and the
  * pathname is percent-decoded once. `%2F`, `%5C`, NUL, and malformed escapes
  * are rejections. Require filenames never reach this parser.
@@ -328,9 +345,7 @@ const importLookupPath = (
   // separator policy to the specifier's own pathname. `%5C` is deliberately
   // stricter than Node: Node 24 on Linux decodes it to a file literally named
   // `a\b.mjs` and rejects only `%2F`.
-  const componentStart = specifier.search(/[?#]/u);
-  const specifierPath =
-    componentStart === -1 ? specifier : specifier.slice(0, componentStart);
+  const { pathname: specifierPath } = splitEsmSpecifier(specifier);
   if (/%5c/iu.test(specifierPath))
     return err({
       message:
@@ -438,14 +453,21 @@ const resolveInternalSpecifier = (
     : { to: match, resolution: "internal" };
 };
 
-/** Source spelling of an unresolved request, before URL interpretation. */
+/**
+ * Source spelling of an unresolved request, before URL interpretation.
+ * Only the pathname is joined and normalized. The query or fragment suffix
+ * stays as written, so `./missing.mjs?v=1/..` does not collapse to `.`.
+ */
 const unresolvedSourceSpelling = (
   fromPath: string,
   specifier: string,
-): string =>
-  posix.isAbsolute(specifier)
-    ? specifier
-    : posix.normalize(posix.join(posix.dirname(fromPath), specifier));
+): string => {
+  if (posix.isAbsolute(specifier)) return specifier;
+  const { pathname, suffix } = splitEsmSpecifier(specifier);
+  return (
+    posix.normalize(posix.join(posix.dirname(fromPath), pathname)) + suffix
+  );
+};
 
 /**
  * Source imports use `importLookupPath`'s parsed pathname. An interpreted

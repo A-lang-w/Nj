@@ -525,6 +525,51 @@ it("keeps an unmatched query-bearing ESM request unresolved", () => {
   );
 });
 
+it("keeps dot segments inside an unmatched ESM query", () => {
+  expect(
+    relationshipsOf([["main.mjs", 'import "./missing.mjs?v=1/..";\n']]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs?v=1/..",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("keeps dot segments inside an unmatched ESM fragment", () => {
+  expect(
+    relationshipsOf([["main.mjs", 'import "./missing.mjs#a/../b";\n']]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs#a/../b",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("keeps an unmatched ESM query when the importer is in a subdirectory", () => {
+  const relationships = relationshipsOf([
+    ["pkg/main.mjs", 'import "./missing.mjs?v=1/..";\n'],
+    ["main.mjs", 'import "./pkg/missing.mjs?v=1/..";\n'],
+  ]);
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "pkg/main.mjs",
+      to: "pkg/missing.mjs?v=1/..",
+      resolution: "unresolved",
+    }),
+  );
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "pkg/missing.mjs?v=1/..",
+      resolution: "unresolved",
+    }),
+  );
+});
+
 it("does not strip a query from a CommonJS require specifier", () => {
   expect(
     relationshipsOf([
