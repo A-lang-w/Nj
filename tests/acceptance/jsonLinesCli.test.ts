@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { expect } from "vitest";
 
+import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisViewJavaScriptEvidence } from "../fixtures/analysisView.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -88,33 +89,35 @@ cliTest(
       // convenient fields from a shortened view-shaped object.
       expect(parseEvidence(reconstructed)).toEqual(expected);
       expect(records.length).toBe(where === undefined ? 1 : 0);
-    }
 
-    // The documented disambiguating selection exports the same view rows.
-    const selected = await cli.run({
-      arguments: [
-        "inspect-analysis-view",
-        requestPath,
-        "--format",
-        "jsonl",
-        "--filter-output",
-        "normalized_result.rows",
-      ],
-    });
-    expect(selected.exitCode, selected.stderr).toBe(0);
-    expect(
-      selected.stdout
+      // The documented disambiguating selection exports the same view rows.
+      const filter = "normalized_result.rows";
+      const selected = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          requestPath,
+          "--format",
+          "jsonl",
+          "--filter-output",
+          filter,
+        ],
+      });
+      expect(selected.exitCode, selected.stderr).toBe(0);
+      const selectedRecords = selected.stdout
         .trimEnd()
         .split("\n")
-        .map((line) => JSON.parse(line))
-        .at(-1),
-    ).toMatchObject({
-      type: "metadata",
-      records: {
-        path: ["normalized_result", "rows"],
-        filter: "normalized_result.rows",
-      },
-    });
+        .map((line) => JSON.parse(line));
+      expect(selectedRecords.pop()).toMatchObject({
+        type: "metadata",
+        records: {
+          path: ["normalized_result", "rows"],
+          emitted: records.length,
+          source: records.length,
+          filter,
+        },
+      });
+      expect(selectedRecords).toEqual(records);
+    }
   },
 );
 
@@ -136,23 +139,7 @@ cliTest(
       arguments: ["inspect-sqlite-database", path, ...table, "--json"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
-    for (const [selection, option, observation] of [
-      [
-        [],
-        "format",
-        "The command result is not a JSON Lines record collection: normalized_result.rows is null.",
-      ],
-      [
-        [...table, "--filter-output", "normalized_result.rows"],
-        "filter-output",
-        "The --filter-output selection normalized_result.rows is not a JSON Lines record collection: normalized_result.rows is an object.",
-      ],
-      [
-        ["--filter-output", "normalized_result.schema.tables"],
-        "filter-output",
-        "The --filter-output selection normalized_result.schema.tables is not a JSON Lines record collection: it is an array outside a record collection boundary.",
-      ],
-    ] as const) {
+    const sqliteJsonLines = async (selection: readonly string[]) => {
       const result = await cli.run({
         arguments: [
           "inspect-sqlite-database",
@@ -164,28 +151,36 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(result.stdout.trimEnd().split("\n")).toHaveLength(1);
-      expect(result.json).toMatchObject({
+      return result.json;
+    };
+    for (const [selection, option, observed] of [
+      [[], "format", [{ path: ["normalized_result", "rows"], shape: "null" }]],
+      [
+        [...table, "--filter-output", "normalized_result.rows"],
+        "filter-output",
+        [{ path: ["normalized_result", "rows"], shape: "object" }],
+      ],
+      [
+        ["--filter-output", "normalized_result.schema.tables"],
+        "filter-output",
+        [{ path: ["normalized_result", "schema", "tables"], shape: "array" }],
+      ],
+    ] as const) {
+      expect(await sqliteJsonLines(selection)).toMatchObject({
         $rea: "jsonl/v1",
         type: "error",
         ok: false,
         result: {
           code: "invalid_request",
           category: "invalid_input",
-          message: expect.stringContaining(observation),
           retryable: false,
-          remediation: {
-            action:
-              "Use --format json for the complete document, or select one record collection with --filter-output.",
-          },
+          remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
           details: {
             operation: "inspect-sqlite-database",
-            issues: [
-              { path: [option], reason: "invalid_value", message: observation },
-            ],
+            issues: [{ path: [option], reason: "invalid_value", observed }],
           },
         },
       });
-      expect(result.stdout).not.toContain("rea doctor");
     }
   },
 );

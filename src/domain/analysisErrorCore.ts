@@ -138,6 +138,8 @@ export interface AnalysisInputIssue {
   /** Schema-authored correction guidance for cross-field or custom checks. */
   readonly message?: string;
   readonly expected?: JsonValue;
+  /** Producer-examined facts about the refused value, such as its location and shape. */
+  readonly observed?: JsonValue;
   readonly minimum?: number;
   readonly maximum?: number;
 }

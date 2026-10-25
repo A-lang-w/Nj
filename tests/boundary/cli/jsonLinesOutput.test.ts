@@ -8,7 +8,10 @@ import {
   createCliResultOutput,
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
-import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
+import {
+  JSON_LINES_SELECTION_REMEDIATION,
+  jsonLinesErrorRecord,
+} from "../../../src/cli/jsonLines.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -119,103 +122,87 @@ describe("row-oriented CLI JSON Lines", () => {
   );
 });
 
+type Observed = readonly { path: (string | number)[]; shape: string }[];
+const at = (shape: string, ...path: (string | number)[]) => ({ path, shape });
+
+/** Assert the caller-error classification and its structured facts, not prose. */
 const selectionRefusal = (
   stream: ReturnType<typeof capture>,
   option: "format" | "filter-output",
-  observation: string,
+  observed: Observed,
 ) => {
   const error = stream.output.error;
   expect(lines(stream.text())).toEqual([jsonLinesErrorRecord(error)]);
-  // A completed analysis refused only by the output selection is the caller's
-  // request to change, not unreadable provider output needing rea doctor.
-  expect(error).toEqual({
+  // A completed analysis refused only by its output selection is a request the
+  // caller changes, not unreadable provider output.
+  expect(error).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    message: expect.stringContaining(observation),
     retryable: false,
-    remediation: {
-      action:
-        "Use --format json for the complete document, or select one record collection with --filter-output.",
-    },
+    remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
     recovery: { kind: "inspect_input_contract", operation: "fixture" },
     details: {
       operation: "fixture",
-      issues: [
-        { path: [option], reason: "invalid_value", message: observation },
-      ],
+      issues: [{ path: [option], reason: "invalid_value", observed }],
     },
   });
-  expect(error?.message.startsWith(observation)).toBe(true);
-  expect(error?.message).not.toContain("rea doctor");
+  const [issue] = z
+    .array(z.object({ message: z.string().min(1) }))
+    .parse(error?.details?.issues);
+  // The issue explanation is delivered in the top-level message.
+  expect(error?.message).toContain(issue?.message);
 };
 
 describe("JSON Lines selection refusals", () => {
-  it.each([
-    [
-      null,
-      "The command result is not a JSON Lines record collection: it is null without a rows, items, records, or occurrences array.",
-    ],
-    [
-      {},
-      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
-    ],
-    [
-      "scalar",
-      "The command result is not a JSON Lines record collection: it is a string without a rows, items, records, or occurrences array.",
-    ],
+  it.each<[unknown, Observed]>([
+    [null, [at("null")]],
+    [{}, [at("object")]],
+    ["scalar", [at("string")]],
     [
       { normalized_result: { schema: { tables: [{ name: "t" }] } } },
-      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
+      [at("object")],
     ],
     [
       { rows: null, page: { items: 3 } },
-      "The command result is not a JSON Lines record collection: rows is null; page.items is a number.",
+      [at("null", "rows"), at("number", "page", "items")],
     ],
     [
       { normalized_result: { rows: { columns: ["a"], values: [[1]] } } },
-      "The command result is not a JSON Lines record collection: normalized_result.rows is an object.",
+      [at("object", "normalized_result", "rows")],
     ],
-    [
-      { rows: [], items: [] },
-      "The command result is not one JSON Lines record collection: it contains rows, items.",
-    ],
+    [{ rows: [], items: [] }, [at("array", "rows"), at("array", "items")]],
     [
       { rows: [], normalized_result: { page: { records: [] } } },
-      "The command result is not one JSON Lines record collection: it contains rows, normalized_result.page.records.",
+      [
+        at("array", "rows"),
+        at("array", "normalized_result", "page", "records"),
+      ],
     ],
-    [
-      Object.create({ rows: [{ inherited: true }] }),
-      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
-    ],
+    [Object.create({ rows: [{ inherited: true }] }), [at("object")]],
     [
       { rows: [{ id: 1 }, { $rea: "collision" }] },
-      "Record 1 of rows has a top-level $rea field, which JSON Lines reserves for control records.",
+      [at("string", "rows", 1, "$rea")],
     ],
-    [
-      [{ $rea: "collision" }],
-      "Record 0 of the top-level array has a top-level $rea field, which JSON Lines reserves for control records.",
-    ],
+    [[{ $rea: { nested: true } }], [at("object", 0, "$rea")]],
   ])(
     "refuses an unclear or reserved boundary as a caller selection before writing rows: %j",
-    async (value, observation) => {
+    async (value, observed) => {
       const stream = capture(["--format", "jsonl", "--token-count"]);
       await stream.output.write(value, metadata);
-      selectionRefusal(stream, "format", observation);
+      selectionRefusal(stream, "format", observed);
     },
   );
 
-  it.each([
-    [
-      [],
-      "The command result is not a JSON Lines record collection: data.normalized_result.rows is null.",
-    ],
+  it.each<[string[], "format" | "filter-output", Observed]>([
+    [[], "format", [at("null", "data", "normalized_result", "rows")]],
     [
       ["--filter-output", "normalized_result.missing"],
-      "The --filter-output selection normalized_result.missing is not a JSON Lines record collection: it selects no value.",
+      "filter-output",
+      [at("absent", "data", "normalized_result", "missing")],
     ],
   ])(
-    "names the enveloped boundary or result-relative selection with --full-output: %j",
-    async (filter, observation) => {
+    "locates the refusal in the enveloped document with --full-output: %j",
+    async (filter, option, observed) => {
       const stream = capture(["--format", "jsonl", "--full-output", ...filter]);
       await stream.output.write(
         { evidence_id: "ev:parent", normalized_result: { rows: null } },
@@ -230,51 +217,24 @@ describe("JSON Lines selection refusals", () => {
       ]);
       expect(stream.output.error).toMatchObject({
         code: "invalid_request",
-        details: { issues: [{ message: observation }] },
+        details: { issues: [{ path: [option], observed }] },
       });
     },
   );
 
-  it.each([
-    [
-      "missing",
-      "The --filter-output selection missing is not a JSON Lines record collection: it selects no value.",
-    ],
-    [
-      "count",
-      "The --filter-output selection count is not a JSON Lines record collection: it is a number.",
-    ],
-    [
-      "nested.value",
-      "The --filter-output selection nested.value is not a JSON Lines record collection: it is null.",
-    ],
-    [
-      "nested.absent",
-      "The --filter-output selection nested.absent is not a JSON Lines record collection: it selects no value.",
-    ],
-    [
-      "nested.list[0,1]",
-      "The --filter-output selection nested.list is not a JSON Lines record collection: it is an array outside a record collection boundary.",
-    ],
-    [
-      "table",
-      "The --filter-output selection table is not a JSON Lines record collection: it is an object.",
-    ],
-    [
-      "table.values",
-      "The --filter-output selection table.values is not a JSON Lines record collection: it is an array outside a record collection boundary.",
-    ],
-    [
-      "rows,items",
-      "The --filter-output selection rows, items is not one JSON Lines record collection: it contains rows, items.",
-    ],
-    [
-      "count,nested",
-      "The --filter-output selection count, nested is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
-    ],
+  it.each<[string, Observed]>([
+    ["missing", [at("absent", "missing")]],
+    ["count", [at("number", "count")]],
+    ["nested.value", [at("null", "nested", "value")]],
+    ["nested.absent", [at("absent", "nested", "absent")]],
+    ["nested.list[0,1]", [at("array", "nested", "list")]],
+    ["table", [at("object", "table")]],
+    ["table.values", [at("array", "table", "values")]],
+    ["rows,items", [at("array", "rows"), at("array", "items")]],
+    ["count,nested", [at("object")]],
   ])(
     "does not admit a selection merely because a filter exists: %s",
-    async (filter, observation) => {
+    async (filter, observed) => {
       const stream = capture(["--format", "jsonl", "--filter-output", filter]);
       await stream.output.write(
         {
@@ -289,7 +249,7 @@ describe("JSON Lines selection refusals", () => {
         },
         metadata,
       );
-      selectionRefusal(stream, "filter-output", observation);
+      selectionRefusal(stream, "filter-output", observed);
     },
   );
 });

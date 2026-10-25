@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -403,10 +404,16 @@ cliTest(
       result: {
         code: "invalid_request",
         category: "invalid_input",
-        message: expect.stringContaining(
-          "The --filter-output selection operation is not a JSON Lines record collection",
-        ),
-        remediation: { action: expect.stringContaining("--format json") },
+        remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+        details: {
+          issues: [
+            {
+              path: ["filter-output"],
+              reason: "invalid_value",
+              observed: [{ path: ["operation"], shape: "string" }],
+            },
+          ],
+        },
       },
     });
   },
