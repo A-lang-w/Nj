@@ -133,7 +133,9 @@ export const inspectAdbClient = async (
     const diagnostics = {
       selected_binary: selection.binary,
       path_source: selection.pathSource,
-      ...(failure === undefined ? {} : { exit_code: failure.code }),
+      ...(failure === undefined || failure.spawnFailed === true
+        ? {}
+        : { exit_code: failure.code }),
     };
     const options = {
       cause,
@@ -163,39 +165,46 @@ export const inspectAdbClient = async (
         userMessage: `adb version probe reached its ${String(VERSION_TIMEOUT_MS)} ms deadline (deadlineExpired). This release has no runtime override.`,
         remediationAction: `This ${String(VERSION_TIMEOUT_MS)} ms adb version probe has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
       });
-    // ENOTDIR: a parent component of the selected path is not a directory.
-    if (failure?.code === "ENOENT" || failure?.code === "ENOTDIR")
-      throw new AdbConfigurationFailure(
-        "binary_missing",
-        `The selected adb binary was not found: ${selection.binary}`,
-        {
-          selected_binary: selection.binary,
-          path_source: selection.pathSource,
-          filesystem_error: failure.code,
-          remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
-        },
-        { cause },
-      );
-    // The OS refused to start the selected path, so no version probe ran.
-    // EACCES means a directory or missing execute permission; EPERM means a
-    // host security policy blocked it.
-    if (failure?.code === "EACCES" || failure?.code === "EPERM")
+    // The process never started: `failure.code` is a spawn errno, not an exit
+    // status, and no version probe ran.
+    if (failure?.spawnFailed === true) {
+      const code = String(failure.code);
+      const fromEnvironment = selection.pathSource === "environment";
+      const facts = {
+        selected_binary: selection.binary,
+        path_source: selection.pathSource,
+        filesystem_error: code,
+      };
+      // Nothing executable resolves at the selected path.
+      if (["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(code))
+        throw new AdbConfigurationFailure(
+          "binary_missing",
+          `The selected adb binary was not found: ${selection.binary}`,
+          {
+            ...facts,
+            remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
+          },
+          { cause },
+        );
       throw new AdbConfigurationFailure(
         "binary_not_executable",
-        `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
+        code === "EACCES" || code === "EPERM"
+          ? `Execution of the selected adb binary was denied (${code}): ${selection.binary}`
+          : `The selected adb binary could not be started (${code}): ${selection.binary}`,
         {
-          selected_binary: selection.binary,
-          path_source: selection.pathSource,
-          filesystem_error: failure.code,
+          ...facts,
           remediation:
-            failure.code === "EPERM"
-              ? `Allow the host security policy to run this adb binary, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits`
-              : selection.pathSource === "environment"
-                ? `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check that it has execute permission`
-                : `Make sure the adb found on PATH is a file with execute permission, not a directory, or set ${ADB_BINARY_ENV} to an absolute path to an executable adb binary`,
+            code === "EACCES"
+              ? fromEnvironment
+                ? `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories`
+                : `Make sure the adb found on PATH is a file with execute permission, not a directory, and that its parent directories have search permission, or set ${ADB_BINARY_ENV} to an absolute path to an executable adb binary`
+              : code === "EPERM"
+                ? `The host refused to run this adb binary, for example because of a security policy or file flags; allow it to run, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits`
+                : `Select an adb executable this host can start directly: set ${ADB_BINARY_ENV} to its absolute path, or make it the adb found on PATH`,
         },
         { cause },
       );
+    }
     throw new AdbConfigurationFailure(
       "version_unresolved",
       `The selected adb binary did not report a usable version: ${selection.binary}`,

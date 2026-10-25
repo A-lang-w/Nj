@@ -1,4 +1,4 @@
-import { chmod, lstat, readFile, unlink } from "node:fs/promises";
+import { chmod, lstat, readFile, symlink, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -176,13 +176,32 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
     }
-    // A parent component that is a file throws ENOTDIR synchronously.
-    expectConfigurationRefusal(
-      await serve(["inspect-adb-client", "--json"], {
-        REA_ADB_PATH: `${file}/adb`,
-      }),
-      `The selected adb binary was not found: ${file}/adb. Set REA_ADB_PATH`,
-    );
+    // A parent component that is a file, a symlink loop and a missing path
+    // fail before any process starts, so no exit code is reported.
+    const loop = workspace.path("adb-loop");
+    await symlink(loop, loop);
+    for (const [binary, filesystemError] of [
+      [`${file}/adb`, "ENOTDIR"],
+      [loop, "ELOOP"],
+      [workspace.path("missing-adb"), "ENOENT"],
+    ] as const) {
+      const refused = await serve(["inspect-adb-client", "--json"], {
+        REA_ADB_PATH: binary,
+      });
+      expectConfigurationRefusal(
+        refused,
+        `The selected adb binary was not found: ${binary}. Set REA_ADB_PATH`,
+      );
+      const { details } = JSON.parse(refused.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: filesystemError,
+      });
+      expect(details.diagnostics).not.toHaveProperty("exit_code");
+    }
     await chmod(file, 0o755);
     const result = await serve(["inspect-adb-client", "--json"], {
       REA_ADB_PATH: file,

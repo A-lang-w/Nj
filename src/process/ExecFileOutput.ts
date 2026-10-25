@@ -85,6 +85,8 @@ export interface ExecFileOutputFailure {
   readonly stdoutBytes?: number;
   readonly stderrBytes?: number;
   readonly collectionFailure?: boolean;
+  /** The process never started; `code` is the spawn errno, not an exit. */
+  readonly spawnFailed?: true;
 }
 
 /** Read captured output metadata from a failed execFileOutput invocation. */
@@ -101,6 +103,7 @@ export const execFileOutputFailure = (
   const stdoutBytes = Reflect.get(cause, "stdoutBytes");
   const stderrBytes = Reflect.get(cause, "stderrBytes");
   const collectionFailure = Reflect.get(cause, "collectionFailure");
+  const spawnFailed = Reflect.get(cause, "spawnFailed");
   if (typeof stdout !== "string" || typeof stderr !== "string")
     return undefined;
   return {
@@ -122,6 +125,7 @@ export const execFileOutputFailure = (
     outputTruncated:
       outputTruncated === true || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
     ...(collectionFailure === true ? { collectionFailure: true } : {}),
+    ...(spawnFailed === true ? { spawnFailed: true } : {}),
   };
 };
 
@@ -194,6 +198,10 @@ export const execFileBytes = (
                   ? new ExecFileOutputCancelledError(error.cause)
                   : error;
           if (failure !== null) {
+            // Node reports an asynchronous spawn failure with `spawn <path>`.
+            const syscall = Reflect.get(failure, "syscall");
+            if (typeof syscall === "string" && syscall.startsWith("spawn"))
+              Reflect.set(failure, "spawnFailed", true);
             Reflect.set(failure, "stdout", stdout.toString("utf8"));
             Reflect.set(failure, "stderr", stderr.toString("utf8"));
             Reflect.set(failure, "stdoutBytes", stdout.byteLength);
@@ -214,6 +222,8 @@ export const execFileBytes = (
         typeof Reflect.get(error, "errno") === "number" &&
         Reflect.get(error, "syscall") === "spawn"
       ) {
+        Reflect.set(error, "spawnFailed", true);
+        Reflect.set(error, "path", command);
         Reflect.set(error, "stdout", "");
         Reflect.set(error, "stderr", "");
         Reflect.set(error, "stdoutBytes", 0);

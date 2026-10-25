@@ -432,7 +432,11 @@ describe("execFileOutput failure metadata", () => {
         (cause: unknown) => cause,
       );
 
-      expect(failure).toMatchObject({ code: "ENOTDIR", syscall: "spawn" });
+      expect(failure).toMatchObject({
+        code: "ENOTDIR",
+        syscall: "spawn",
+        path: join(file, "adb"),
+      });
       expect(execFileOutputFailure(failure)).toEqual({
         stdout: "",
         stderr: "",
@@ -442,9 +446,36 @@ describe("execFileOutput failure metadata", () => {
         signal: null,
         killed: false,
         outputTruncated: false,
+        spawnFailed: true,
       });
     },
   );
+
+  it("marks an asynchronous spawn failure but not a started process's exit", async () => {
+    const root = await createTestTempDirectory("rea-exec-spawn-owner-");
+    const missing = join(root, "missing");
+    const spawnFailure: unknown = await execFileOutput(missing, []).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(spawnFailure).toMatchObject({ code: "ENOENT", path: missing });
+    expect(execFileOutputFailure(spawnFailure)).toMatchObject({
+      code: "ENOENT",
+      spawnFailed: true,
+    });
+
+    const exitFailure: unknown = await execFileOutput(process.execPath, [
+      "-e",
+      "process.exitCode = 3",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(execFileOutputFailure(exitFailure)).toMatchObject({ code: 3 });
+    expect(execFileOutputFailure(exitFailure)).not.toHaveProperty(
+      "spawnFailed",
+    );
+  });
 
   it("leaves a synchronous argument validation error unadmitted", async () => {
     const failure: unknown = await execFileOutput(process.execPath, [

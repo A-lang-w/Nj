@@ -242,7 +242,7 @@ const compilerFailureFacts = (
         ? "exited"
         : failure.signal !== null
           ? "signaled"
-          : failure.code === "ENOENT"
+          : failure.spawnFailed === true
             ? "spawn_failed"
             : "failed";
   return {

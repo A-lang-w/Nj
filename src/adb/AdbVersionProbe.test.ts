@@ -65,6 +65,7 @@ it("distinguishes execute denial from missing or unreadable version output", asy
   vi.mocked(execFileOutput).mockRejectedValueOnce(
     Object.assign(new Error("denied"), {
       code: "EACCES",
+      spawnFailed: true,
       stdout: "",
       stderr: "",
       signal: null,
@@ -80,10 +81,11 @@ it("distinguishes execute denial from missing or unreadable version output", asy
   });
 });
 
-it("names a host-policy execute denial separately from missing permission", async () => {
+it("names an EPERM execute refusal separately from missing permission", async () => {
   vi.mocked(execFileOutput).mockRejectedValueOnce(
     Object.assign(new Error("not permitted"), {
       code: "EPERM",
+      spawnFailed: true,
       stdout: "",
       stderr: "",
       signal: null,
@@ -96,7 +98,36 @@ it("names a host-policy execute denial separately from missing permission", asyn
       "Execution of the selected adb binary was denied (EPERM): /host/adb",
     diagnostics: {
       filesystem_error: "EPERM",
-      remediation: expect.stringContaining("host security policy") as unknown,
+      remediation: expect.stringContaining(
+        "The host refused to run this adb binary",
+      ) as unknown,
     },
   });
+});
+
+it("names any other not-started spawn errno without an exit code", async () => {
+  vi.mocked(execFileOutput).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EINVAL"), {
+      code: "EINVAL",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const failure = await inspectAdbClient(selection).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    code: "binary_not_executable",
+    message: "The selected adb binary could not be started (EINVAL): /host/adb",
+    diagnostics: {
+      selected_binary: "/host/adb",
+      path_source: "environment",
+      filesystem_error: "EINVAL",
+      remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
+    },
+  });
+  expect(failure).not.toHaveProperty("diagnostics.exit_code");
 });

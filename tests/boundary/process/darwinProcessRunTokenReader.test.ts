@@ -590,6 +590,34 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "classifies a synchronously refused Swift compiler spawn as spawn_failed",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-process-token-direct-enotdir-",
+    );
+    const regular = join(directory, "regular");
+    await writeFile(regular, "");
+    const host = createSystemProcessOwnershipHost("darwin", {
+      ...process.env,
+      REA_DARWIN_SWIFTC_PATH: join(regular, "swiftc"),
+      SDKROOT: join(directory, "MacOSX.sdk"),
+    });
+    try {
+      await expect(
+        host.prepare?.(AbortSignal.timeout(15_000)),
+      ).rejects.toMatchObject({
+        compilerOutcome: expect.objectContaining({
+          outcome: "spawn_failed",
+          code: "ENOTDIR",
+        }),
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "identifies a missing selected Swift compiler rather than xcrun",
   async () => {
     const directory = await createTestTempDirectory(
