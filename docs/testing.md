@@ -146,6 +146,45 @@ boundaries and architecture guards enforce their declared import and source
 rules. Passing them does not prove that two parsers agree, a wrapper is still
 needed at runtime, or cleanup has one owner.
 
+The lint gate treats `no-async-promise-executor`, `no-unreachable`, and
+`no-unsafe-optional-chaining` as errors. These catch lost async executor failures,
+dead code, and unsafe uses of optional-chain results. `no-unsafe-finally` remains
+a warning because cleanup paths can deliberately throw aggregated failures;
+review whether they preserve the primary failure. Two local rules
+cover narrower observed failures: `rea/no-buffer-deep-equality` flags Vitest
+deep comparisons of Buffers from recognized constructors and file reads,
+including simple `const` aliases; `rea/cancellation-cause` requires an explicit
+cause when a directly checked caller `AbortSignal` is converted to an
+`AnalysisCancelledError`. The rules do not infer arbitrary Buffer types,
+follow indirect cancellation helpers, or prove that an explicit cause equals
+the caller's reason. Keep focused boundary and lifecycle tests for those facts.
+
+`rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
+`createEvidence` payload expressions; it does not analyze intermediate values.
+`rea/no-positional-tool-contract` rejects catalog indices used to select
+operation names, schemas or types; display-only selection remains allowed.
+`rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
+deletion; mutable bindings and mixed root arrays remain outside its scope.
+
+Focused `.only` declarations, broken assertion promise chains, and unused disable
+directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid stored and
+collected assertions can be awaited later. `import/no-duplicates` warns with
+`preferInline: false`, preserving separate type imports.
+
+Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
+`oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
+`.cache/static-checks/typed-oxlint.json`. Production `src` treats
+`no-misused-promises` as an error; tests/fixtures warn. `no-floating-promises` is
+an error in `src/**/*.test.ts`; other scopes, return-await and exhaustiveness
+findings warn pending triage.
+
+`npm run knip:production` writes advisory candidates to
+`.cache/static-checks/production-reachability.json`; execution/report errors fail.
+Ordinary Knip remains. `check`, `check:pr`, and `check:ci:deep` run reachability
+then typed lint sequentially after cached work. Typed lint builds the project
+type graph and stays separate from fast feedback. Its default Go settings are
+`GOMAXPROCS=2` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
+
 Routine iterations and rebases need focused regressions and relevant checks.
 Before handing off a PR, run `npm run check` and generated-document checks when
 applicable; CI owns the full suite and coverage. Use the full local gate for
