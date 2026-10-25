@@ -79,15 +79,19 @@ it("keeps accepted operations and their typed provider views stable across concu
     expect(live.regexMatchingDeadline.deadlineMs).toBe(5000);
     expect(store.read().revision).toBe(0);
   });
-  const changed = store.update({
-    changes: [
-      { setting: "asar.max_header_bytes", action: "set", value: 33554432 },
-      { setting: "ghidra.startup_timeout_ms", action: "set", value: 999999 },
-      { setting: "regex.matching_deadline_ms", action: "set", value: 10000 },
-    ],
-  });
-  expect(changed.ok).toBe(true);
-  release();
+  try {
+    const changed = store.update({
+      changes: [
+        { setting: "asar.max_header_bytes", action: "set", value: 33554432 },
+        { setting: "ghidra.startup_timeout_ms", action: "set", value: 999999 },
+        { setting: "regex.matching_deadline_ms", action: "set", value: 10000 },
+      ],
+    });
+    expect(changed.ok).toBe(true);
+  } finally {
+    release();
+    await Promise.allSettled([pending]);
+  }
   await pending;
   store.run(() => {
     expect(asar.maximumBytes).toBe(33554432);
