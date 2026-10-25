@@ -1,8 +1,4 @@
-import {
-  boundedViewMessages,
-  completeWithinViewCoverage,
-  pageViewCoverage,
-} from "./analysisViewCoverage.js";
+import { boundedViewMessages } from "./analysisViewCoverage.js";
 import { expect, it } from "vitest";
 
 import { functionDossierSchema } from "../hopperValues.js";
@@ -25,6 +21,10 @@ import {
   createJavaScriptSemanticGraph,
   createImmutableJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
+import {
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
 import { javascriptModulePaths } from "./javascriptApplicationView.js";

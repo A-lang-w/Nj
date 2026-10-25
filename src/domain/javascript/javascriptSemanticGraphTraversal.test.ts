@@ -11,8 +11,6 @@ import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
   type JavaScriptSemanticGraphInput,
-  type JavaScriptSemanticGraphNode,
-  type JavaScriptSemanticGraphRelation,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticGraph,
@@ -23,6 +21,10 @@ import {
   resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
+import type {
+  JavaScriptSemanticGraphNode,
+  JavaScriptSemanticGraphRelation,
+} from "./javascriptSemanticGraphSchemas.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";
 import { javaScriptSemanticQueryInputSchema } from "./javascriptSemanticQuerySchemas.js";
 import type { JsonValue } from "../jsonValue.js";

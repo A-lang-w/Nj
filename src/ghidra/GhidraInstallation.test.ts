@@ -3,7 +3,8 @@ import { createInspectionResources } from "../../tests/fixtures/inspectionResour
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { err, ok as javaProbeOk } from "../domain/result.js";
+import { err } from "../domain/result.js";
+import { ok as javaProbeOk } from "../domain/result.js";
 import {
   parseGhidraJavaOutput,
   type GhidraJavaObservation,

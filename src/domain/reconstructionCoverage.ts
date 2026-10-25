@@ -20,7 +20,8 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   offsetDateTimeInstantFromEpochMilliseconds,

@@ -4,7 +4,8 @@ import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   reconstructionObligationCoverage,

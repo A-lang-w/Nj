@@ -1,8 +1,5 @@
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../../domain/binaryTargetTypes.js";
+import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
@@ -13,6 +10,7 @@ import {
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,

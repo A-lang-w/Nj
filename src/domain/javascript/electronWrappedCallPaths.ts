@@ -33,15 +33,12 @@ import {
   boundedExpression,
   contextBridgeMemberPathDepth,
 } from "./electronStaticAnalysisValues.js";
-import {
-  argumentNode,
-  range,
-  calleeName,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { argumentNode } from "./javascriptStaticAnalysisHelpers.js";
 import {
   childNodes,
   traverseJavaScriptValueAst,
 } from "./javascriptSemanticTraversal.js";
+import { range, calleeName } from "./javascriptStaticAnalysisHelpers.js";
 import { ipcDescriptor } from "./electronStaticAnalysisIpc.js";
 import {
   symbolicDefiniteExit,

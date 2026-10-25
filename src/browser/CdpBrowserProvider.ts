@@ -1,8 +1,6 @@
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
-import type {
-  ProviderIdentity,
-  ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,

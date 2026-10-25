@@ -1,7 +1,4 @@
-import {
-  decodedSegment,
-  same,
-} from "../../domain/analysisView/environmentStateRules.js";
+import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -60,6 +57,7 @@ import {
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
 import type { EnvironmentToolDefinition } from "./environmentTools.js";
+import { same } from "../../domain/analysisView/environmentStateRules.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
 export interface CompareProbeInput {

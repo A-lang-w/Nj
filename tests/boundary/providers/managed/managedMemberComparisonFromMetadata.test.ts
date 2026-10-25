@@ -3,11 +3,7 @@ import {
   metadataRowOffset,
   readManagedMetadataLayout,
 } from "../../../../src/dotnet/ManagedMetadataLayout.js";
-import {
-  buildManagedNestedTypeFixture,
-  buildManagedPeFixture,
-  managedPeFixtureTarget,
-} from "../../../../src/dotnet/ManagedPe.fixture.js";
+import { buildManagedNestedTypeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
@@ -18,6 +14,10 @@ import {
 } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
+import {
+  buildManagedPeFixture,
+  managedPeFixtureTarget,
+} from "../../../../src/dotnet/ManagedPe.fixture.js";
 
 import { buildManagedPeFixture as buildMultiMethodFixture } from "../../../../scripts/fixtures/managed/pe.mjs";
 import {

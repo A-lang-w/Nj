@@ -8,7 +8,6 @@ import {
   resolveNativePlistSelection,
   unreadablePlist,
   type NativePlistSelection,
-  resolveBundleResourcePlistSelection,
 } from "./NativePlistSource.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -136,6 +135,7 @@ import {
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
+import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
 import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
 
 type SignatureRuntimeRootFactory = () => Promise<

@@ -1,7 +1,4 @@
-import {
-  javaScriptSemanticQueryInputSchema,
-  javaScriptSemanticQueryResultSchema,
-} from "../../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
+import { javaScriptSemanticQueryInputSchema } from "../../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,6 +6,7 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { javaScriptSemanticQueryResultSchema } from "../../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import { queryJavaScriptSemanticGraph } from "../../../../src/domain/javascript/javascriptSemanticQuery.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 

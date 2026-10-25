@@ -24,7 +24,6 @@ import {
 import {
   OwnedCommandFailure,
   ownedCommandResources,
-  runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import {
   AnalysisError,
@@ -48,6 +47,7 @@ import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {

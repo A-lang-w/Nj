@@ -1,10 +1,8 @@
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

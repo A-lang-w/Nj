@@ -15,7 +15,8 @@ import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
 } from "./GhidraInstallationProperties.js";
-import { constants, accessSync, realpathSync, statSync } from "node:fs";
+import { constants } from "node:fs";
+import { accessSync, realpathSync, statSync } from "node:fs";
 import { delimiter as pathDelimiter, dirname, posix, win32 } from "node:path";
 
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";

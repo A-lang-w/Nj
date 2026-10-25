@@ -8,7 +8,8 @@ import {
   javaScriptSemanticEvidenceContextSchema,
   javaScriptSemanticUnknownSchema,
 } from "./javascriptSemanticGraphSchemas.js";
-import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 const literalValueSchema = z.union([
