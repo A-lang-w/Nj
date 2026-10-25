@@ -1,5 +1,5 @@
 import type * as t from "@babel/types";
-import type { JavaScriptFactoryExportBindings } from "./javascriptAstFingerprint.js";
+import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
@@ -44,7 +44,7 @@ export interface LocatedJavaScriptFinding<Value> {
 export interface JavaScriptAnalysisAccumulator {
   readonly pendingBundlerExports: {
     readonly factory: t.Node;
-    readonly roles: JavaScriptFactoryExportBindings;
+    readonly roles: JavaScriptBundlerFactoryRoles;
     readonly exports: string[];
   }[];
   readonly pendingModuleRequireCalls: (

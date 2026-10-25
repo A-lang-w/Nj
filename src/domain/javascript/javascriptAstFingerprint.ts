@@ -10,6 +10,7 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
@@ -32,18 +33,14 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
   return createHash("sha256").update(JSON.stringify(tokens)).digest("hex");
 };
 
-/** Calling-convention roles established by the bundler adapter. */
-export interface JavaScriptFactoryExportBindings {
-  readonly exports: t.Identifier | undefined;
-  readonly module: t.Identifier | undefined;
-  readonly loader: t.Identifier | undefined;
-}
-
 /** Collect statically declared CommonJS/bundler export names from one factory. */
 export const collectJavaScriptExports = (
   node: t.Node,
   factory?: {
-    readonly roles: JavaScriptFactoryExportBindings;
+    readonly roles: Pick<
+      JavaScriptBundlerFactoryRoles,
+      "module" | "exports" | "loader" | "unusedDefaults"
+    >;
     readonly index: Pick<
       JavaScriptBindingIndex,
       "bindings" | "effectsForReferenceWithinActivationAt"
@@ -54,30 +51,34 @@ export const collectJavaScriptExports = (
   const index = factory?.index;
   const bindings = index?.bindings;
   const exports = new Set<string>();
-  const bindingId = (
-    reference: t.Node | null | undefined,
-  ): string | undefined =>
-    bindings !== undefined && t.isIdentifier(reference)
-      ? resolveSemanticBindingState(bindings, reference, reference.name)
-          ?.bindingId
-      : undefined;
+  const bindingId = (reference: t.Identifier): string | undefined =>
+    bindings === undefined
+      ? undefined
+      : resolveSemanticBindingState(bindings, reference, reference.name)
+          ?.bindingId;
   const identity = (
-    role: keyof JavaScriptFactoryExportBindings,
+    parameters: readonly (t.Identifier | undefined)[],
     fallback: string,
   ) => {
-    const id = bindingId(roles?.[role]);
+    const ids = new Set(
+      parameters.flatMap((parameter) => {
+        const id = parameter === undefined ? undefined : bindingId(parameter);
+        return id === undefined ? [] : [id];
+      }),
+    );
     return (reference: t.Node | null): boolean => {
       if (!t.isIdentifier(reference)) return false;
       if (roles === undefined) return reference.name === fallback;
-      if (id === undefined || bindings === undefined) return false;
+      if (bindings === undefined) return false;
       const binding = resolveSemanticBindingState(
         bindings,
         reference,
         reference.name,
       );
-      if (binding?.bindingId !== id) return false;
+      if (binding === undefined || !ids.has(binding.bindingId)) return false;
       // The calling convention owns the parameter's entry value, not every
-      // later value assigned to the same lexical binding.
+      // later value assigned to the same lexical binding. It also always
+      // supplies the argument, so a role parameter's default never runs.
       const read = semanticBindingAtRead(
         binding,
         reference,
@@ -86,13 +87,17 @@ export const collectJavaScriptExports = (
       return (
         read.status === "ordered" &&
         read.binding.initializers.length === 0 &&
-        read.binding.referenceInitializers.length === 0
+        read.binding.referenceInitializers.every(
+          (initializer) =>
+            initializer.assignment !== true &&
+            roles.unusedDefaults.has(initializer.node),
+        )
       );
     };
   };
-  const isExportsAlias = identity("exports", "exports");
-  const isModuleAlias = identity("module", "module");
-  const isLoaderAlias = identity("loader", "__webpack_require__");
+  const isExportsAlias = identity(roles?.exports ?? [], "exports");
+  const isModuleAlias = identity([roles?.module], "module");
+  const isLoaderAlias = identity([roles?.loader], "__webpack_require__");
   const receivers = { isExportsAlias, isModuleAlias };
   traverseJavaScriptAst(node, {
     enter: (current) => {

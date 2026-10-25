@@ -10,6 +10,7 @@ import { semanticFactoryLoaderMemberAt } from "./javascriptSemanticRequireOrigin
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
+import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,
@@ -20,7 +21,6 @@ import {
   argumentValue,
   calleeName,
   chunkRuntime,
-  factoryRequireName,
   moduleFactory,
   modulePropertyName,
   range,
@@ -257,38 +257,18 @@ const recoverBundlerModule = (
   if (key.startsWith("[computed@") || key.startsWith("[unknown@"))
     accumulator.unknownFindings += 1;
   const fingerprint = fingerprintJavaScriptAst(factory);
-  const parameters = runtimeFunctionParameters(factory);
-  const esbuild = runtime.startsWith("esbuild-");
-  const identifierAt = (index: number): t.Identifier | undefined => {
-    const parameter = parameters[index];
-    return t.isIdentifier(parameter) ? parameter : undefined;
-  };
-  const roles = {
-    exports:
-      runtime === "esbuild-commonjs"
-        ? identifierAt(0)
-        : esbuild
-          ? undefined
-          : identifierAt(1),
-    module:
-      runtime === "esbuild-commonjs"
-        ? identifierAt(1)
-        : esbuild
-          ? undefined
-          : identifierAt(0),
-    loader: esbuild ? undefined : identifierAt(2),
-  };
+  const roles = javascriptBundlerFactoryRoles(factory, runtime);
+  // An inexact role pattern leaves this module's export list incomplete.
+  if (!roles.exact) accumulator.unknownFindings += 1;
   const exports: string[] = [];
   accumulator.pendingBundlerExports.push({ factory, roles, exports });
-  const requireName = esbuild ? null : factoryRequireName(factory);
-  const requireParameter = esbuild ? undefined : parameters[2];
-  const requireBindingId = t.isIdentifier(requireParameter)
-    ? (resolveSemanticBindingState(
-        bindings,
-        requireParameter,
-        requireParameter.name,
-      )?.bindingId ?? null)
-    : null;
+  const loader = roles.loader;
+  const requireName = loader?.name ?? null;
+  const requireBindingId =
+    loader === undefined
+      ? null
+      : (resolveSemanticBindingState(bindings, loader, loader.name)
+          ?.bindingId ?? null);
   if (requireBindingId !== null)
     accumulator.factoryRequireBindingIds.add(requireBindingId);
   const asyncChunks = collectBundlerAsyncChunkKeys(
