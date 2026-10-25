@@ -53,8 +53,15 @@ const runCli = async (arguments_: readonly string[]) => {
   };
 };
 
-const expectMissingInputFailureText = (text: string, path: string): void => {
-  const normalizedText = text.replace(/\s+/g, " ");
+const expectMissingInputFailureText = (
+  text: string,
+  path: string,
+  format: string,
+): void => {
+  // Markdown table cells escape underscores in diagnostic identifiers.
+  const normalizedText = (
+    format === "md" ? text.replaceAll("\\_", "_") : text
+  ).replace(/\s+/g, " ");
   for (const value of [
     "invalid_request",
     "invalid_input",
@@ -91,7 +98,7 @@ it.each(["json", "toon", "yaml", "md"] as const)(
         expect(result.output.failed).toBe(false);
         expect(result.fallback).toBe("");
         expect(result.output.handled).toBe(true);
-        expectMissingInputFailureText(result.text, missingPath);
+        expectMissingInputFailureText(result.text, missingPath, format);
         if (format === "json" || format === "yaml") {
           const document =
             format === "json"
@@ -165,7 +172,7 @@ it.each(["json", "toon", "yaml", "md"] as const)(
           expect(result.text).toContain("## ok\n\nfalse");
           expect(result.text).toContain("## error.code");
         } else expect(result.text).toContain("ok: false");
-        expectMissingInputFailureText(result.text, missingPath);
+        expectMissingInputFailureText(result.text, missingPath, format);
       }
     } finally {
       process.exitCode = previousExitCode;

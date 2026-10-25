@@ -48,8 +48,7 @@ const escapeTableCell = (value: string): string =>
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|")
+    .replace(/[\\|`*_[\]~]/g, "\\$&")
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const renderTable = (
