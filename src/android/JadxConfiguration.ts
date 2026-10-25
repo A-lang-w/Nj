@@ -180,10 +180,16 @@ class JadxConfigurationFailure extends Error {
 /** Inspect the same JAR and Java prerequisites that gate actual execution. */
 export const inspectJadxAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
-  options: JadxJavaProbeOptions,
+  options: JadxJavaProbeOptions & {
+    /** Admitted runtime override; omission retains launch configuration. */
+    readonly operationTimeoutMs?: number | undefined;
+  },
 ): Promise<ProviderAvailability> => {
   try {
-    const operationTimeoutMs = readOperationTimeout(environment);
+    const operationTimeoutMs = readOperationTimeout(
+      environment,
+      options.operationTimeoutMs,
+    );
     const configuration = await readJadxConfigurationInputs(
       environment,
       options.signal,
@@ -229,9 +235,10 @@ export const inspectJadxAvailability = async (
 export const resolveJadxOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
+  runtimeTimeoutMs?: number,
 ): Result<number, AnalysisCapabilityUnavailableError> => {
   try {
-    return ok(readOperationTimeout(environment));
+    return ok(readOperationTimeout(environment, runtimeTimeoutMs));
   } catch (cause) {
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     return err(projectConfigurationFailure(operation, cause));
@@ -704,7 +711,9 @@ const resolveJvmArguments = (
 
 const readOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
+  runtimeTimeoutMs?: number,
 ): number => {
+  if (runtimeTimeoutMs !== undefined) return runtimeTimeoutMs;
   const value = environment.REA_JADX_OPERATION_TIMEOUT_MS;
   if (value === undefined) return DEFAULT_JADX_OPERATION_TIMEOUT_MS;
   const parsed = providerStartupTimeoutSchema.safeParse(value);

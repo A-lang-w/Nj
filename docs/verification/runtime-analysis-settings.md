@@ -29,7 +29,10 @@ Invalid provider-local launch settings remain typed configuration failures rathe
 than preventing MCP startup. Inspection reports `source: "invalid"`, omits
 `value` and `launch_value`, and includes `configuration_error`; a runtime
 replacement supplies a usable value, while reset restores the invalid launch
-state. Update history omits an unknown old or new value instead of using null
+state. JADX availability and execution resolve the same admitted timeout, so
+repair and reset also update capability guidance. The availability regression
+uses a fixture JAR and simulated JDK; it does not establish real JADX behavior.
+Update history omits an unknown old or new value instead of using null
 (the explicit unbounded Ghidra value).
 
 Regex controls apply to IDA, Hopper and Kuna's supervised ECMAScript matcher.
