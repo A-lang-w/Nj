@@ -200,6 +200,9 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
 
 /** MCP operations without a dedicated CLI command or direct command alias. */
 export const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
+  // Runtime settings belong to the long-lived MCP server; CLI calls use launch/per-call controls.
+  "inspect_analysis_settings",
+  "update_analysis_settings",
   // MCP session control selects a resource root; CLI resource commands take paths directly.
   "open_bundle_resources",
   "address_name",
