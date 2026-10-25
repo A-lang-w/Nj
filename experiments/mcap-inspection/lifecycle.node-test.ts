@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
@@ -54,18 +55,22 @@ syncBuiltinESMExports();
   }
 });
 
-await test("CLI rejects mutation after its final read and closes on read failure", async (t) => {
-  const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
-  t.after(() => rmSync(folder, { recursive: true, force: true }));
-  const path = join(folder, "input.mcap");
-  const preload = join(folder, "read-fault.mjs");
-  writeFileSync(
-    preload,
-    `
+for (const maxReadBytes of [Number.MAX_SAFE_INTEGER, 7]) {
+  await test(`CLI rejects final-read mutation and closes on failure with ${maxReadBytes === 7 ? "short" : "normal"} reads`, async (t) => {
+    const folder = mkdtempSync(join(tmpdir(), "mcap-prototype-"));
+    t.after(() => rmSync(folder, { recursive: true, force: true }));
+    const path = join(folder, "input.mcap");
+    const preload = join(folder, "read-fault.mjs");
+    writeFileSync(
+      preload,
+      `
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 const open = fs.openSync, read = fs.readSync, close = fs.closeSync;
-let target, calls = 0, closed = false;
+const finalReadStart = Number(process.env.MCAP_TEST_FINAL_READ_START);
+const finalReadEnd = Number(process.env.MCAP_TEST_FINAL_READ_END);
+const maxReadBytes = Number(process.env.MCAP_TEST_MAX_READ_BYTES);
+let target, completedUntil = finalReadStart, closed = false, mutated = false, readAfterMutation = false;
 fs.openSync = (...args) => {
   const fd = open(...args);
   if (args[0] === process.argv[2]) target = fd;
@@ -74,56 +79,81 @@ fs.openSync = (...args) => {
 fs.readSync = (...args) => {
   if (args[0] !== target) return read(...args);
   if (process.env.MCAP_TEST_FAULT === 'read') throw new Error('injected read denial');
-  const bytes = read(...args);
-  if (++calls === 4) fs.appendFileSync(process.argv[2], 'x');
+  if (mutated) readAfterMutation = true;
+  const [fd, buffer, offset, length, position] = args;
+  const bytes = read(fd, buffer, offset, Math.min(length, maxReadBytes), position);
+  if (position === completedUntil && completedUntil < finalReadEnd) completedUntil += bytes;
+  if (!mutated && completedUntil === finalReadEnd) {
+    fs.appendFileSync(process.argv[2], 'x');
+    mutated = true;
+  }
   return bytes;
 };
 fs.closeSync = (fd) => {
   close(fd);
   if (fd === target) closed = true;
 };
-process.on('exit', () => { if (!closed) process.exitCode = 9; });
-syncBuiltinESMExports();
-`,
-  );
-  for (const fault of ["read", "mutation", "parse-and-mutation"]) {
-    const bytes = await recording();
-    if (fault === "parse-and-mutation")
-      bytes.writeUInt8(
-        bytes.readUInt8(bytes.length - 12) ^ 1,
-        bytes.length - 12,
-      );
-    writeFileSync(path, bytes);
-    const run = spawnSync(
-      process.execPath,
-      ["--import", pathToFileURL(preload).href, cli, path],
-      {
-        encoding: "utf8",
-        env: { ...process.env, MCAP_TEST_FAULT: fault },
-      },
-    );
-    assert.equal(run.status, 1, run.stderr);
-    const output: unknown = JSON.parse(run.stdout);
-    assert.ok(
-      output !== null && typeof output === "object" && "error" in output,
-    );
-    assert.match(
-      JSON.stringify(output.error),
-      fault === "read"
-        ? /"kind":"io"/
-        : fault === "mutation"
-          ? /"kind":"changed"/
-          : /"kind":"reader_rejected"/,
-    );
-    if (fault !== "read") {
-      assert.ok("read_ranges" in output);
-      assert.ok(
-        Array.isArray(output.read_ranges) && output.read_ranges.length === 4,
-      );
-    }
-    if (fault === "parse-and-mutation") {
-      assert.ok("file_error" in output);
-      assert.match(JSON.stringify(output.file_error), /"kind":"changed"/);
-    }
+process.on('exit', () => {
+  if (!closed || readAfterMutation || (process.env.MCAP_TEST_FAULT !== 'read' && !mutated)) {
+    process.stderr.write('Lifecycle fault boundary or close was not reached as expected\\n');
+    process.exitCode = 9;
   }
 });
+syncBuiltinESMExports();
+`,
+    );
+    for (const fault of ["read", "mutation", "parse-and-mutation"]) {
+      const bytes = await recording();
+      const footer = bytes.length - 37;
+      const finalReadStart = Number(bytes.readBigUInt64LE(footer + 9)) - 13;
+      if (fault === "parse-and-mutation")
+        bytes.writeUInt8(
+          bytes.readUInt8(bytes.length - 12) ^ 1,
+          bytes.length - 12,
+        );
+      writeFileSync(path, bytes);
+      const run = spawnSync(
+        process.execPath,
+        ["--import", pathToFileURL(preload).href, cli, path],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MCAP_TEST_FAULT: fault,
+            MCAP_TEST_MAX_READ_BYTES: String(maxReadBytes),
+            MCAP_TEST_FINAL_READ_START: String(finalReadStart),
+            MCAP_TEST_FINAL_READ_END: String(footer),
+          },
+        },
+      );
+      assert.equal(run.status, 1, run.stderr);
+      const output: unknown = JSON.parse(run.stdout);
+      assert.ok(
+        output !== null && typeof output === "object" && "error" in output,
+      );
+      assert.match(
+        JSON.stringify(output.error),
+        fault === "read"
+          ? /"kind":"io"/
+          : fault === "mutation"
+            ? /"kind":"changed"/
+            : /"kind":"reader_rejected"/,
+      );
+      if (fault !== "read") {
+        assert.ok("read_ranges" in output);
+        assert.ok(Array.isArray(output.read_ranges));
+        assert.deepEqual(output.read_ranges.at(-1), {
+          offset: String(finalReadStart),
+          byte_length: String(footer - finalReadStart),
+          sha256: createHash("sha256")
+            .update(bytes.subarray(finalReadStart, footer))
+            .digest("hex"),
+        });
+      }
+      if (fault === "parse-and-mutation") {
+        assert.ok("file_error" in output);
+        assert.match(JSON.stringify(output.file_error), /"kind":"changed"/);
+      }
+    }
+  });
+}
