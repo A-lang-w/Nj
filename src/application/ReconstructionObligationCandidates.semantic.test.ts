@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascript/javascriptApplicationAnalysis.js";
 import { artifactEvidence } from "../domain/javascript/javascriptApplicationGraph.fixture.js";
 import {
@@ -12,8 +11,11 @@ import {
   createJavaScriptSemanticGraphUnknown,
   JavaScriptSemanticEvidenceContextRegistry,
 } from "../domain/javascript/javascriptSemanticGraph.js";
-import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
-import { build, request } from "./ReconstructionObligationLedger.fixture.js";
+import {
+  build,
+  deriveCandidates,
+  request,
+} from "./ReconstructionObligationLedger.fixture.js";
 
 const semanticApplication = (
   frontiers: readonly {
@@ -105,7 +107,7 @@ const semanticApplication = (
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: graph }),
+      result: { ...base, semantic_graph: graph },
       confidence: "derived",
       authority: "shipped-artifact",
     },
@@ -162,10 +164,7 @@ describe("semantic uncertainty at the obligation candidate boundary", () => {
       ),
     ].sort();
     for (const order of [records, [...records].reverse()]) {
-      const generated = deriveReconstructionObligationCandidates(
-        createEvidenceBundle(order),
-        [],
-      );
+      const generated = deriveCandidates(createEvidenceBundle(order), []);
       expect(generated.candidates).toHaveLength(1);
       expect(generated.candidates[0]).toMatchObject({
         definitionCount: 1,
