@@ -263,8 +263,8 @@ export class DexFileProvider implements DexDebugMetadataPort {
       path,
       this.#resources,
       signal,
-      async (handle) => {
-        const initial = await handle.stat();
+      async (source) => {
+        const { handle, initial } = source;
         if (initial.size > DEX_LIMITS.archiveBytes)
           throw new AnalysisResourceConstraintError(
             OPERATION,
@@ -277,7 +277,7 @@ export class DexFileProvider implements DexDebugMetadataPort {
           path,
           zipFormat,
           DEX_LIMITS.archiveMetadataBytes,
-          { handle, initial },
+          source,
         );
         const lease = new AnalysisCleanupLease(() => reader.close());
         let outcome: DexReaderCleanupFailure["outcome"];
