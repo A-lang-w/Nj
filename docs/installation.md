@@ -620,8 +620,8 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
-`freebuff` is not in a release yet - `6.7.0` is the latest - so it also needs a
-release containing it.
+`freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
+`rea setup --client freebuff` as an unsupported client.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
