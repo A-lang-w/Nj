@@ -118,13 +118,19 @@ for (const scenario of scenarios)
         );
         expect(result.exitCode, result.stderr).toBe(1);
         expect(result.stderr.trim()).toBe("REA_AUTHORED_FORMAT_CAPACITY");
+        // Diagnostic identifiers may be table cells (escaped) or headings.
+        // Assert their text independently of Markdown's presentation escapes.
+        const diagnosticText =
+          scenario.format === "md"
+            ? result.stdout.replaceAll("\\_", "_")
+            : result.stdout;
         expect(result.stdout).toContain("resource_constraint");
         expect(result.stdout).toContain("--format json");
-        expect(result.stdout).toContain("formatted_characters");
+        expect(diagnosticText).toContain("formatted_characters");
         expect(result.stdout).not.toContain("[truncated:");
         expect(result.stdout).not.toContain("UNKNOWN");
         if (outcome === "failure")
-          expect(result.stdout).toContain("target_unavailable");
+          expect(diagnosticText).toContain("target_unavailable");
         if (scenario.format === "md" && scenario.full) {
           expect(result.stdout).toMatch(/^## ok\n\nfalse$/m);
           expect(result.stdout).toMatch(
