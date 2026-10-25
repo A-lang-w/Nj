@@ -538,7 +538,12 @@ export const createServer = (
   });
   const rizinDebugSessions = new RizinDebugSessionManager(providerEnvironment);
   const android =
-    options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+    options.androidAnalysis ??
+    createAndroidAnalysisProvider(
+      environment,
+      undefined,
+      analysisSettings.read,
+    );
   const pcap = options.pcapAnalysis ?? createPcapAnalysisProvider(environment);
   const flutter =
     options.flutterAnalysis ?? createFlutterBuildAnalysisProvider();
