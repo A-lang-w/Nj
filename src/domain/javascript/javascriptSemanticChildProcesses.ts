@@ -433,6 +433,9 @@ const stdioMode = (
     return unsetStdioMode(expression, method, context);
   if (t.isStringLiteral(value)) return value.value;
   if (t.isArrayExpression(value)) return "array";
+  // fork ignores any other known stdio value and falls back to `silent`.
+  if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
+    return unsetStdioMode(expression, method, context);
   return "dynamic";
 };
 

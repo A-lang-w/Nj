@@ -62,6 +62,10 @@ describe("child-process options detection", () => {
       fork("explicit-stdio.js", { silent: true, stdio: "inherit" });
       fork("dynamic.js", { silent: process.env.QUIET });
       spawn("tool", { silent: true });
+      fork("boolean-stdio.js", { stdio: false, silent: true });
+      fork("object-stdio.js", { stdio: {}, silent: false });
+      fork("unresolved-stdio.js", { stdio: streams, silent: true });
+      spawn("tool", { stdio: false });
     `);
 
     expect(ir.childProcessSpawns.map(({ stdioMode }) => stdioMode)).toEqual([
@@ -71,6 +75,10 @@ describe("child-process options detection", () => {
       "inherit",
       "dynamic",
       "default",
+      "pipe",
+      "default",
+      "dynamic",
+      "dynamic",
     ]);
   });
 
