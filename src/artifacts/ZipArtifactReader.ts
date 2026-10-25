@@ -75,12 +75,13 @@ class NodeFileReader extends Reader<string> {
   }
 
   async #initialize(): Promise<void> {
+    let source: StableRegularFileDescriptor;
     try {
-      const handle =
-        this.admitted?.handle ??
+      source =
+        this.admitted ??
         (await openRegularFile(this.path, { symlinks: "reject" }));
-      this.#handle = handle;
-      if (this.#ownsHandle) this.#owner = new OwnedFileHandle(handle);
+      this.#handle = source.handle;
+      if (this.#ownsHandle) this.#owner = new OwnedFileHandle(source.handle);
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure) {
         this.#owner = cause.owner;
@@ -108,17 +109,15 @@ class NodeFileReader extends Reader<string> {
         );
       throw cause;
     }
-    const metadata = await this.#handle.stat();
-    if (
-      !metadata.isFile() ||
-      (this.admitted !== undefined &&
-        !sameRegularFileState(this.admitted.initial, metadata))
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `ZIP source identity changed before reading: ${this.path}`,
-      );
-    this.size = metadata.size;
+    if (this.admitted !== undefined) {
+      const metadata = await source.handle.stat();
+      if (!sameRegularFileState(source.initial, metadata))
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ZIP source identity changed before reading: ${this.path}`,
+        );
+    }
+    this.size = source.initial.size;
   }
 
   override async readUint8Array(
@@ -297,6 +296,7 @@ const projectZipEntry = (
   if (kind === "directory" && (path === "" || path === ".")) return undefined;
   return {
     path,
+    ...(path === sourcePath ? {} : { sourcePath }),
     kind,
     declaredSize: kind === "directory" ? null : entry.uncompressedSize,
     compressedSize: kind === "directory" ? null : entry.compressedSize,
@@ -386,7 +386,9 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
     // against `getData` rejecting with its own AbortError. That ordering is what
     // keeps the caller-visible failure typed as `cancelled`.
     output.destroy(
-      new ArtifactReaderFailure("cancelled", "ZIP operation cancelled"),
+      new ArtifactReaderFailure("cancelled", "ZIP operation cancelled", {
+        cause: signal?.reason,
+      }),
     );
   };
   signal?.addEventListener("abort", onAbort, { once: true });

@@ -7,7 +7,11 @@ operation and the next useful step; after repair, continue the investigation.
 Commands below use an installed `rea`. If none is available, use the package
 invocation in `SKILL.md` when acquiring REA is authorized. Follow the connected
 server's schemas and the installed CLI's help rather than assuming repository
-main and an older release expose the same arguments.
+main and an older release expose the same arguments. Tool-name prefixes belong
+to the client: find the canonical REA operation in its actual tool listing and
+server association before concluding that it is absent. A shared prefix alone
+does not establish which server an approval wildcard covers. See
+[client tool names and discovery](https://github.com/morluto/rea/blob/main/docs/client-configuration.md#client-tool-names-and-discovery).
 
 ## Choose the remedy from the observed failure
 
@@ -170,6 +174,17 @@ writing. Managed policy can constrain client settings. Consult the
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 for the installed client's supported settings. This is an optional recovery
 choice, not a prerequisite for every REA task.
+
+## Repair an editable REA limit
+
+If `details.limit` names an editable setting and its bounds, call
+`update_analysis_settings` directly with a `changes` entry containing `setting`,
+`action: "set"` and `value`. `inspect_analysis_settings` is optional when those
+facts are already present. Retry the same input after work and cleanup settle.
+Runtime defaults affect new work only; explicit per-call arguments take
+precedence and must be corrected directly when selected. Reset restores launch
+values. Updates survive target close/open but disappear on REA restart. They do
+not edit host deadlines, response buffers, registrations or fixed limits.
 
 ## Continue through an installed CLI
 

@@ -11,9 +11,11 @@ import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "./AnalysisProvider.js";
-import { nativeAnalysisConfigurationError } from "../config/parseConfig.js";
+import {
+  inspectNativeAnalysisConfiguration,
+  type NativeAnalysisConfigurationInspection,
+} from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import type { ConfigurationSettingIssue } from "../domain/configurationErrors.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { join } from "node:path";
 
@@ -108,12 +110,11 @@ export interface DoctorHost {
   readonly runtime: JavaScriptRuntime;
   readonly homeDirectory: string;
   readonly configuredHopperPath?: string;
-  readonly configuredHopperStartupTimeout?: string;
   /**
    * Settings `parseConfig` rejects before native analysis starts.
    * Undefined means this host did not run that admission.
    */
-  readonly configurationIssues?: readonly ConfigurationSettingIssue[];
+  readonly nativeConfiguration?: NativeAnalysisConfigurationInspection;
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
@@ -428,9 +429,21 @@ const skillIdentityAligned = (
 const skillIdentityState = (
   identity: InstalledSkillIdentity | undefined,
 ): DoctorSkillState => {
-  if (identity?.issues?.some(({ kind }) => kind === "unreadable"))
+  if (
+    identity?.issues?.some(
+      ({ kind }) => kind === "unreadable" || kind === "unresolved",
+    )
+  )
     return "unknown";
-  if ((identity?.issues?.length ?? 0) > 0) return "unmanaged";
+  if (
+    identity?.issues?.some(
+      ({ kind }) => kind === "symbolic_link" || kind === "not_directory",
+    )
+  )
+    return "unmanaged";
+  if (identity?.issues?.some(({ kind }) => kind === "stale")) return "stale";
+  if (identity?.issues?.some(({ kind }) => kind === "missing"))
+    return "missing";
   return identity === undefined
     ? "missing"
     : skillIdentityAligned(identity)
@@ -443,7 +456,15 @@ const skillIdentityRemediation = (
 ): string => {
   const issues = identity?.issues;
   if (issues !== undefined && issues.length > 0)
-    return `${issues.map(({ path, detail }) => `${detail} (${path})`).join(" ")} Verify the reported paths and use regular skill directories, or run rea setup with --skill=false to configure the client without installing the skill.`;
+    return issues
+      .map(({ path, detail, kind, client }) => {
+        const repair =
+          kind === "stale" || kind === "missing"
+            ? `Run rea setup --skill-client ${client ?? "shared"} --skill to repair this copy.`
+            : "Repair the selected path/profile before rerunning setup, or use --skill=false to configure clients without installing the skill.";
+        return `${detail} (${path}). ${repair}`;
+      })
+      .join(" ");
   return "Run rea setup to update the installed REA skill.";
 };
 
@@ -500,7 +521,10 @@ export interface SystemDoctorHostOptions {
     resources: RetainedResourceScope,
     signal: AbortSignal,
   ) => ReturnType<ProviderRequestBudgetResolver>;
-  readonly linuxDemoRuntimeCheck?: () => Promise<DoctorCheck>;
+  readonly linuxDemoRuntimeCheck?: (
+    resourceScope: RetainedResourceScope,
+    signal: AbortSignal,
+  ) => Promise<DoctorCheck>;
 }
 
 /** Create diagnostics backed by the current process and host commands. */
@@ -516,7 +540,7 @@ export const systemDoctorHost = (
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
   const environment = options.environment ?? process.env;
-  const configurationError = nativeAnalysisConfigurationError(
+  const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),
   );
   const hostExecFileOutput = options.execFileOutput ?? execFileOutput;
@@ -553,13 +577,7 @@ export const systemDoctorHost = (
     ...(environment.HOPPER_LAUNCHER_PATH === undefined
       ? {}
       : { configuredHopperPath: environment.HOPPER_LAUNCHER_PATH }),
-    ...(environment.REA_HOPPER_STARTUP_TIMEOUT_MS === undefined
-      ? {}
-      : {
-          configuredHopperStartupTimeout:
-            environment.REA_HOPPER_STARTUP_TIMEOUT_MS,
-        }),
-    configurationIssues: configurationError?.settings ?? [],
+    nativeConfiguration,
     ...(environment.REA_ILSPY_CMD_PATH === undefined
       ? {}
       : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),
@@ -613,8 +631,10 @@ export const systemDoctorHost = (
         hostExecFileOutput,
         commandEnvironment,
       ),
-    linuxDemoRuntimeCheck:
-      options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
+    linuxDemoRuntimeCheck: () =>
+      options.linuxDemoRuntimeCheck === undefined
+        ? uncomposedLinuxDemoRuntimeCheck()
+        : options.linuxDemoRuntimeCheck(resourceScope, inspectionSignal),
     inspectLinuxHopper: (path) => inspectLinuxHopperLauncher(path, environment),
     async brewHopperPath() {
       return probeHomebrew(async (command) => {

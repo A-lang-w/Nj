@@ -10,6 +10,8 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
+  hasCompleteMethodRows,
+  managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -215,11 +217,6 @@ export interface ManagedMemberComparisonSide {
   readonly result: ManagedMemberInspection;
 }
 
-const selectedTypes = (
-  result: ManagedMemberInspection,
-): ReadonlySet<string> | null =>
-  result.selection === null ? null : new Set(result.selection.type_names);
-
 const callEdgesByCaller = (
   result: ManagedMemberInspection,
 ): ReadonlyMap<
@@ -262,17 +259,25 @@ export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
   right: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult => {
-  const { methodMatches, fieldMatches } = keyMembers(left, right);
+  const scope = managedComparisonScope(left.result, right.result);
+  const { methodMatches, fieldMatches } = keyMembers(left, right, scope);
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
     leftComplete: left.result.metadata.status === "complete",
     rightComplete: right.result.metadata.status === "complete",
-    leftSelection: selectedTypes(left.result),
-    rightSelection: selectedTypes(right.result),
+    leftMethodsComplete:
+      left.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(left.result),
+    rightMethodsComplete:
+      right.result.metadata.status === "complete" &&
+      hasCompleteMethodRows(right.result),
+    scope,
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    leftAssembly: left.result.assembly,
+    rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
     leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
@@ -283,11 +288,17 @@ export const compareManagedMembers = (
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
+  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
+    selectionAgreement,
   });
-  const limitations = comparisonLimitations(left.result, right.result);
+  const limitations = comparisonLimitations(
+    left.result,
+    right.result,
+    selectionAgreement,
+  );
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

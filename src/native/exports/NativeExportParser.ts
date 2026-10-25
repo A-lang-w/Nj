@@ -3,12 +3,14 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   mappedFileOffset,
+  imageFileMappings,
+  readMappedCString,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
 import { isUtf8 } from "node:buffer";
 import { readElfStringBytes, readElfSymbol } from "../metadata/ElfSymbol.js";
 import {
-  readNativeDirectoryFromBuffer,
+  readElfDirectoryFromBuffer,
   type NativeSection,
 } from "../metadata/NativeSectionDirectory.js";
 import { readPeImage } from "../metadata/PeImage.js";
@@ -70,7 +72,7 @@ const coverage = (
     ? { status: "complete", reason: null, examined_entries: examined, exports }
     : {
         status: "partial",
-        reason: `${String(issues.length)} export table issue(s) left entries unreported; see issues`,
+        reason: `${String(issues.length)} export table issue(s) affect reported rows or metadata; see issues`,
         examined_entries: examined,
         exports,
       };
@@ -96,7 +98,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     architecture: image.architecture,
     bits: image.bits,
   };
-  if (directory === undefined || directory.virtual_address === 0)
+  if (directory === undefined || directory.address === 0)
     return {
       ...result,
       export_directory: null,
@@ -109,79 +111,25 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       ],
     };
   const reader = new BinaryReader(bytes, true);
-  const mappings =
-    image.pe_header_mapping === undefined
-      ? image.mappings
-      : [image.pe_header_mapping, ...image.mappings];
+  const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cString = (rva: number): string => {
-    const chunks: Buffer[] = [];
-    let length = 0;
-    while (length <= MAXIMUM_NAME_BYTES) {
-      const address = base + BigInt(rva + length);
-      let sourceMapping: (typeof mappings)[number] | undefined;
-      for (const mapping of mappings) {
-        const end = mapping.address + BigInt(mapping.size);
-        if (
-          mapping.address <= address &&
-          address < end &&
-          (sourceMapping === undefined ||
-            end > sourceMapping.address + BigInt(sourceMapping.size))
-        )
-          sourceMapping = mapping;
-      }
-      if (sourceMapping === undefined) {
-        map(rva + length, 1);
-        throw new BinaryFormatFailure(
-          "malformed",
-          "PE export string mapping is inconsistent",
-        );
-      }
-      const size = Math.min(
-        MAXIMUM_NAME_BYTES + 1 - length,
-        Number(sourceMapping.address + BigInt(sourceMapping.size) - address),
-      );
-      const offset =
-        sourceMapping.offset + Number(address - sourceMapping.address);
-      const chunk = bytes.subarray(offset, offset + size);
-      const terminator = chunk.indexOf(0);
-      if (terminator >= 0) {
-        const nameLength = length + terminator;
-        if (nameLength === 0)
-          throw new BinaryFormatFailure(
-            "malformed",
-            `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
-          );
-        const consumedOffset = mappedFileOffset(
-          mappings,
-          address,
-          terminator + 1,
-          image.zero_fills,
-        );
-        if (length === 0) {
-          // Preserve the common single-mapping path without retaining a
-          // temporary chunk array for every export name.
-          return bytes.toString(
-            "latin1",
-            consumedOffset,
-            consumedOffset + terminator,
-          );
-        }
-        chunks.push(chunk.subarray(0, terminator));
-        return Buffer.concat(chunks, nameLength).toString("latin1");
-      }
-      mappedFileOffset(mappings, address, size, image.zero_fills);
-      chunks.push(chunk);
-      length += size;
-    }
-    throw new BinaryFormatFailure(
-      "malformed",
-      `Export name at RVA ${hex(rva)} is empty, unterminated or longer than ${String(MAXIMUM_NAME_BYTES)} bytes`,
+    const value = readMappedCString(
+      bytes,
+      image,
+      base + BigInt(rva),
+      MAXIMUM_NAME_BYTES,
     );
+    if (value.length === 0)
+      throw new BinaryFormatFailure(
+        "malformed",
+        `Export name at RVA ${hex(rva)} is empty`,
+      );
+    return value.toString("latin1");
   };
 
-  const header = map(directory.virtual_address, PE_EXPORT_DIRECTORY_BYTES);
+  const header = map(directory.address, PE_EXPORT_DIRECTORY_BYTES);
   const ordinalBase = reader.u32(header + 16);
   const functionCount = reader.u32(header + 20);
   const nameCount = reader.u32(header + 24);
@@ -232,7 +180,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     }
   }
 
-  const forwarderEnd = directory.virtual_address + directory.size;
+  const forwarderEnd = directory.address + directory.size;
   const retain = createRetention();
   const exports: PeExport[] = [];
   for (let index = 0; index < functionCount; index++) {
@@ -241,7 +189,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     if (rva === 0) continue;
     const ordinal = ordinalBase + index;
     let target: Pick<PeExport, "address" | "forwarder">;
-    if (rva >= directory.virtual_address && rva < forwarderEnd) {
+    if (rva >= directory.address && rva < forwarderEnd) {
       try {
         target = { address: null, forwarder: cString(rva) };
       } catch (cause) {
@@ -268,7 +216,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   return {
     ...result,
     export_directory: {
-      rva: directory.virtual_address,
+      rva: directory.address,
       size: directory.size,
       dll_name: dllName,
       ordinal_base: ordinalBase,
@@ -501,7 +449,7 @@ const readVersionNames = (
 
 /** Read defined exported entries of `.dynsym` with their symbol versions. */
 const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
-  const directory = readNativeDirectoryFromBuffer(bytes, "elf");
+  const directory = readElfDirectoryFromBuffer(bytes);
   const reader = new BinaryReader(bytes, directory.little);
   const result = {
     artifact,
@@ -511,21 +459,26 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     byte_order: directory.little ? ("little" as const) : ("big" as const),
   };
   const { sections } = directory;
-  if (sections.length === 0)
+  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
+  if (
+    sections.length === 0 ||
+    (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
+  )
     return {
       ...result,
       exports: [],
       coverage: {
         status: "unsupported",
         reason:
-          "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented",
+          sections.length === 0
+            ? "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented"
+            : "The ELF declares a dynamic segment but has no dynamic symbol section; enumerating dynamic symbols from the dynamic segment is not implemented",
         examined_entries: 0,
         exports: 0,
       },
       issues: [],
       limitations: ELF_LIMITATIONS,
     };
-  const dynsym = sections.find(({ type }) => type === SHT_DYNSYM);
   if (dynsym === undefined)
     return {
       ...result,

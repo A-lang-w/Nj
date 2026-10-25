@@ -16,11 +16,11 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-  type ArtifactTraversalOmission,
 } from "../ArtifactReader.js";
+import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
+import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import {
   classifyArtifactContent,
   classifyArtifactBytes,
@@ -35,7 +35,7 @@ import {
   STRICT_INTEGRITY_POLICY,
   type ArtifactIntegrityPolicy,
 } from "./types.js";
-import { hashReadable } from "../ArtifactHash.js";
+import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;
@@ -65,8 +65,7 @@ interface ScanContext {
   readonly registry: ArtifactPathRegistry;
   readonly expandedContainerIds: Set<string>;
   readonly ownedReaders: ArtifactReader[];
-  readonly omissions: ArtifactTraversalOmission[];
-  readonly coverage: ArtifactReaderTraversal[];
+  readonly traversal: ArtifactTraversalObservation;
 }
 
 export const scanReader = async (
@@ -105,8 +104,7 @@ export const scanReader = async (
     registry: new ArtifactPathRegistry(),
     expandedContainerIds: new Set<string>(),
     ownedReaders,
-    omissions: [],
-    coverage: [],
+    traversal: new ArtifactTraversalObservation(),
   };
   await visitArtifactEntries(context, reader, "");
   // Archive directories may appear after their children. Resolve containment
@@ -118,30 +116,17 @@ export const scanReader = async (
     context.expandedContainerIds,
   );
   const structuralLimitations = [...parentResolution.limitations];
+  context.traversal.onCoverage({
+    status: structuralLimitations.length === 0 ? "complete" : "unknown",
+    limitations: structuralLimitations,
+  });
   return {
     nodes,
     occurrences,
     pendingContradictions,
     caseCollisionLimitation: annotateEnglishUnicodeCaseCollisions(occurrences),
     unknownParentOccurrences: parentResolution.unknownParentOccurrences,
-    traversal: {
-      status:
-        context.omissions.length === 0 &&
-        structuralLimitations.length === 0 &&
-        context.coverage.every((value) => value.status === "complete")
-          ? "complete"
-          : "unknown",
-      limitations: [
-        ...new Set([
-          ...context.omissions.map(
-            ({ path, kind }) =>
-              `Artifact traversal omitted ${kind} at ${JSON.stringify(path)}.`,
-          ),
-          ...structuralLimitations,
-          ...context.coverage.flatMap((value) => value.limitations),
-        ]),
-      ].sort(compareUnicodeCodePoints),
-    },
+    traversal: context.traversal.snapshot(),
   };
 };
 
@@ -152,13 +137,12 @@ const inventoryEntries = (
 ): AsyncIterator<ArtifactEntry> =>
   reader
     .entries(context.signal, {
-      onCoverage: (coverage) => context.coverage.push(coverage),
+      onCoverage: context.traversal.onCoverage,
       onOmission: (omission) =>
-        context.omissions.push({
+        context.traversal.onOmission({
           ...omission,
-          path: normalizeArtifactPath(
+          path:
             prefix.length === 0 ? omission.path : `${prefix}/${omission.path}`,
-          ),
         }),
     })
     [Symbol.asyncIterator]();
@@ -231,16 +215,31 @@ const visitArtifactEntries = async (
           occurrence,
         );
       } catch (cause: unknown) {
-        if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
+        let limitation = UNAVAILABLE_UNPACKED_LIMITATION;
+        if (cause instanceof DirectoryArtifactEntryAccessDenied) {
+          abortIfNeeded(context.signal);
+          limitation = cause.message;
+          context.traversal.onCoverage({
+            status: "unknown",
+            limitations: [limitation],
+          });
+        } else if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
         occurrence.hash_status = "unavailable";
-        occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
+        occurrence.limitations.push(limitation);
       }
       if (digested === undefined) noteUnreadContainerSuffix(occurrence);
       else {
         context.nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
-        occurrence.artifact_kind = digested.classification.kind;
-        occurrence.artifact_format = digested.classification.format;
+        const seaMainScript =
+          entry.formatMetadata?.kind === "node-sea-entry" &&
+          entry.formatMetadata.role === "main-script";
+        occurrence.artifact_kind = seaMainScript
+          ? "javascript"
+          : digested.classification.kind;
+        occurrence.artifact_format = seaMainScript
+          ? "javascript-bundle"
+          : digested.classification.format;
         occurrence.hash_status = digested.mismatched
           ? "mismatched"
           : "verified";

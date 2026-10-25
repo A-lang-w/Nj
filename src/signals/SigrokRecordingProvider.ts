@@ -30,6 +30,7 @@ import type { SignalRecordingPort } from "../application/signals/SignalRecording
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactAnalysisResources,
+  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -38,7 +39,6 @@ import {
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -47,10 +47,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence } from "../domain/evidence.js";
-import {
-  fixedAllowanceOptions,
-  fixedProducerInputAllowance,
-} from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { windowAnnotationText } from "../domain/signals/annotationTextWindow.js";
 import {
@@ -128,12 +125,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
-    let phase:
-      | "configuration"
-      | "artifact"
-      | "workspace"
-      | "producer"
-      | "integrity" = "configuration";
+    let phase: "configuration" | "workspace" | "producer" | "integrity" =
+      "configuration";
     let capturedOutput: AnalysisCapturedOutput | undefined;
     let resourcePath = "path" in input ? input.path : "sigrok decoder catalog";
     let effectiveLimits: LinuxResourceLimits | undefined;
@@ -208,30 +201,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = {
-          stdout: output.stdout.text,
-          stderr: output.stderr.text,
-          truncated: output.diagnosticTruncated ?? false,
-          exit_code: output.exitCode ?? null,
-          signal: output.signal ?? null,
-        };
-        // Finish bounded integrity checks after output; service handles late cancellation with Evidence.
-        const previousPhase = phase;
-        phase = "integrity";
-        resourcePath = command;
-        const current = await this.#resources.read(command, 64 * 1024 * 1024);
-        resourcePath = limiter;
-        const currentLimiter = await this.#resources.read(
-          limiter,
-          64 * 1024 * 1024,
+        capturedOutput = artifactCommandOutput(output);
+        const current = await this.#resources.readCommandAfterRun(
+          command,
+          { path: limiter, sha256: limiterIdentity.sha256 },
+          capturedOutput,
+          operation,
         );
-        if (currentLimiter.sha256 !== limiterIdentity.sha256)
-          throw new AnalysisArtifactChangedError(
-            operation,
-            limiter,
-            "Configured resource limiter changed during analysis.",
-            { capturedOutput },
-          );
         if (current.sha256 !== tool.sha256)
           throw new AnalysisArtifactChangedError(
             operation,
@@ -239,7 +215,6 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             "Configured decoder executable changed during analysis.",
             { capturedOutput },
           );
-        phase = previousPhase;
         resourcePath = "path" in input ? input.path : command;
         const invalidUtf8Streams = [
           ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
@@ -257,8 +232,8 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               },
             },
           );
-        // Some selected-channel refusals are diagnostics, not process failures:
-        // sigrok can emit fallback annotations and still exit successfully.
+        // Selected-channel and input-option refusals can be diagnostics rather
+        // than process failures: fallback annotations may still exit successfully.
         const rejection =
           selection === undefined
             ? undefined
@@ -268,6 +243,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             operation,
             { capturedOutput, userMessage: rejection.message },
             [rejection],
+          );
+        if (output.exitCode !== 0 && phase === "configuration")
+          throw new Error(
+            "The selected sigrok-cli installation failed its --version probe; inspect its captured output.",
           );
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
@@ -334,12 +313,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           }),
         );
       } else {
-        phase = "artifact";
-        const selected = await this.#resources.read(
-          input.path,
-          LIMITS.input_bytes,
-          options?.signal,
-        );
+        const selected = await this.#resources.readSelectedArtifact({
+          path: input.path,
+          maximumBytes: LIMITS.input_bytes,
+          allowanceName: "the fixed sigrok input allowance",
+          observedOutput: capturedOutput,
+          signal: options?.signal,
+        });
         phase = "workspace";
         await writeFile(snapshotPath, selected.bytes, {
           flag: "wx",
@@ -348,7 +328,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         phase = "producer";
         const args = [
           "--dont-scan",
-          `--input-file=${snapshotName}`,
+          // An explicit relative path preserves filename hints while keeping
+          // a recording named "-" distinct from sigrok's stdin operand.
+          `--input-file=./${snapshotName}`,
           `--protocol-decoders=${input.decoders}`,
           "--protocol-decoder-samplenum",
           ...(input.input_format === null
@@ -440,12 +422,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
   }
   #failure(
     cause: unknown,
-    phase:
-      | "configuration"
-      | "artifact"
-      | "workspace"
-      | "producer"
-      | "integrity",
+    phase: "configuration" | "workspace" | "producer" | "integrity",
     path: string,
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
@@ -508,28 +485,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         cause,
         workspacePath,
       );
-    if (phase === "integrity") {
-      const detail = {
+    if (phase === "integrity")
+      return this.#resources.integrityFailure(
         cause,
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-      };
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        ["limit", "integrity", "path"].includes(cause.reason)
-      )
-        return new AnalysisArtifactChangedError(
-          operation,
-          path,
-          `Post-run identity verification failed for ${path}: ${reason}`,
-          detail,
-        );
-      return new ProviderAdapterError(SIGROK_PROVIDER_IDENTITY.id, operation, {
-        ...detail,
-        diagnostics: { stage: "integrity", resource_path: path, reason },
-      });
-    }
+        path,
+        observedOutput,
+        operation,
+      );
     if (phase === "configuration")
       return new AnalysisCapabilityUnavailableError(
         SIGROK_PROVIDER_IDENTITY.id,
@@ -543,41 +505,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
-    if (
-      phase === "artifact" &&
-      cause instanceof ArtifactReaderFailure &&
-      cause.reason === "limit"
-    )
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
-        reason,
-        { input_bytes: LIMITS.input_bytes },
-        {
-          cause,
-          ...fixedProducerInputAllowance(
-            LIMITS.input_bytes,
-            "the fixed sigrok input allowance",
-          ),
-        },
-      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, reason, {
         cause,
       });
-    if (
-      phase === "artifact" &&
-      cause instanceof Error &&
-      "code" in cause &&
-      (cause.code === "EACCES" || cause.code === "EPERM")
-    )
-      return new AnalysisAccessDeniedError(operation, path, cause.code, {
-        cause,
-      });
-    if (phase === "artifact")
-      return new AnalysisInputError(operation, { cause }, [
-        { path: ["path"], reason: "invalid_value", message: reason },
-      ]);
     return new AnalysisOutputError(operation, reason, {
       cause,
       ...(observedOutput === undefined

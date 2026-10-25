@@ -184,6 +184,12 @@ const managedExceptionRegionSchema = z.object({
     ),
   /** Resolved from this artifact's own metadata; raw token remains build-local. */
   class_type: z.string().nullable().default(null),
+  class_type_name_sha256: digestSchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Nested nominal TypeDef/TypeRef name digest; assembly scope is compared separately and local tokens are not cross-artifact identities",
+    ),
   class_type_identity_resolved: z
     .boolean()
     .nullable()
@@ -347,6 +353,13 @@ const managedNativeImplementationSchema = z.object({
 
 const managedCallEdgeSchema = z.object({
   caller_token: managedMetadataTokenSchema,
+  il_offset: offsetSchema.nullable().default(null),
+  target_identity_sha256: digestSchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Nominal declaring-type/name/signature digest; null when unresolved or unrecorded. Does not establish assembly or runtime binding.",
+    ),
   caller: z.string().nullable(),
   opcode: z.string(),
   target_token: managedMetadataTokenSchema,
@@ -362,6 +375,13 @@ const managedCallEdgeSchema = z.object({
 
 const managedFieldAccessSchema = z.object({
   method_token: managedMetadataTokenSchema,
+  il_offset: offsetSchema.nullable().default(null),
+  target_identity_sha256: digestSchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Nominal declaring-type/name/signature digest; null when unresolved or unrecorded. Does not establish assembly or runtime binding.",
+    ),
   method: z.string().nullable(),
   opcode: z.string(),
   field_token: managedMetadataTokenSchema,
@@ -380,6 +400,7 @@ const managedParseIssueSchema = z.object({
     "invalid-stream",
     "missing-stream",
     "invalid-tables",
+    "unsupported-metadata",
     "invalid-row",
     "invalid-heap-index",
     "invalid-string",
@@ -491,6 +512,7 @@ export const managedMemberInspectionSchema = z.object({
     ),
   artifact: managedArtifactReferenceSchema,
   module: moduleIdentitySchema.nullable(),
+  assembly: assemblyIdentitySchema.nullable().default(null),
   metadata: managedMetadataSummarySchema,
   identity_scope: managedTokenIdentityScopeSchema,
   types: z.array(managedTypeSchema),
@@ -531,6 +553,17 @@ export const managedMemberInspectionSchema = z.object({
     })
     .nullable()
     .default(null),
+  method_rows: z
+    .object({
+      offset: z.int().nonnegative(),
+      count: z.int().nonnegative(),
+      total: z.int().nonnegative(),
+    })
+    .nullable()
+    .default(null)
+    .describe(
+      "Examined zero-based MethodDef row interval before declaring-type selection; null means the row scope was not recorded. Row coordinates are build-local and cannot prove cross-build member absence for a page.",
+    ),
   coverage: z.object({
     state: z.enum(["complete", "partial", "unavailable"]),
     issues: z.array(managedParseIssueSchema),

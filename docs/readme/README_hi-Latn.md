@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · **Hinglish**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · **Hinglish**
 
 # REA: Reverse Engineer Anything
 
@@ -161,7 +161,10 @@ REA ko Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ya 26.12.1+ aur npm chahiye. B
 | Godot PCK               | Archive inventory aur extraction, original header/directory facts aur chuni hui content identities | Built-in static formats 2, 3 aur 4; Godot ki zaroorat nahi                                                                        |
 | Rust binaries           | Embedded cargo-auditable crate names, versions, sources aur dependency edges                       | Built-in static ELF/PE/thin Mach-O inspection; [Rust binaries](../rust-binaries.md)                                               |
 | PE certificates         | Authenticode WIN_CERTIFICATE entries aur PKCS#7 signer/X.509 identity fields                       | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
+| PE imports              | Import aur delay-load DLL names, ordinals, IAT RVAs aur pefile import hash                         | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
 | ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id aur ABI-tag fields                                    | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
+| Apple IPS crashes       | .ips metadata, threads, images, registers aur documented crash classes                             | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                     |
+| Linux kernel modules    | .modinfo keys, __versions CRCs, this_module ki maujoodgi, aur signature trailer                    | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
 | Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                                | Caller ka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                           |
 | EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments aur mutability                                | Linux x64 par local raw/hex carrier; [offline EVM guide](../evm-bytecode.md)                                                      |
@@ -195,7 +198,12 @@ Native formats aur host support har provider mein alag hote hain. [Hopper aur Gh
 
 ## Showcases
 
-[![DX-Ball sound-pan, Notion clipboard-bridge aur TH04 bullet-ring showcases ke illustrations](../assets/rea-showcases.png)](https://rea.tools/showcase/)
+<a href="https://rea.tools/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="DX-Ball sound-pan, Notion clipboard-bridge aur TH04 bullet-ring showcases ke illustrations" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
 
 ### DX-Ball: sound-pan calculation ko reconstruct karna
 
@@ -323,7 +331,7 @@ REA lawful research, education, interoperability, software preservation, aur us 
 
 REA mein aapki madad ka swagat hai! Bug report karne ya feature suggest karne ke liye [issue kholiye](https://github.com/morluto/rea/issues), ya code aur docs behtar karne ke liye [pull request bhejiye](https://github.com/morluto/rea/pulls).
 
-Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes ke liye [testing](../testing.md), aur project structure ke liye [architecture map](../architecture.mermaid) dekhiye.
+Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes ke liye [testing](../testing.md), aur chune hue layers aur dependency paths ke liye [architecture map](../architecture.mermaid) dekhiye.
 
 ## License
 

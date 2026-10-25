@@ -1,8 +1,7 @@
 import {
   SUPPORTED_NODE_VERSION_PROSE,
-  supportsNodeVersion,
+  supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import type {
@@ -94,7 +93,7 @@ export const doctorHealthy = (
   );
 };
 
-/** Bun passes when its reported Node.js compatibility version is supported. */
+/** Runtime support follows the shared rule, which judges Bun by its Node.js compatibility. */
 const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
   const failure = {
     remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
@@ -104,7 +103,7 @@ const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
     return {
       ...check(
         "node",
-        supportsNodeVersion(runtime.version),
+        supportsJavaScriptRuntime(runtime),
         runtime.version,
         failure,
       ),
@@ -113,7 +112,7 @@ const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
   return {
     ...check(
       "node",
-      supportsNodeVersion(runtime.nodeCompatibilityVersion),
+      supportsJavaScriptRuntime(runtime),
       `Bun ${runtime.version} (Node.js ${runtime.nodeCompatibilityVersion} compatibility)`,
       failure,
     ),
@@ -193,16 +192,14 @@ const hopperCheck = (
 const optionalHopperStartupTimeoutCheck = (
   host: DoctorHost,
 ): DoctorCheck | undefined => {
-  if (host.configuredHopperStartupTimeout === undefined) return undefined;
-  const parsed = providerStartupTimeoutSchema.safeParse(
-    host.configuredHopperStartupTimeout,
-  );
+  const parsed = host.nativeConfiguration?.configuredHopperStartupTimeout;
+  if (parsed === undefined) return undefined;
   return check(
     "hopper-startup-timeout",
-    parsed.success,
-    parsed.success
-      ? `REA_HOPPER_STARTUP_TIMEOUT_MS=${String(parsed.data)}`
-      : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.issues.map(({ message }) => message).join("; ")}`,
+    parsed.ok,
+    parsed.ok
+      ? `REA_HOPPER_STARTUP_TIMEOUT_MS=${String(parsed.value)}`
+      : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.settings.map(({ constraint }) => constraint).join("; ")}`,
     {
       classification: "config_drift",
       remediation:
@@ -219,7 +216,7 @@ const optionalHopperStartupTimeoutCheck = (
 const runtimeConfigurationChecks = (
   host: DoctorHost,
 ): readonly DoctorCheck[] => {
-  const issues = host.configurationIssues;
+  const issues = host.nativeConfiguration?.issues;
   if (issues === undefined || issues.length === 0) return [];
   const grouped: { setting: string; constraints: string[] }[] = [];
   for (const issue of issues) {
