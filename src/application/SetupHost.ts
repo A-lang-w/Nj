@@ -23,12 +23,7 @@ import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
-import {
-  runDoctor,
-  systemDoctorHost,
-  type DoctorHost,
-  type DoctorScope,
-} from "./Doctor.js";
+import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import {
   installLinuxHopper,
   LinuxHopperTemporaryCleanupOwner,
@@ -72,6 +67,7 @@ import type {
   SetupInitialState,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
+import type { DoctorScope } from "./Doctor.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import {
   AnalysisCleanupLeaseGroup,

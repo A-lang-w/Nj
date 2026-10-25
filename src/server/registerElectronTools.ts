@@ -39,10 +39,8 @@ import {
 } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
-import {
-  createEvidenceToolHandler,
-  deliverEvidenceResult,
-} from "./contractToolHandler.js";
+import { createEvidenceToolHandler } from "./contractToolHandler.js";
+import { deliverEvidenceResult } from "./contractToolHandler.js";
 
 interface ElectronToolRegistration {
   readonly artifactResources: ArtifactResourceScope;

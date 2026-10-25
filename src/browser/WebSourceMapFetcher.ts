@@ -27,10 +27,7 @@ import type {
   WebSourceMapItem,
   WebSourceMaps,
 } from "../domain/webBundleAnalysis.js";
-import {
-  webSourceMapsSchema,
-  DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS,
-} from "../domain/webBundleAnalysis.js";
+import { webSourceMapsSchema } from "../domain/webBundleAnalysis.js";
 import {
   createWebTextArtifact,
   type WebTextArtifact,
@@ -48,6 +45,7 @@ import {
   noRuntimeOverrideSentence,
   selectedBrowserDeadlineMs,
 } from "../domain/browserDeadline.js";
+import { DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS } from "../domain/webBundleAnalysis.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../domain/webSourceLocation.js";
 
 export interface WebSourceMapRequest {

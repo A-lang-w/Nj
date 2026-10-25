@@ -5,10 +5,7 @@ import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
 } from "./ArtifactFileOperation.js";
-import {
-  ArtifactResourceRetryFailure,
-  ArtifactResourceScope,
-} from "./ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "./ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { expect, it } from "vitest";
 
@@ -19,6 +16,7 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};

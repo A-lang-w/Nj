@@ -7,10 +7,8 @@ import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import {
-  materializeArtifactInventory,
-  scanCanonicalArtifactInventory,
-} from "../../../tests/fixtures/artifactInventory.js";
+import { materializeArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
+import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";

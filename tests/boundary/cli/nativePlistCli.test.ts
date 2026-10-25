@@ -289,7 +289,6 @@ describe.skipIf(process.platform !== "darwin")(
                     {
                       tool: "plutil",
                       command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
-                      exit: { code: 0, signal: null },
                     },
                   ]
                 : [{ tool: "file" }],

@@ -39,10 +39,7 @@ import {
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
-import {
-  semanticCommonJsRequireOwnEnumerableAt,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
+import { semanticCommonJsRequireOwnEnumerableAt } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
@@ -57,6 +54,7 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;

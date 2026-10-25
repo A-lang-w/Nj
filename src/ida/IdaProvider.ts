@@ -1,8 +1,5 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import {
-  createAnalysisProfile,
-  analysisProfilesEqual,
-} from "../domain/analysisProfile.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   isElfMetadataArchitecture,
@@ -26,6 +23,7 @@ import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";
 import { isDeepStrictEqual } from "node:util";
+import { analysisProfilesEqual } from "../domain/analysisProfile.js";
 import type { Result } from "../domain/result.js";
 import {
   readIdaConfiguration,
@@ -42,12 +40,10 @@ import {
 } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { privateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
-import {
-  ArtifactResourceScope,
-  ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";

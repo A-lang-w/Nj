@@ -2,11 +2,7 @@ import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
 } from "../../domain/firmware/devicetree.js";
-import {
-  devicetreeSummaryViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
@@ -22,6 +18,10 @@ import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
+import {
+  binaryLayoutSummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
 import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
