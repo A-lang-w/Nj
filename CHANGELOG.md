@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-10-25)
+
+
+### Features
+
+* **browser:** retain compact scenario summaries and selected views ([#7120](https://github.com/morluto/rea/issues/7120)) ([fc43e28](https://github.com/morluto/rea/commit/fc43e285eaae2155d32e2ca0ab5d2181a4e2f1b5))
+
+
+### Bug Fixes
+
+* **release:** reject missing manifest release boundaries ([bc14312](https://github.com/morluto/rea/commit/bc143125edd223b7e0d315d5ea7efdc270c29f9e))
+
 ## [6.8.0](https://github.com/morluto/rea/compare/rea-agents-6.7.0...rea-agents-6.8.0) (2026-10-25)
 
 ### Highlights
