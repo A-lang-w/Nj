@@ -1217,7 +1217,8 @@ its root description says it is summarized. First, a property whose schema
 repeats an earlier sibling's, such as `after` beside `before`, is advertised as
 its types and description plus "Same schema as `before`." Second, schemas below
 the deepest instance level that still fits are advertised as their types, size
-constraints and descriptions. Combinator and conditional branches count as the
+constraints and descriptions, unless that summary would be longer than the
+schema itself. Combinator and conditional branches count as the
 level of the instance they describe. Both steps only widen the advertisement:
 canonical inputs and examples stay accepted, required names and nested
 constraints below the cut are not advertised, and the canonical contract still

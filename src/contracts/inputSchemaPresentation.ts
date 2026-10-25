@@ -252,13 +252,35 @@ const schemaTypes = (schema: unknown): readonly string[] | undefined => {
     : undefined;
 };
 
+/** Item types of an explicitly typed array, including tuple positions. */
+const typedArrayItemTypes = (
+  schema: Readonly<Record<string, unknown>>,
+): readonly string[] | undefined => {
+  // Tuple positions come from `prefixItems` (2020-12) or an `items` array
+  // (draft-07); later elements from `items` or `additionalItems`.
+  const positions = [
+    ...(Array.isArray(schema.prefixItems) ? schema.prefixItems : []),
+    ...(Array.isArray(schema.items) ? schema.items : []),
+  ];
+  const rest = Array.isArray(schema.items)
+    ? schema.additionalItems
+    : schema.items;
+  // An absent or `true` rest schema admits any later element.
+  if (rest !== false && !isObject(rest)) return undefined;
+  const types = [...positions, ...(rest === false ? [] : [rest])].map(
+    schemaTypes,
+  );
+  return types.every((type) => type !== undefined)
+    ? [...new Set(types.flat())]
+    : undefined;
+};
+
 /** Every type an array accepted by the schema can contain, when explicit. */
 const arrayItemTypes = (schema: unknown): readonly string[] | undefined => {
   if (!isObject(schema)) return undefined;
   const types = schemaTypes(schema);
   if (types !== undefined && !types.includes("array")) return [];
-  if (schema.type !== undefined)
-    return isObject(schema.items) ? schemaTypes(schema.items) : undefined;
+  if (schema.type !== undefined) return typedArrayItemTypes(schema);
   const branches = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
@@ -285,7 +307,7 @@ const summarizedConstraintKeys = [
  * schema accepts, so it only widens the advertisement; `items` appears only
  * beside the single `array` type.
  */
-const summarizedSchema = (
+export const summarizedSchema = (
   schema: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> => {
   const retained = {
@@ -445,8 +467,14 @@ const normalizeAdvertisedSchema = (
   summary?: SchemaSummary,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
-  if (summary !== undefined && summary.levels <= 0 && hasNestedSchema(value))
-    return { schema: summarizedSchema(value), changed: true };
+  if (summary !== undefined && summary.levels <= 0 && hasNestedSchema(value)) {
+    // A summary can be longer than the schema it replaces, such as a nullable
+    // array presented as anyOf. Keep the complete schema then.
+    const summarized = summarizedSchema(value);
+    return serializedBytes(summarized) < serializedBytes(value)
+      ? { schema: summarized, changed: true }
+      : normalizeAdvertisedSchema(value);
+  }
   const nested = (key: string): SchemaSummary | undefined =>
     summary !== undefined && instanceChildKeys.has(key)
       ? { levels: summary.levels - 1 }
@@ -936,19 +964,30 @@ export const fitAdvertisedInputSchema = (
       .filter((text) => text !== undefined)
       .join(" "),
   };
-  let fitted: Record<string, unknown> | undefined;
-  // Sizes grow with the retained depth, so stop at the first that overflows.
-  const deepest = schemaLevels(schema);
-  for (let levels = 1; levels <= deepest; levels += 1) {
-    const candidate = normalizeAdvertisedSchema(described, { levels })
-      .schema as Record<string, unknown>;
-    if (serializedBytes(candidate) > ADVERTISED_INPUT_SCHEMA_LIMIT_BYTES) break;
-    fitted = candidate;
+  // Size need not grow with the retained depth: a deeper candidate can be
+  // smaller than a summary. Keep the deepest candidate that fits.
+  for (let levels = schemaLevels(schema); levels >= 1; levels -= 1) {
+    const candidate = summarizedInputSchemaCandidate(described, levels);
+    if (serializedBytes(candidate) <= ADVERTISED_INPUT_SCHEMA_LIMIT_BYTES) {
+      completeProjections.set(candidate, schema);
+      return candidate;
+    }
   }
-  if (fitted === undefined) return fitByCompaction(schema);
-  completeProjections.set(fitted, schema);
-  return fitted;
+  return fitByCompaction(schema);
 };
+
+/**
+ * Advertise identical siblings as pointers and summarize schemas below the
+ * given instance level. Exposed so tests can compare fitting candidates.
+ */
+export const summarizedInputSchemaCandidate = (
+  schema: Record<string, unknown>,
+  levels: number,
+): Record<string, unknown> =>
+  normalizeAdvertisedSchema(schema, { levels }).schema as Record<
+    string,
+    unknown
+  >;
 
 /** Fall back to the compact projection, which fits any budget. */
 const fitByCompaction = (
