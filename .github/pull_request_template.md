@@ -115,7 +115,7 @@ when opening the PR for review; later pushes do not require a new human sign-off
 Keep the description and validation evidence current as the work changes.
 See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
 
-Human owner: <!-- @leolouis -->
+Human owner: <!-- @GitHub-handle -->
 
 - [ ] I reviewed the final diff and relevant existing code, understand the change and its edge cases, and take responsibility for the complete PR, including AI-assisted work.
 - [ ] I checked the evidence above, confirmed it supports the current change, and recorded meaningful validation gaps.
