@@ -75,12 +75,13 @@ class NodeFileReader extends Reader<string> {
   }
 
   async #initialize(): Promise<void> {
+    let source: StableRegularFileDescriptor;
     try {
-      const handle =
-        this.admitted?.handle ??
+      source =
+        this.admitted ??
         (await openRegularFile(this.path, { symlinks: "reject" }));
-      this.#handle = handle;
-      if (this.#ownsHandle) this.#owner = new OwnedFileHandle(handle);
+      this.#handle = source.handle;
+      if (this.#ownsHandle) this.#owner = new OwnedFileHandle(source.handle);
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure) {
         this.#owner = cause.owner;
@@ -108,17 +109,15 @@ class NodeFileReader extends Reader<string> {
         );
       throw cause;
     }
-    const metadata = await this.#handle.stat();
-    if (
-      !metadata.isFile() ||
-      (this.admitted !== undefined &&
-        !sameRegularFileState(this.admitted.initial, metadata))
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `ZIP source identity changed before reading: ${this.path}`,
-      );
-    this.size = metadata.size;
+    if (this.admitted !== undefined) {
+      const metadata = await source.handle.stat();
+      if (!sameRegularFileState(source.initial, metadata))
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ZIP source identity changed before reading: ${this.path}`,
+        );
+    }
+    this.size = source.initial.size;
   }
 
   override async readUint8Array(
@@ -151,8 +150,22 @@ class NodeFileReader extends Reader<string> {
         },
       );
     const bytes = Buffer.alloc(readBytes);
-    const read = await handle.read(bytes, 0, bytes.length, index);
-    return bytes.subarray(0, read.bytesRead);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        index + offset,
+      );
+      if (bytesRead === 0)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ZIP source ended before its admitted extent: ${this.path}`,
+        );
+      offset += bytesRead;
+    }
+    return bytes;
   }
 
   async closeHandle(): Promise<void> {
@@ -316,17 +329,14 @@ const projectZipEntry = (
   // is a path that is not normalized.
   const directoryName = storedName.endsWith("/");
   const attributeDirectory = !directoryName && hasDirectoryAttributes(entry);
-  const kind = isSymlink(entry)
-    ? "symlink"
-    : directoryName
-      ? "directory"
-      : "file";
+  const kind = entry.symlink ? "symlink" : directoryName ? "directory" : "file";
   const path = sourcePath.replace(/^(?:\.\/)+/u, "");
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
   if (kind === "directory" && (path === "" || path === ".")) return undefined;
   return {
     path,
+    ...(path === sourcePath ? {} : { sourcePath }),
     kind,
     declaredSize: kind === "directory" ? null : entry.uncompressedSize,
     compressedSize: kind === "directory" ? null : entry.compressedSize,
@@ -558,9 +568,6 @@ const hasDirectoryAttributes = (entry: Entry): boolean =>
   ((entry.unixMode ?? 0) & 0o170000) === 0o040000 ||
   ((entry.unixExternalUpper ?? 0) & 0o170000) === 0o040000 ||
   (entry.msDosCompatible && entry.msdosAttributes?.directory === true);
-
-const isSymlink = (entry: Entry): boolean =>
-  entry.unixMode !== undefined && (entry.unixMode & 0o170000) === 0o120000;
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("ZIP extraction failed");

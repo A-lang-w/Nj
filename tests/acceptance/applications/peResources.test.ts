@@ -9,7 +9,11 @@ import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
   arguments_: Record<string, unknown>,
@@ -22,7 +26,7 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   readonly reason: "invalid_format" | "invalid_value";
 }) => {
   const { cli, call, path, reason } = input;
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -105,7 +109,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
       );
       const path = join(root, `word-aligned-${plus}-${index}.exe`);
       await writeFile(path, fixture.bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-pe-resources", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -128,7 +132,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
         contract.outputSchema.parse(response.structuredContent)
           .normalized_result,
       ).toEqual(evidence.normalized_result);
-      expect(await readFile(path)).toEqual(fixture.bytes);
+      expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
     }
   }
 };
@@ -196,7 +200,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
       });
       continue;
     }
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, name).toBe(0);
@@ -223,7 +227,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
         },
       ],
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
 };
 
@@ -249,9 +253,14 @@ const expectPeInventoriesAcrossAdapters = async (
       `resource${plus ? "64" : "32"}${empty ? "-empty" : ""}.exe`,
     );
     await writeFile(path, fixture.bytes);
-    const result = await cli.run({
+    const invocation = {
       arguments: ["inspect-pe-resources", path, "--json"],
-    });
+    };
+    // Keep an independent public-wrapper process for both PE32 and PE32+.
+    // The empty-payload variants reuse only compiled-command startup.
+    const result = await (empty
+      ? runFileCli(cli, invocation)
+      : cli.run(invocation));
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
@@ -299,7 +308,105 @@ const expectPeInventoriesAcrossAdapters = async (
     expect(contract.outputSchema.parse(JSON.parse(text.text)).evidence_id).toBe(
       evidence.evidence_id,
     );
-    expect(await readFile(path)).toEqual(fixture.bytes);
+    expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
+  }
+};
+
+const expectPeEmptyBranchesAcrossAdapters = async (
+  cli: TestCli,
+  call: PeResourceCall,
+  root: string,
+): Promise<void> => {
+  for (const shared of [false, true]) {
+    const fixture = shared
+      ? peResourceFixture(true, [{ type: 10 }, { type: 11 }])
+      : peResourceFixture(false, [
+          { type: "10" },
+          { type: 10 },
+          { type: 11 },
+          { type: 20, name: "7" },
+          { type: 20, name: 7 },
+          { type: 99, name: 1, language: 1033, payload: Buffer.from("opaque") },
+        ]);
+    if (shared) {
+      // Two distinct root identities point to exactly the same empty table.
+      fixture.bytes.writeUInt32LE(
+        fixture.bytes.readUInt32LE(0x400 + 20),
+        0x400 + 28,
+      );
+    }
+    const path = join(
+      root,
+      shared ? "shared-empty64.exe" : "empty-branches32.exe",
+    );
+    await writeFile(path, fixture.bytes);
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-pe-resources", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    const response = await call({ path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = contract.outputSchema.parse(response.structuredContent);
+    expect(mcp.normalized_result).toEqual(evidence.normalized_result);
+    expect(mcp.evidence_id).toBe(evidence.evidence_id);
+    const report = peResourcesSchema.parse(evidence.normalized_result);
+    const paths = report.directories.map((directory) =>
+      directory.path.map((identity) =>
+        identity.kind === "id" ? identity.id : identity.name,
+      ),
+    );
+    expect(paths).toEqual(
+      shared
+        ? [[], [10], [11]]
+        : [[], ["10"], [10], [11], [20], [20, "7"], [20, 7], [99], [99, 1]],
+    );
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_entries: shared ? 2 : 9,
+      resources: shared ? 0 : 1,
+    });
+    for (const directory of report.directories)
+      expect(directory.entry_locations).toHaveLength(directory.path.length);
+    expect(report.directories[0]?.entry_locations).toEqual([]);
+    if (shared) {
+      expect(report.resources).toEqual([]);
+      expect(report.directories[1]?.location).toEqual(
+        report.directories[2]?.location,
+      );
+      expect(report.directories[1]?.entry_locations).toEqual([
+        { offset: 0x400 + 16, bytes: 8 },
+      ]);
+      expect(report.directories[2]?.entry_locations).toEqual([
+        { offset: 0x400 + 24, bytes: 8 },
+      ]);
+    } else {
+      expect(report.directories[1]?.path).toEqual([
+        {
+          kind: "name",
+          name: "10",
+          utf16le_hex: "31003000",
+          location: { offset: 0x400 + 56, bytes: 6 },
+        },
+      ]);
+      expect(report.directories[5]?.path[1]).toMatchObject({
+        kind: "name",
+        name: "7",
+        utf16le_hex: "3700",
+      });
+      const resource = report.resources[0]!;
+      expect(resource.payload.sha256).toBe(
+        createHash("sha256").update("opaque").digest("hex"),
+      );
+      expect(report.directories.at(-1)).toMatchObject({
+        path: [resource.type, resource.name],
+        entry_locations: resource.entry_locations.slice(0, 2),
+      });
+    }
+    expect(evidence.subject?.digest?.sha256).toBe(
+      createHash("sha256").update(fixture.bytes).digest("hex"),
+    );
+    expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
   }
 };
 
@@ -350,6 +457,7 @@ cliTest(
         "inspect_pe_resources",
       );
       await expectPeInventoriesAcrossAdapters(cli, call, root);
+      await expectPeEmptyBranchesAcrossAdapters(cli, call, root);
       await expectPeWordAlignedRecordsAcrossAdapters({
         cli,
         call,
@@ -376,6 +484,7 @@ cliTest(
         contract.outputSchema.parse(empty.structuredContent).normalized_result,
       ).toMatchObject({
         directory: null,
+        directories: [],
         resources: [],
         coverage: { status: "complete", resources: 0 },
       });

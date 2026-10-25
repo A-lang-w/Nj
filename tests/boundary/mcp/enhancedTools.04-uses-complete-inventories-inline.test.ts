@@ -9,9 +9,9 @@ import {
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
+  AnalysisOperation,
 } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -657,4 +657,35 @@ it("refuses document fallback while the current-selection owner reports incomple
   });
   expect(calls).toEqual(["current_document"]);
   expect(failure.cleanupIncomplete).toBe(true);
+});
+
+it("forwards max_input_bytes from the MCP tool to the binary metadata operation", async () => {
+  const received: unknown[] = [];
+  const client = await connect({
+    execute: (name, parameters) => {
+      if (name === "inspect_native_dispatch_metadata")
+        received.push(parameters);
+      return Promise.resolve(
+        err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            name,
+            "Metadata is unavailable in this provider fixture",
+          ),
+        ),
+      );
+    },
+  });
+  await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: { max_input_bytes: 134217728 },
+  });
+  await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: {},
+  });
+  expect(received).toEqual([
+    { max_records: 5000, max_input_bytes: 134217728 },
+    { max_records: 5000 },
+  ]);
 });

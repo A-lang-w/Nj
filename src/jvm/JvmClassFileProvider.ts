@@ -5,8 +5,6 @@ import {
   JarInspection,
   type JarRequest,
 } from "./jarInspection.js";
-import type { FileHandle } from "node:fs/promises";
-import type { Stats } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
@@ -20,6 +18,7 @@ import {
 } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
+import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   peekArtifactMagic,
   readStableArtifact,
@@ -238,7 +237,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         request.jar,
         this.#resources,
         request.signal,
-        (handle) => this.#readJar(handle, request),
+        (source) => this.#readJar(source, request),
         "reject",
       );
     } catch (cause: unknown) {
@@ -256,11 +255,11 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
    * provider scope retains if its close fails.
    */
   async #readJar(
-    handle: FileHandle,
+    source: StableRegularFileDescriptor,
     request: JarRequest,
   ): Promise<JarInspection> {
     const { jar, signal } = request;
-    const initial = await handle.stat();
+    const { initial } = source;
     if (initial.size > JVM_LIMITS.archiveBytes)
       return new JarInspection(
         err(
@@ -276,7 +275,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       jar,
       "zip",
       JVM_LIMITS.archiveMetadataBytes,
-      { handle, initial },
+      source,
       // The JDK decodes every member name as UTF-8 and refuses an archive
       // holding one that is not, so members are named as JarFile names them.
       "utf-8",
@@ -284,7 +283,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
     const readerLease = new AnalysisCleanupLease(() => reader.close());
     let result: Result<JvmDebugMetadataExecution, AnalysisError>;
     try {
-      result = await this.#readJarMember(request, reader, { handle, initial });
+      result = await this.#readJarMember(request, reader, source);
     } catch (cause: unknown) {
       result = err(jvmClassFileFailure(cause, jar, signal));
     }
@@ -304,10 +303,7 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
   async #readJarMember(
     { jar, entry, input, signal }: JarRequest,
     reader: ZipArtifactReader,
-    {
-      handle,
-      initial,
-    }: { readonly handle: FileHandle; readonly initial: Stats },
+    { handle, initial }: StableRegularFileDescriptor,
   ): Promise<Result<JvmDebugMetadataExecution, AnalysisError>> {
     const selected = await this.#selectJarMember(reader, {
       jar,

@@ -1,7 +1,5 @@
-import {
-  ArtifactReaderFailure,
-  type ArtifactReaderBoundary,
-} from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -197,7 +195,7 @@ const primaryFailure = (
 };
 
 /** Every reader bound REA applies here is fixed; say what would fit it. */
-const LIMIT_REMEDIATION: Readonly<Record<ArtifactReaderBoundary, string>> = {
+const LIMIT_REMEDIATION: Readonly<Record<ArtifactLimitBoundary, string>> = {
   "file-size":
     "The class-file size budget is fixed; select a smaller artifact.",
   memory:
