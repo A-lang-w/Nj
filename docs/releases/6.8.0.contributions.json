@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.8.0",
   "base": "27dc42d10249f0410904a75c0997842eb03b931c",
-  "target": "8e6a95788688439baeeec8e54c9b3e845226f79d",
+  "target": "80673b22a46d01899718e22584cf95d9f0529ab7",
   "commits": [
     {
       "sha": "8f7d12e30d63f3d3b4cfe2a90336362841438f56",
@@ -33309,6 +33309,175 @@
         }
       ],
       "pullRequests": []
+    },
+    {
+      "sha": "60ab148afae256c399dc479d0e8beebcdf14069e",
+      "subject": "fix(ghidra): accept stock language IDs with LEBE endianness or a slash (#7070)",
+      "body": "fix(ghidra): accept stock language IDs with LEBE endianness or a slash (#7070)\n\nREA_GHIDRA_LANGUAGE_ID only allowed LE or BE as the endian field and no '/' in the processor, so it rejected four language IDs that ship with Ghidra: ARM:LEBE:32:v7LEInstruction and v8LEInstruction (ARM BE8) and M16C/60:LE:16:default and M16C/80:LE:16:default. The syntax check now allows LEBE and a slash between processor name parts; the installed .ldefs catalog check is unchanged.",
+      "parents": ["8e6a95788688439baeeec8e54c9b3e845226f79d"],
+      "authors": [
+        {
+          "name": "Adolanium",
+          "email": "94890352+Adolanium@users.noreply.github.com",
+          "user": {
+            "login": "Adolanium",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7070]
+    },
+    {
+      "sha": "06a4c338fc110f48e7b710d0b7cb9dd0b2333d9d",
+      "subject": "fix(protobuf): exclude trailing whitespace from gRPC-web trailer values (#7069)",
+      "body": "fix(protobuf): exclude trailing whitespace from gRPC-web trailer values (#7069)\n\nRFC 9110 section 5.5 excludes leading and trailing whitespace from a field value. The gRPC-web trailer parser stripped only leading SP/HTAB, so 'grpc-status: 0 ' was reported as '0 '. Trailing SP/HTAB is now excluded too; internal whitespace and the examined byte count are unchanged.",
+      "parents": ["60ab148afae256c399dc479d0e8beebcdf14069e"],
+      "authors": [
+        {
+          "name": "Adolanium",
+          "email": "94890352+Adolanium@users.noreply.github.com",
+          "user": {
+            "login": "Adolanium",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7069]
+    },
+    {
+      "sha": "4973ce7202d09c99dff8693600031bef87e48e8e",
+      "subject": "fix(capture): report an out-of-range record ordinal as a selection fault (#7067)",
+      "body": "fix(capture): report an out-of-range record ordinal as a selection fault (#7067)\n\ninspect_web_network_capture reported a record_ordinals entry past the capture's records as an invalid_format issue on record_ordinals, with no bounds. It is now an out_of_range issue on that entry (record_ordinals[i]) with minimum 0 and maximum total_records - 1, or invalid_value when the capture has no records.",
+      "parents": ["06a4c338fc110f48e7b710d0b7cb9dd0b2333d9d"],
+      "authors": [
+        {
+          "name": "Adolanium",
+          "email": "94890352+Adolanium@users.noreply.github.com",
+          "user": {
+            "login": "Adolanium",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7067]
+    },
+    {
+      "sha": "fead4fdaa7410ed2f7421fbce37e546c9cd6d7e4",
+      "subject": "fix(artifacts): preserve integrity contradictions for one-sided members (#7076)",
+      "body": "fix(artifacts): preserve integrity contradictions for one-sided members (#7076)",
+      "parents": ["4973ce7202d09c99dff8693600031bef87e48e8e"],
+      "authors": [
+        {
+          "name": "Wenyu Chiou",
+          "email": "162016108+WenyuChiou@users.noreply.github.com",
+          "user": {
+            "login": "WenyuChiou",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7076]
+    },
+    {
+      "sha": "cc146042d16bfee5b2553e9a255f659b2cf64f9a",
+      "subject": "fix(cli): preserve literal Markdown table facts (#7073)",
+      "body": "fix(cli): preserve literal Markdown table facts (#7073)\n\n* fix(cli): preserve literal Markdown table facts\n\n* test(cli): retain capacity diagnostics through Markdown escaping\n\n* fix(cli): keep intraword underscores readable in Markdown tables\n\nUnderscore runs between letters or digits cannot open or close CommonMark emphasis, so escaping them only adds noise to identifiers such as source_index and invalid_request in raw Markdown. Escape underscore runs only at word boundaries and restore the original diagnostic assertions.",
+      "parents": ["fead4fdaa7410ed2f7421fbce37e546c9cd6d7e4"],
+      "authors": [
+        {
+          "name": "RRFZ",
+          "email": "247457381+Plastic-time@users.noreply.github.com",
+          "user": {
+            "login": "Plastic-time",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7073]
+    },
+    {
+      "sha": "0a2b7af905a226540fbad637c60fe79b15a24549",
+      "subject": "fix(apple): keep the documented terminating process, parent pid and metadata members of IPS reports (#7079)",
+      "body": "fix(apple): keep the documented terminating process, parent pid and metadata members of IPS reports (#7079)\n\nApple's crash report JSON documents termination.byPid, byProc and flags, the body's parentPid, and\nthe metadata line's build_version and platform. The parser shapes did not list them, so they were\nreported only by name in unlisted_keys / unlisted_body_keys and their values were dropped: a\nwatchdog kill no longer said which process ended it, and process kept parentProc without its pid.\n#4297 asks for termination members beyond namespace/code/indicator to be retained as recorded, and\ndocs/apple-ips.md says documented fields are reproduced.\n\nThey are now kept: termination.by_proc, termination.by_pid and termination.flags, process.parent_pid\nand metadata.build_version / metadata.platform. The integers are recorded integers, so they count\ntoward max_integer_text_bytes and a type mismatch is recorded like the other fields.",
+      "parents": ["cc146042d16bfee5b2553e9a255f659b2cf64f9a"],
+      "authors": [
+        {
+          "name": "rodricksz4h5",
+          "email": "rodricksz2005@gmail.com",
+          "user": {
+            "login": "rodricksz4h5",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7079]
+    },
+    {
+      "sha": "2c38becc4e9892424776a71c65743369bf9d8e92",
+      "subject": "feat(binary-layout): admit ELF32 i386, ARM and MIPS layout profiles (#7052)",
+      "body": "feat(binary-layout): admit ELF32 i386, ARM and MIPS layout profiles (#7052)\n\n* feat(binary-layout): admit ELF32 i386, ARM and MIPS layout profiles\n\ninspect_binary_layout refused every ELF32 object, so router and IoT\nfirmware (ARM32, MIPS32) got no layout facts at all.\n\nThe pwntools adapter now admits EXEC/DYN/REL objects in these profiles:\nELF64 x86-64, ELF32 i386, ELF32 little-endian ARM and ELF32 little- or\nbig-endian MIPS. Header fields are read in the declared byte order, the\nELF32 header is bounds-checked at 52 bytes, and pwntools' own reported\narchitecture, class and byte order must match the admitted profile.\nOther machines, classes and byte orders keep an unsupported_target\nrefusal that names the admitted profiles.\n\nThe output schema admits exactly those architecture combinations, and\nthe Evidence subject now names the reported machine instead of always\nclaiming x86_64.\n\nverify:binary:layout cross-compiles i386, ARM, MIPS and MIPSel\nexecutables and relocatable objects (never executed) and checks every\nsection name, address, offset and size against GNU readelf through CLI\nand MCP. The real-binary-layout workflow installs those toolchains.\n\nRefs #6934\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* ci(binary-layout): install target libc headers for ELF32 fixtures\n\n--no-install-recommends skips the libc6-dev-*-cross packages the cross\ncompilers only recommend, so the i686 fixture fell back to the host's\n/usr/include and failed to find bits/libc-header-start.h. Install the\nfour target libc development packages explicitly.\n\nRefs #6934\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(binary-layout): size the minimum symbol entry by ELF class\n\nThe relocation reference check required a 24-byte Elf64_Sym entry, so\nevery positive symbol reference in an ELF32 report was refused as\nunreadable output. Elf32_Sym is 16 bytes; take the minimum from the\nreported class. A 64-bit table with 16-byte entries is still refused.\n\nRefs #6934\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(binary-layout): compare ELF32 symbols and relocations with readelf\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["0a2b7af905a226540fbad637c60fe79b15a24549"],
+      "authors": [
+        {
+          "name": "Salman Almutairi",
+          "email": "141588124+salmanalmutairi1@users.noreply.github.com",
+          "user": {
+            "login": "salmanalmutairi1",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Claude Opus 5.5",
+          "email": "noreply@anthropic.com",
+          "user": {
+            "login": "claude",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7052]
+    },
+    {
+      "sha": "c74d302cc40f255e0fefc6be375d1433b0561dd1",
+      "subject": "fix(ghidra): report a DOL language override conflict as a configuration error (#7081)",
+      "body": "fix(ghidra): report a DOL language override conflict as a configuration error (#7081)\n\n* fix(ghidra): report a DOL language override conflict as a configuration error\n\nA REA_GHIDRA_LANGUAGE_ID outside PowerPC:BE:32:* made an otherwise admitted GameCube DOL an unsupported target. docs/ghidra-provider.md and the other fixed-import lanes treat such an override as a configuration error naming the conflicting setting. The DOL lane now uses the same languageOverrideConflict owner and names only REA_GHIDRA_LANGUAGE_ID, since DOL accepts a compiler-spec override.\n\n* test(ghidra): keep a valid compiler spec out of the DOL language conflict",
+      "parents": ["2c38becc4e9892424776a71c65743369bf9d8e92"],
+      "authors": [
+        {
+          "name": "Adolanium",
+          "email": "94890352+Adolanium@users.noreply.github.com",
+          "user": {
+            "login": "Adolanium",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7081]
+    },
+    {
+      "sha": "80673b22a46d01899718e22584cf95d9f0529ab7",
+      "subject": "fix(javascript): report fork's silent stdio as piped (#7083)",
+      "body": "fix(javascript): report fork's silent stdio as piped (#7083)\n\n* fix(javascript): report fork's silent stdio as piped\n\nNode's child_process.fork pipes stdin, stdout and stderr when options.silent is truthy and options.stdio is neither a string nor an array, and inherits them otherwise. REA never read silent, so fork(\"worker.js\", { silent: true }) was reported with stdio_mode default (inherited). The unset-stdio case of fork now reads silent: truthy gives pipe, falsy or missing gives default, and an unresolved value gives dynamic.\n\n* fix(javascript): apply fork's silent rule to other known stdio values",
+      "parents": ["c74d302cc40f255e0fefc6be375d1433b0561dd1"],
+      "authors": [
+        {
+          "name": "Adolanium",
+          "email": "94890352+Adolanium@users.noreply.github.com",
+          "user": {
+            "login": "Adolanium",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7083]
     }
   ],
   "pullRequests": [
@@ -43263,6 +43432,31 @@
       "issues": []
     },
     {
+      "number": 7052,
+      "title": "feat(binary-layout): admit ELF32 i386, ARM and MIPS layout profiles",
+      "url": "https://github.com/morluto/rea/pull/7052",
+      "author": {
+        "login": "salmanalmutairi1",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "2c38becc4e9892424776a71c65743369bf9d8e92"
+      },
+      "issues": [
+        {
+          "number": 6934,
+          "url": "https://github.com/morluto/rea/issues/6934",
+          "author": {
+            "login": "roblennon",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
       "number": 7053,
       "title": "fix(javascript): invalidate Electron reads after direct eval",
       "url": "https://github.com/morluto/rea/pull/7053",
@@ -43337,6 +43531,182 @@
         "oid": "4232399079cd48c160cab6961085d44399993f6d"
       },
       "issues": []
+    },
+    {
+      "number": 7067,
+      "title": "fix(capture): report an out-of-range record ordinal as a selection fault",
+      "url": "https://github.com/morluto/rea/pull/7067",
+      "author": {
+        "login": "Adolanium",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "4973ce7202d09c99dff8693600031bef87e48e8e"
+      },
+      "issues": [
+        {
+          "number": 7068,
+          "url": "https://github.com/morluto/rea/issues/7068",
+          "author": {
+            "login": "Adolanium",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 7069,
+      "title": "fix(protobuf): exclude trailing whitespace from gRPC-web trailer values",
+      "url": "https://github.com/morluto/rea/pull/7069",
+      "author": {
+        "login": "Adolanium",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "06a4c338fc110f48e7b710d0b7cb9dd0b2333d9d"
+      },
+      "issues": [
+        {
+          "number": 7071,
+          "url": "https://github.com/morluto/rea/issues/7071",
+          "author": {
+            "login": "Adolanium",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 7070,
+      "title": "fix(ghidra): accept stock language IDs with LEBE endianness or a slash",
+      "url": "https://github.com/morluto/rea/pull/7070",
+      "author": {
+        "login": "Adolanium",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "60ab148afae256c399dc479d0e8beebcdf14069e"
+      },
+      "issues": [
+        {
+          "number": 7072,
+          "url": "https://github.com/morluto/rea/issues/7072",
+          "author": {
+            "login": "Adolanium",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 7073,
+      "title": "fix(cli): preserve literal Markdown table facts",
+      "url": "https://github.com/morluto/rea/pull/7073",
+      "author": {
+        "login": "Plastic-time",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "cc146042d16bfee5b2553e9a255f659b2cf64f9a"
+      },
+      "issues": []
+    },
+    {
+      "number": 7076,
+      "title": "fix(artifacts): preserve integrity contradictions for one-sided members",
+      "url": "https://github.com/morluto/rea/pull/7076",
+      "author": {
+        "login": "WenyuChiou",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "fead4fdaa7410ed2f7421fbce37e546c9cd6d7e4"
+      },
+      "issues": []
+    },
+    {
+      "number": 7079,
+      "title": "fix(apple): keep the documented terminating process, parent pid and metadata members of IPS reports",
+      "url": "https://github.com/morluto/rea/pull/7079",
+      "author": {
+        "login": "rodricksz4h5",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "0a2b7af905a226540fbad637c60fe79b15a24549"
+      },
+      "issues": [
+        {
+          "number": 7078,
+          "url": "https://github.com/morluto/rea/issues/7078",
+          "author": {
+            "login": "rodricksz4h5",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 7081,
+      "title": "fix(ghidra): report a DOL language override conflict as a configuration error",
+      "url": "https://github.com/morluto/rea/pull/7081",
+      "author": {
+        "login": "Adolanium",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "c74d302cc40f255e0fefc6be375d1433b0561dd1"
+      },
+      "issues": [
+        {
+          "number": 7082,
+          "url": "https://github.com/morluto/rea/issues/7082",
+          "author": {
+            "login": "Adolanium",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
+    },
+    {
+      "number": 7083,
+      "title": "fix(javascript): report fork's silent stdio as piped",
+      "url": "https://github.com/morluto/rea/pull/7083",
+      "author": {
+        "login": "Adolanium",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "80673b22a46d01899718e22584cf95d9f0529ab7"
+      },
+      "issues": [
+        {
+          "number": 7084,
+          "url": "https://github.com/morluto/rea/issues/7084",
+          "author": {
+            "login": "Adolanium",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
     }
   ]
 }
