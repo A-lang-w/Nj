@@ -855,6 +855,37 @@ it("charges a borrowed retained inventory for its emitted members, not its resid
     expect(inline.error._tag).toBe("AnalysisResourceConstraintError");
 });
 
+it("still charges a borrowed inventory's envelope, which matching copies into its result", async () => {
+  // Limitations are prefixed into the report and Evidence; 25 distinct
+  // 1 MiB entries are charged above the allowance although rows are few.
+  const record = (side: "1" | "2", limitations: readonly string[]) =>
+    immutableEvidence(
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: [ghidraRow(side, 0)],
+        limitations: [...limitations],
+      }),
+    );
+  const left = record(
+      "1",
+      Array.from({ length: 25 }, (_, i) => `${"l".repeat(1024 * 1024)}${i}`),
+    ),
+    right = record("2", []);
+  const ledger = new Map([left, right].map((x) => [x.evidence_id, x]));
+  const refused = await matchNativeFunctions(
+    {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+    undefined,
+    (id) => ledger.get(id),
+  );
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
 it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized side before parsing its rows", async () => {
   const large = retainedInventories((side) =>
     Array.from({ length: 20_000 }, (_, i) => ghidraRow(side, i)),

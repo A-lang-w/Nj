@@ -36,9 +36,10 @@ export const resolveNativeMatchingSources = async (
   const sources = new Map<string, Evidence>();
   /**
    * Charge only what matching copies. A retained immutable record is borrowed
-   * without cloning. When matching never parses its payload, or charges the
-   * representation it derives from it (inventory rows), walking it would
-   * charge resident memory as if matching had allocated it.
+   * without cloning. When matching never parses its result, or charges the
+   * representation it derives from it (inventory rows), only its envelope is
+   * charged; walking the result would charge resident memory as if matching
+   * had allocated it.
    */
   const resolve = async (
     input: unknown,
@@ -47,14 +48,15 @@ export const resolveNativeMatchingSources = async (
   ): Promise<Evidence> => {
     const reference = retainedEvidenceReferenceSchema.safeParse(input);
     let raw = input,
-      borrowed = false;
+      borrowed: Evidence | undefined;
     if (reference.success) {
       const found = resolveEvidenceInput(reference.data, lookup);
       if (!found.ok) throw found.error;
       raw = found.value;
-      borrowed = borrowable && isImmutableEvidence(found.value);
+      if (borrowable && isImmutableEvidence(found.value))
+        borrowed = found.value;
     }
-    if (borrowed) await admission.checkpoint();
+    if (borrowed !== undefined) await admission.admitBorrowed(borrowed);
     else await admission.admit(raw);
     const checked = readEvidence(raw);
     if (!checked.ok)
