@@ -132,6 +132,12 @@
     "dir": "ltr"
   },
   {
+    "code": "ro",
+    "name": "Română",
+    "readme": "docs/readme/README_ro.md",
+    "dir": "ltr"
+  },
+  {
     "code": "bn",
     "name": "বাংলা",
     "readme": "docs/readme/README_bn.md",
