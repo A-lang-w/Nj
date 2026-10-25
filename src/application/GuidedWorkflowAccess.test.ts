@@ -8,7 +8,6 @@ import { accessGuidedWorkflows } from "./GuidedWorkflowAccess.js";
 
 const valueOf = (input: unknown) => {
   const result = accessGuidedWorkflows(input);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   if (
     typeof result.value !== "object" ||
@@ -73,13 +72,16 @@ it.each([
   expect(result.error.userMessage).toContain(message);
 });
 
-it("lists and renders without a provider, session, target, or analysis operation", () => {
-  expect(valueOf({ action: "list" })).toMatchObject({ action: "list" });
-  expect(
-    valueOf({
-      action: "render",
-      workflow_id: "investigate_feature",
-      arguments: { feature: "offline search" },
-    }),
-  ).toMatchObject({ action: "render" });
+it("reports missing nested prompt fields at their caller-visible argument paths", () => {
+  const result = accessGuidedWorkflows({
+    action: "render",
+    workflow_id: "investigate_feature",
+    arguments: {},
+  });
+  if (result.ok) throw new Error("Expected invalid request");
+  expect(result.error.issues).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: ["arguments", "feature"] }),
+    ]),
+  );
 });

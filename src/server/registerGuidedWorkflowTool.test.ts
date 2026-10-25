@@ -77,8 +77,7 @@ it("lists workflows and renders text equivalent to the native MCP prompt", async
     arguments: { action: "list" },
   });
   expect(listed.isError).not.toBe(true);
-  const listedPayload = (listed.structuredContent as { result: unknown })
-    .result;
+  const listedPayload = JSON.parse(textOf(listed)) as unknown;
   expect(
     toolContract("guided_workflows").outputSchema.parse(listedPayload),
   ).toMatchObject({
@@ -103,8 +102,9 @@ it("lists workflows and renders text equivalent to the native MCP prompt", async
     arguments: promptArguments,
   });
   expect(rendered.isError).not.toBe(true);
+  const renderedPayload = JSON.parse(textOf(rendered)) as unknown;
   expect(
-    (rendered.structuredContent as { result: unknown }).result,
+    toolContract("guided_workflows").outputSchema.parse(renderedPayload),
   ).toMatchObject({
     action: "render",
     rendered_prompt:
@@ -112,9 +112,8 @@ it("lists workflows and renders text equivalent to the native MCP prompt", async
         ? native.messages[0].content.text
         : undefined,
   });
-  const renderedText = (
-    rendered.structuredContent as { result: { rendered_prompt: string } }
-  ).result.rendered_prompt;
+  const renderedText = (renderedPayload as { rendered_prompt: string })
+    .rendered_prompt;
   expect(renderedText).toContain(JSON.stringify({ feature }));
   expect(renderedText).not.toContain("ignored by prompt schema");
   expect(execute).not.toHaveBeenCalled();

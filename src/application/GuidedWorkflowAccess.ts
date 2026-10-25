@@ -68,7 +68,10 @@ export const accessGuidedWorkflows = (
     return err(
       analysisInputErrorFromIssues(
         GUIDED_WORKFLOWS_OPERATION,
-        validated.error.issues,
+        validated.error.issues.map((issue) => ({
+          ...issue,
+          path: ["arguments", ...issue.path],
+        })),
         input,
         {
           userMessage:
