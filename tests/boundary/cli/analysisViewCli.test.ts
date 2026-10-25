@@ -694,7 +694,7 @@ cliTest(
     });
     expect(markdown.exitCode).toBe(0);
     expect(markdown.stdout).toContain("## normalized_result.rows");
-    expect(markdown.stdout).toContain("| source\\_index");
+    expect(markdown.stdout).toContain("| source_index");
     let lineBreaks = 0;
     for (const character of markdown.stdout)
       if (character === "\n") lineBreaks += 1;

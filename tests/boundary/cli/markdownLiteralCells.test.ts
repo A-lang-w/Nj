@@ -38,6 +38,7 @@ cliTest(
     const literal =
       "`code` **bold** _name_ ~~deleted~~ [label](target) ![alt](image)";
     const punctuation = "\\`tick` \\*star* \\[label](target) a|b <T> &copy;";
+    const identifiers = "x__y__z _a_b_ 中_文 snake_case_";
     const row = {
       [literal]: literal,
       punctuation,
@@ -46,6 +47,7 @@ cliTest(
       zero: 0,
       disabled: false,
       absent: null,
+      source_index: identifiers,
     };
     const result = { scalar: { [literal]: literal }, rows: [row] };
     const record = createEvidence(
@@ -69,6 +71,11 @@ cliTest(
       records: { "0": { normalized_result: result } },
     });
     expect(await readFile(path, "utf8")).toBe(saved);
+    // Intraword underscores cannot form emphasis, so identifiers stay readable.
+    expect(markdown.stdout).toContain(" source_index ");
+    expect(markdown.stdout).toContain(
+      " x__y__z \\_a_b\\_ 中_文 snake_case\\_ ",
+    );
 
     const renderer = await createMarkdownRenderer(root, { linkify: false });
     const html = renderer.render(markdown.stdout);
@@ -85,6 +92,7 @@ cliTest(
       "0",
       "false",
       "null",
+      identifiers,
     ];
     expect(renderedCells(html)).toEqual(expectedCells);
     expect(html).not.toMatch(/<(?:em|strong|s|code|img)(?:\s|>)/u);
