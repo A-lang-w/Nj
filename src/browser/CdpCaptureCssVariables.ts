@@ -127,12 +127,30 @@ export const captureCssVariables = async (
   }
 
   const rootRecord = recordValue(recordValue(doc)?.root);
-  const children = recordsValue(rootRecord?.children);
+  if (rootRecord === undefined) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      1,
+    );
+    limitations.push("DOM.getDocument response omitted valid root node.");
+    return emptyCssVariables("unavailable");
+  }
+
+  const children = recordsValue(rootRecord.children);
   const elementChild = children.find((c) => numberValue(c.nodeType) === 1);
   const targetNodeId =
-    numberValue(elementChild?.nodeId) ?? numberValue(rootRecord?.nodeId);
+    numberValue(elementChild?.nodeId) ?? numberValue(rootRecord.nodeId);
 
   if (targetNodeId === undefined || targetNodeId <= 0) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      1,
+    );
+    limitations.push(
+      "DOM.getDocument response root node omitted valid numeric nodeId.",
+    );
     return emptyCssVariables("unavailable");
   }
 
@@ -161,6 +179,11 @@ export const captureCssVariables = async (
 
   const computedStyleVal = recordValue(computedResult)?.computedStyle;
   if (!Array.isArray(computedStyleVal)) {
+    context.events?.completeness.exclude(
+      "css_variables",
+      "invalid_protocol_value",
+      1,
+    );
     limitations.push(
       "CSS.getComputedStyleForNode response omitted valid computedStyle property list.",
     );

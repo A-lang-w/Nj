@@ -804,3 +804,58 @@ it("redacts credentials from quoted and unquoted CSS URLs including opposite quo
     ),
   ).toBe(true);
 });
+
+it("excludes invalid_protocol_value and records limitation when DOM root or nodeId is malformed", async () => {
+  const connection = makeMockConnection({
+    "DOM.getDocument": {
+      root: {
+        nodeId: "non-numeric",
+        children: [{ nodeId: -1, nodeType: 1 }],
+      },
+    },
+  });
+
+  const limitations: string[] = [];
+  const exclusions: {
+    section: string;
+    reason: string;
+    count: number | null;
+  }[] = [];
+  const mockEvents = {
+    completeness: {
+      exclude: (
+        section: "css_variables",
+        reason: "invalid_protocol_value",
+        count: number | null,
+      ) => {
+        exclusions.push({ section, reason, count });
+      },
+    },
+  };
+
+  const result = await captureCssVariables(
+    {
+      connection,
+      sessionId: undefined,
+      input: inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target_1",
+        include_css_variables: true,
+      }),
+      events: mockEvents,
+    },
+    limitations,
+  );
+
+  expect(result.status).toBe("unavailable");
+  expect(exclusions).toEqual([
+    { section: "css_variables", reason: "invalid_protocol_value", count: 1 },
+  ]);
+  expect(
+    limitations.some((lim) =>
+      lim.includes(
+        "DOM.getDocument response root node omitted valid numeric nodeId",
+      ),
+    ),
+  ).toBe(true);
+});

@@ -1352,6 +1352,25 @@ describe("web capture CSS variables comparison", () => {
       status: "changed",
       changes: [{ identity: "metadata", change: "modified" }],
     });
+
+    // Identical redacted items are treated as incomplete for equality
+    const beforeRedacted = structuredClone(beforeCss);
+    beforeRedacted.css_variables.items = [
+      { name: "--asset", value: "url(https://host/a)", redacted: true },
+    ];
+    const afterRedacted = structuredClone(beforeRedacted);
+    const redactedEqualityResult = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: beforeRedacted },
+        after: { inspection: afterRedacted },
+      }),
+    );
+    expect(redactedEqualityResult.dimensions.metadata).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      reason:
+        "CSS variables capture was incomplete in at least one observation.",
+    });
   });
 });
 

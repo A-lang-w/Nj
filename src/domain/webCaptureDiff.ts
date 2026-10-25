@@ -1132,7 +1132,12 @@ const metadataDimension = (
 
   let cssComplete = true;
   if (beforeCssSelected && afterCssSelected) {
+    const hasRedactedTokens =
+      before.css_variables.items.some((item) => item.redacted) ||
+      after.css_variables.items.some((item) => item.redacted);
+
     cssComplete =
+      !hasRedactedTokens &&
       before.css_variables.status === "included" &&
       after.css_variables.status === "included" &&
       sectionsComplete(before, ["css_variables"]) &&
