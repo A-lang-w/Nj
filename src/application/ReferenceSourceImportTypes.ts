@@ -72,7 +72,12 @@ export const projectReferenceSourceImportError = (
                 : { rootFailure: { ...partial.rootFailure } }),
               entries: partial.entries.map((entry) =>
                 entry.status === "read" && entry.kind === "file"
-                  ? { ...entry, bytes: Array.from(entry.bytes) }
+                  ? {
+                      status: entry.status,
+                      kind: entry.kind,
+                      path: entry.path,
+                      size: entry.size,
+                    }
                   : { ...entry },
               ),
               bytesRead: partial.bytesRead,

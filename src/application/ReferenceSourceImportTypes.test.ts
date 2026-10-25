@@ -77,11 +77,19 @@ describe("reference-source import error projection", () => {
           reference_source_code: "cancelled",
           partial: {
             root: "/selected/source",
-            entries: [{ path: "src/main.ts", bytes: Array.from(bytes) }],
+            entries: [
+              {
+                status: "read",
+                kind: "file",
+                path: "src/main.ts",
+                size: bytes.length,
+              },
+            ],
           },
         },
       },
     });
+    expect(JSON.stringify(projected)).not.toContain('"bytes"');
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,
     );

@@ -53,6 +53,53 @@ cliTest.skipIf(process.platform === "win32")(
   },
 );
 
+cliTest.skipIf(process.platform === "win32")(
+  "keeps aggregate-limit partial inventory JSON-safe",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-reference-cli-total-limit-",
+    );
+    for (const name of ["a.js", "b.js"]) {
+      const path = join(root, name);
+      await writeFile(path, "");
+      await truncate(path, REFERENCE_SOURCE_MAX_BYTES / 2 + 1);
+    }
+
+    const result = await cli.run({
+      arguments: ["import-reference-source", root, "--json"],
+      cwd: root,
+    });
+
+    expect(result.json).toMatchObject({
+      error: "Import failed",
+      code: "resource_constraint",
+      category: "resource_constraint",
+      details: {
+        diagnostics: {
+          reference_source_code: "limit",
+          partial: {
+            bytesRead: REFERENCE_SOURCE_MAX_BYTES / 2 + 1,
+            entries: expect.arrayContaining([
+              expect.objectContaining({
+                status: "read",
+                kind: "file",
+                size: REFERENCE_SOURCE_MAX_BYTES / 2 + 1,
+              }),
+              expect.objectContaining({
+                status: "failed",
+                code: "limit",
+                size: REFERENCE_SOURCE_MAX_BYTES / 2 + 1,
+              }),
+            ]),
+          },
+        },
+      },
+    });
+    expect(result.stdout.length).toBeLessThan(10_000);
+    expect(result.exitCode).toBe(1);
+  },
+);
+
 describe("compiled Windows reference-source import", () => {
   for (const scenario of [
     { fullOutput: false, logging: false },
