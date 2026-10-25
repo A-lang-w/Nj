@@ -15,13 +15,38 @@ snapshot parser and a separate optional annotation extension. Check the
 [release boundary](installation.md#released-package-and-main) when using npm.
 
 See [import language and analysis seeds](installation.md#ghidra-import-language-and-analysis-seeds)
-to override the header-detected language or seed analysis.
+to override the header-detected language or seed analysis. An override that conflicts with a fixed raw, DOS, PSP, MIPS or RISC-V import
+is a configuration error naming the conflicting settings. It does not make an
+otherwise admitted target unsupported; REA preserves the requested settings.
+An inaccessible language
+catalog remains a read failure; it does not prove that a configured language is
+undefined. Installation `application.properties` has a fixed 1 MiB read allowance
+with no runtime override. The failure retains that allowance and directs recovery
+at the selected installation metadata.
+
+Retained process diagnostics can report termination by `SIGKILL`; the signal alone
+cannot establish an OOM kill. REA gives neutral recovery guidance and preserves the
+signal. Confirm resource causes from process output or host/container records;
+operation-scoped JVM `OutOfMemoryError` observations retain their separate resource
+classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 Provider selection and profile identity follow
 [MCP contracts](mcp-contracts.md#identity-and-discovery). One deep
 provider stays bound to the target; runtime failure never selects another
 provider automatically. The contracts below describe Ghidra observations,
 not equivalence with another engine's pseudocode or analysis database.
+
+## Request payload ceiling
+
+Ghidra requests use `REA_BRIDGE_MAX_REQUEST_BYTES`: default 16 MiB, with a
+configurable range of 7,464–536,870,887 bytes. REA measures UTF-8 JSON, including
+escaping, before allocating the serialized request or sending it. The framing
+newline is excluded. An oversized request returns `resource_constraint` with
+the effective setting, its source, and the exact payload byte count.
+
+Set the value in the environment that starts REA, then restart REA to apply it.
+This setting is enforced by the REA client; the Java bridge has no corresponding
+request ceiling.
 
 ## Admitted inventory semantics
 
@@ -64,6 +89,14 @@ PDB companion. This reporting does not search symbol servers, copy a sibling
 PDB, or change analyzer settings.
 
 ## Loaded addresses and file offsets
+
+Ghidra computes overview procedure and string counts from the same inventories
+used by `list_procedures` and `list_strings`, without transporting those rows
+solely to count them. Counts include external functions and only Ghidra-defined
+strings; they do not establish discovery of unidentified functions or undefined
+string bytes. Complete inventories remain available through the list tools.
+Overview reuse follows the target/profile snapshot lifetime and is invalidated
+by session metadata edits.
 
 `rea analyze <path> --provider ghidra --json` and MCP `binary_overview` report
 the observed loaded `image_base` in `normalized_result`. They retain each
@@ -139,9 +172,22 @@ overview merely because its source artifact is unchanged.
 
 ## Admitted function-analysis semantics
 
+Concurrent callers share one startup while retaining independent cancellation.
+Only the final departing caller abandons startup and waits for its cleanup.
+New attempts wait for that cleanup; failed cleanup retains its original error
+and owned directories until a successful close. Closing the provider reports a
+provider-state failure to live callers rather than cancelling their signals.
+
+Configured analysis extensions and seeds use owned file reads during profile
+resolution and launch snapshots. A changed read extent or descriptor state
+refuses the commitment. Failed source or snapshot descriptor closes remain
+owned and block new admission until cleanup succeeds; the physical failure
+and exact cancellation reason remain available. Provider shutdown joins all
+profile stages before retrying their retained descriptors.
+
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Native decompilation has no fixed per-function deadline. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                                                                                                                                                                                                                                                                                                                                           |
+| Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Native decompilation has no fixed per-function deadline unless `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` sets one; a decompile that reaches it fails only that request with `remote_code` `decompile_timed_out`, the Program and session stay open, and the next decompile uses a fresh decompiler process. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                                                                                           |
 | Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly and is passed to active socket waits. This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -193,7 +239,11 @@ these tools before compilation. Keeping this matrix separate lets Linux
 host/provider acceptance run with only the host compiler.
 
 `npm run verify:ghidra:windows` checks source-owned native x86-64 PE applications;
-`-- --x86` selects x86 and `-- --dll` selects DLLs, and the flags can be combined.
+`-- --x86`, `-- --arm`, or `-- --arm64` selects another target architecture;
+`-- --dll` selects DLLs. Choose one architecture and optionally combine it with
+`--dll`. These static fixtures contain source-owned encoded instructions; they
+are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
+for real-provider coverage and exclusions.
 These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
@@ -232,3 +282,9 @@ next match. Coverage can overlap between pages; do not sum it as unique memory.
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.
 Hopper byte search remains unavailable until its implementation is verified.
+
+MIPS16 shared-image admission requires examined dynamic REL declarations.
+RELR dynamic tags or nonempty `SHT_RELR` sections leave relocation coverage
+unavailable and the profile unsupported; REA does not infer an empty relocation
+set from the absence of REL declarations. RELR loader semantics have not been
+verified for this lane.
