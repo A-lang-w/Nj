@@ -360,24 +360,83 @@ try {
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
     });
-    const { stdout } = await execute(`${prefix}-readelf`, ["-SW", path], {
+    const { stdout } = await execute(`${prefix}-readelf`, ["-SWsr", path], {
       timeout: 10_000,
       maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, LC_ALL: "C" },
     });
-    const expected = [
+    const expectedSections = [
       ...stdout.matchAll(
-        /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s/gm,
+        /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+[A-Za-z]*\s+(\d+)\s+\d+\s+\d+\s*$/gm,
       ),
     ]
       .filter(([, index]) => index !== "0")
-      .map(([, index, name, address, offset, size]) => ({
+      .map(([, index, name, address, offset, size, link]) => ({
         index: Number(index),
         name,
         address: BigInt(`0x${address}`),
         offset: BigInt(`0x${offset}`),
         size: BigInt(`0x${size}`),
+        link: Number(link),
       }));
-    assert.ok(expected.length > 0, `readelf listed no sections for ${path}`);
+    assert.ok(
+      expectedSections.length > 0,
+      `readelf listed no sections for ${path}`,
+    );
+    const expectedSymbols = [];
+    for (const [, name, count, body] of stdout.matchAll(
+      /^Symbol table '([^']+)' contains (\d+) entr(?:y|ies):\n((?:[^\n]+\n?)*)/gm,
+    )) {
+      const table = expectedSections.find((section) => section.name === name);
+      assert.notEqual(table, undefined, `readelf symbol table absent: ${name}`);
+      const rows = [...body.matchAll(/^\s*(\d+):\s+([0-9a-f]+)\s+(\d+)\s/gm)];
+      assert.equal(rows.length, Number(count), `readelf symbol count: ${name}`);
+      for (const [, index, value, size] of rows)
+        expectedSymbols.push({
+          table_index: table.index,
+          entry_index: Number(index),
+          value: BigInt(`0x${value}`),
+          size: BigInt(size),
+        });
+    }
+    assert.ok(
+      expectedSymbols.length > 0,
+      `readelf listed no symbols for ${path}`,
+    );
+    const expectedRelocations = [];
+    for (const [, name, count, body] of stdout.matchAll(
+      /^Relocation section '([^']+)' at offset 0x[0-9a-f]+ contains (\d+) entr(?:y|ies):\n((?:[^\n]+\n?)*)/gm,
+    )) {
+      const section = expectedSections.find((section) => section.name === name);
+      assert.notEqual(
+        section,
+        undefined,
+        `readelf relocation section absent: ${name}`,
+      );
+      const rows = [...body.matchAll(/^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+\S+/gm)];
+      assert.equal(
+        rows.length,
+        Number(count),
+        `readelf relocation count: ${name}`,
+      );
+      for (const [entryIndex, [, offset, info]] of rows.entries()) {
+        // ELF32 r_info uses the low byte for type and the upper 24 bits for
+        // the symbol index. readelf has already decoded the file's byte order.
+        const decodedInfo = BigInt(`0x${info}`);
+        expectedRelocations.push({
+          section_index: section.index,
+          entry_index: entryIndex,
+          reported_offset: BigInt(`0x${offset}`),
+          type: Number(decodedInfo & 0xffn),
+          symbol_table_index: section.link,
+          symbol_index: Number(decodedInfo >> 8n),
+        });
+      }
+    }
+    assert.ok(
+      expectedRelocations.length > 0,
+      `readelf listed no relocations for ${path}`,
+    );
     const bytes = await readFile(path);
     for (const mode of ["cli", "mcp"]) {
       const value = await inspect(mode, path);
@@ -390,14 +449,45 @@ try {
         value.image_type,
         kind === "executable" ? "ET_DYN" : "ET_REL",
       );
-      for (const section of expected) {
+      for (const section of expectedSections) {
         const reported = value.sections[section.index];
         assert.equal(reported.name.display, section.name);
         assert.equal(BigInt(reported.address), section.address);
         assert.equal(BigInt(reported.offset), section.offset);
         assert.equal(BigInt(reported.size), section.size);
       }
-      assert.equal(value.sections.length, expected.length + 1);
+      assert.equal(value.sections.length, expectedSections.length + 1);
+      assert.deepEqual(
+        value.symbols.map(({ table_index, entry_index, value, size }) => ({
+          table_index,
+          entry_index,
+          value: BigInt(value),
+          size: BigInt(size),
+        })),
+        expectedSymbols,
+        `${mode} symbol values differ from readelf for ${path}`,
+      );
+      assert.deepEqual(
+        value.relocations.map(
+          ({
+            section_index,
+            entry_index,
+            reported_offset,
+            type,
+            symbol_table_index,
+            symbol_index,
+          }) => ({
+            section_index,
+            entry_index,
+            reported_offset: BigInt(reported_offset),
+            type,
+            symbol_table_index,
+            symbol_index,
+          }),
+        ),
+        expectedRelocations,
+        `${mode} relocations differ from readelf for ${path}`,
+      );
       if (kind === "executable") {
         assert.ok(value.segments.length > 0);
         assert.equal(value.linkage.interpreters.length, 1);
@@ -406,7 +496,7 @@ try {
             (library) => library.display === "libc.so.6",
           ),
         );
-      } else assert.ok(value.relocations.length > 0);
+      }
       assert.deepEqual(await readFile(path), bytes);
       cases++;
     }
