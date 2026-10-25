@@ -396,7 +396,9 @@ const validateRelocationReferences = (
       (table?.type === "SHT_SYMTAB" || table?.type === "SHT_DYNSYM");
     const positiveReferenceExists =
       tableExists &&
-      BigInt(table.entry_size) >= 24n &&
+      // Elf32_Sym is 16 bytes; Elf64_Sym is 24.
+      BigInt(table.entry_size) >=
+        (value.architecture.bits === 32 ? 16n : 24n) &&
       BigInt(relocation.symbol_index) <
         BigInt(table.size) / BigInt(table.entry_size) &&
       symbols.has(
