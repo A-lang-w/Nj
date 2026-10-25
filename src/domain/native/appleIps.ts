@@ -170,6 +170,11 @@ const frameSchema = z.strictObject({
   ]),
   inline: z.boolean().nullable(),
   recorded_symbol: z.string().nullable(),
+  symbol_location: recordedIntegerSchema
+    .nullable()
+    .describe(
+      "Recorded byte offset of the address from the start of recorded_symbol.",
+    ),
 });
 
 const threadSchema = z.strictObject({
@@ -192,6 +197,7 @@ const imageSchema = z.strictObject({
   size: recordedIntegerSchema.nullable(),
   uuid: uuidSchema.nullable(),
   uuid_unknown: z.boolean(),
+  name: z.string().nullable(),
   path: z.string().nullable(),
 });
 
