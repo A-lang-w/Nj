@@ -20,6 +20,8 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     "<schema>&amp;": 0,
     "[link](target)": Object.freeze([Object.freeze({ retained: true })]),
     "*bundle*": Object.freeze({ leaf: "seen" }),
+    _under_: Object.freeze({ leaf: "literal underscores" }),
+    plain_field: 0,
     "parent\\": Object.freeze({
       "`code`\r\n\r## fake": Object.freeze({ leaf: "retained" }),
     }),
@@ -56,6 +58,8 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     "## &lt;schema&gt;&amp;amp;",
     "## \\[link\\]\\(target\\)",
     "## \\*bundle\\*",
+    "## \\_under\\_",
+    "## plain\\_field",
     "## parent\\\\.\\`code\\`<br><br>\\#\\# fake",
     "## plain.nested",
   ]);
