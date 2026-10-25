@@ -72,6 +72,16 @@ preparation use that entrypoint; a raw Turbo compiler task without matching
 identity fails instead of publishing an ambiguous successful cache entry.
 A missing binary on a supported host also fails without silently falling back.
 
+Development verifiers load their shared command, terminal and file owners from
+source using Node's in-process TypeScript transformation. A single process-lifetime
+loader handles this checkout's `src/` and `scripts/lib/` graphs, resolving missing
+relative `.js`/`.mjs` imports to their `.ts`/`.mts` source. Existing JavaScript and
+modules outside those roots keep native resolution and failures. Node's module
+cache shares source identities within the verifier process; transformed output
+is not cached across Node versions. Restart the verifier after source edits.
+This avoids a cold-cache compiler subprocess surviving command cleanup; the
+live process-lineage checks remain required.
+
 The Rust compiler defaults to at most two checker threads. For `--noEmit` checks,
 `--maxMemory 3G` also sets a soft memory target; emit builds do not use that target.
 Explicit compiler arguments can override the defaults. These controls do not
@@ -130,6 +140,51 @@ static tasks. Both lint caches include the website, documentation configuration,
 and experiment code scanned by the checker; a regression compares the actual
 lint inventory with Turbo's resolved inputs.
 
+Static checks locate candidates; they do not establish semantic ownership.
+`jscpd` finds token clones, and Knip counts test references as uses. Module
+boundaries and architecture guards enforce their declared import and source
+rules. Passing them does not prove that two parsers agree, a wrapper is still
+needed at runtime, or cleanup has one owner.
+
+The lint gate treats `no-async-promise-executor`, `no-unreachable`, and
+`no-unsafe-optional-chaining` as errors. These catch lost async executor failures,
+dead code, and unsafe uses of optional-chain results. `no-unsafe-finally` remains
+a warning because cleanup paths can deliberately throw aggregated failures;
+review whether they preserve the primary failure. Two local rules
+cover narrower observed failures: `rea/no-buffer-deep-equality` flags Vitest
+deep comparisons of Buffers from recognized constructors and file reads,
+including simple `const` aliases; `rea/cancellation-cause` requires an explicit
+cause when a directly checked caller `AbortSignal` is converted to an
+`AnalysisCancelledError`. The rules do not infer arbitrary Buffer types,
+follow indirect cancellation helpers, or prove that an explicit cause equals
+the caller's reason. Keep focused boundary and lifecycle tests for those facts.
+
+`rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
+`createEvidence` payload expressions; it does not analyze intermediate values.
+`rea/no-positional-tool-contract` rejects catalog indices used to select
+operation names, schemas or types; display-only selection remains allowed.
+`rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
+deletion; mutable bindings and mixed root arrays remain outside its scope.
+
+Focused `.only` declarations, broken assertion promise chains, and unused disable
+directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid stored and
+collected assertions can be awaited later. `import/no-duplicates` warns with
+`preferInline: false`, preserving separate type imports.
+
+Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
+`oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
+`.cache/static-checks/typed-oxlint.json`. Production `src` treats
+`no-misused-promises` as an error; tests/fixtures warn. `no-floating-promises` is
+an error in `src/**/*.test.ts`; other scopes, return-await and exhaustiveness
+findings warn pending triage.
+
+`npm run knip:production` writes advisory candidates to
+`.cache/static-checks/production-reachability.json`; execution/report errors fail.
+Ordinary Knip remains. `check`, `check:pr`, and `check:ci:deep` run reachability
+then typed lint sequentially after cached work. Typed lint builds the project
+type graph and stays separate from fast feedback. Its default Go settings are
+`GOMAXPROCS=2` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
+
 Routine iterations and rebases need focused regressions and relevant checks.
 Before handing off a PR, run `npm run check` and generated-document checks when
 applicable; CI owns the full suite and coverage. Use the full local gate for
@@ -158,6 +213,14 @@ mock cannot replace a consumer that was imported earlier. Check these tests
 with the consumer preloaded as well as alone. For simulated protocol traces,
 use an acknowledged event barrier before asserting complete observations;
 a zero-duration capture does not guarantee queued events have arrived.
+
+Place faults at the semantic boundary under test: the selected read, EOF, hash
+completion, or cleanup attempt. Global call ordinals can shift during setup or
+refactoring without reaching that phase. For controlled asynchronous gates, use
+`awaitAcknowledgement` from `tests/fixtures/lifecycleAcknowledgement.ts` to race
+the acknowledgement against triggering-operation settlement and a bounded
+deadline. Register release gates before launch, then release and join launched
+work in `finally` before restoring mocks, even when the barrier fails.
 
 Focused contract tests should import the named contract family they exercise;
 reserve the full tool catalog for catalog-wide assertions. Resolve contracts by
@@ -189,6 +252,10 @@ and profile a bounded representative case before retrying. Separate production
 work from fixture generation, schema compilation, subprocess startup and cleanup.
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
+
+Keep capacity fixtures intact when diagnosing a test failure. For byte equality
+of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
+diff can allocate far more than the production operation.
 
 Remove demonstrated repeated work while preserving distinct assertions and
 resource ownership. Share immutable fixture preparation where safe; keep fresh
@@ -298,6 +365,13 @@ Trivial helper assertions need no replacement. Remove abandoned production
 scaffolding only after checking runtime and verifier consumers, including
 compiled imports.
 
+After an owner changes, move fault injection and event spies to the path the
+production consumer actually uses, and assert that the intended boundary was
+reached. Keep independent expectations from authored input, producer output, or
+an external oracle; comparing two paths through the same replacement algorithm
+does not preserve the old oracle. A negative probe inside a conditional or loop
+must assert that it ran.
+
 Use representative scenarios rather than Cartesian matrices of equivalent
 cases. Share setup without hiding inputs or expected evidence. For successful
 `Result` values, throw the typed error before asserting the value; a preceding
@@ -324,6 +398,34 @@ reports. A fixture accepted by REA proves its reader behavior; it does not prove
 that a real loader accepts the artifact. If multiple producer revisions share a
 format identifier but differ in behavior, record that ambiguity rather than
 using one installed version as an oracle for all of them.
+
+### Boundary regressions
+
+For parser, inventory, snapshot, or projection fixes, select the applicable
+cases below. Assert the producing boundary's facts and their meaning in affected
+consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
+ownership or finalization changes; a single malformed fixture cannot establish
+the whole contract.
+
+| Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
+| Raw identity and normalization        | Exercise allowed empty or unusual source names/metadata keys and values that normalize to one lookup or display value. Preserve admitted raw spelling under the existing redactions for transport credentials and explicitly marked sensitive values. Distinguish local paths, file URLs and HTTP paths; assert source identity through consumers. |
+| Missing, empty, and unknown values    | Distinguish omitted, null, empty, zero, and false where the format admits them. Pair a malformed optional field with usable sibling facts; assert uncertainty without inventing absence or discarding the row.                                                                                                                                     |
+| Completed work followed by failure    | Complete one input, then fail or cancel a later input. Assert earlier digests, metadata, and parsed facts survive with the later failure reason and accurate processed/unprocessed coverage. For cancellation, assert the exact caller abort reason; where a primary failure was already produced, assert it survives.                             |
+| Independent limits and failures       | Trigger a sample/output limit alongside a read or parse failure. Assert both dimensions survive; reaching a limit does not erase sampling failures or prove complete coverage.                                                                                                                                                                     |
+| Representation expansion and capacity | Keep a valid set near the limit and a large malformed input followed by a valid input. Cover JSON escaping, expanded paths or decoded rows as applicable. Assert serialized bounds, retained identities, later valid results, and unknown omissions without charging discarded interpretations as retained output.                                 |
+| Snapshots, caches, and comparison     | Vary metadata that affects the result while keeping payload bytes equal. Exercise historical records with newly introduced fields omitted, current caller inputs on replay, and reuse across differing selections. Assert correct invalidation or unknown coverage, current request provenance, and unchanged saved Evidence and IDs.              |
+| Public success and error delivery     | Exercise affected public CLI/MCP paths, including partial Evidence on failure. Assert retained facts and named contracts; retrieve partial Evidence when MCP returns a reference. If SDK cancellation suppresses the reply, check server settlement and any retained Evidence. An error-code assertion alone misses lost observations.             |
+
+For partial Evidence delivery, verify that same-session readback preserves
+identity and provenance without rerunning the provider. Include a no-writer
+control that keeps completed Evidence inline and preserves the original failure.
+
+When producer order is unspecified, synchronize fixtures on the observed request
+or completion event. A filename, generated key, or fixed delay does not prove
+which item completed before cancellation. Preserve real producer ordering and
+use a controlled seam for the phase that needs deterministic failure.
 
 Packed bridge validation uses Python's standard-library AST and tar readers
 with `-I -S`: caller-local modules, `PYTHONPATH`, and site startup hooks must
@@ -374,15 +476,16 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
-| Scenario                                                                                | Assertion and control                                                                                                                                                                                                          |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                  |
-| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                   |
-| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                             |
-| Cancellation arrives after workload exit, during result reads or temporary-root removal | Return typed cancellation with available partial observations and actual cleanup status. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence.                                            |
-| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                      |
-| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                        |
-| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported. |
+| Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                        |
+| First handshake is late, absent, invalid, or recovered during close                     | Initial and recovery paths retain the same authenticated identity facts. Foreign run/token controls cannot authorize cleanup; authenticated idle/native work survives the unauthenticated listener deadline.                                         |
+| Launch returns an error with a valid process handle                                     | Cover already-exited and still-live owned processes. Verify observed exit separately from creation; failed termination or unavailable identity remains unresolved.                                                                                   |
+| Cancellation arrives after workload exit, during result reads or temporary-root removal | Return typed cancellation with available partial observations and actual cleanup status. The non-aborted control succeeds; existing primary/cleanup failures keep their precedence.                                                                  |
+| Children have mixed health or cleanup outcomes                                          | Missing peer health does not erase an observed failure or activity. Idle plus unknown stays unknown. Retry a failed child without closing a successful peer again, including after a close-option change.                                            |
+| Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                                              |
+| Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`. |
+| Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                       |
 
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
@@ -396,6 +499,11 @@ owned cleanup seams while preserving real cleanup where feasible. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
+For ZIP extraction, replace the pathname after inventory reader close while the
+admitted root descriptor remains owned. Verify that identical member bytes in a
+different carrier, a directory, or a missing pathname cannot switch the
+materialized source. Exercise descriptor close failure and retry before output
+publication.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 
@@ -544,7 +652,11 @@ creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
 
 The shared temporary-directory and workspace helpers preserve caller labels
-under an owned `rea-` prefix when needed. `npm run verify:test-temp-hygiene`
+under an owned `rea-` prefix when needed. Their
+[cleanup ownership differs](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#temporary-files-and-diagnostics):
+`createTestTempDirectory` registers `onTestFinished` deletion, while
+`createTestWorkspace` requires caller cleanup. Close resources before removing
+their directory. `npm run verify:test-temp-hygiene`
 uses the same ownership rule to find retained fixtures under a private temporary
 root. Third-party caches remain outside that ownership rule.
 
@@ -1935,13 +2047,15 @@ would remain after the pause, the verifier waits 90 seconds and runs once more,
 recording `attempts: 2` and `retried_for` in the receipt. Any other failure
 ends the lane at once.
 
-The verifier writes the Grafana-shaped HAR the view tests own, inspects it and
-projects the `environment-manifest` view with all three template rules through
-the built CLI, packs the checkout with `npm pack`, exports the bundle with
-`--package-tarball` so the image installs this checkout rather than the
-registry package, and runs `agent-env run` on the bundle. It checks that the
-export reports the planned file set with the inputs copied byte-exact and a
-bundle served from the derived state, which serves fewer tools than the
+The verifier writes the Grafana-shaped HAR the view tests own, packs the
+checkout with `npm pack`, builds the bundle from the HAR with
+`rea environment-build --package-tarball` through the built CLI, the command
+users run, so the image installs this checkout rather than the registry
+package, and runs `agent-env run` on the bundle. It checks that the build
+reports the 28-record capture, the default template rules, the planned file set
+with the shipped manifest naming the reported capture, a coverage summary whose
+read and served write tools add up to the served tool count, and a bundle
+served from the derived state, which serves fewer tools than the
 manifest because write tools the capture did not confirm are not served, that the runner exits `0` with
 `tasks/smoke.json` reported as passed and the verifier's description naming
 that served tool count, and that no container exists
