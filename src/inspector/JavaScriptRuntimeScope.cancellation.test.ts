@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -106,8 +106,19 @@ afterEach(async () => {
   );
 });
 
+// Node discovery reports a file path with quotes, backslashes and underscores
+// replaced by `_`, so REA only stats a reported path containing none of them
+// (authorizeRuntimeTargetLocation). macOS per-user temporary directories
+// usually contain `_`; use a root that Node reports exactly.
+const exactlyReportedRoot = async (): Promise<string> => {
+  const temporary = await realpath(tmpdir());
+  return /[_"\\]/u.test(temporary) ? await realpath("/tmp") : temporary;
+};
+
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
+  const root = await mkdtemp(
+    join(await exactlyReportedRoot(), "rea-inspector-cancel-"),
+  );
   roots.push(root);
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
