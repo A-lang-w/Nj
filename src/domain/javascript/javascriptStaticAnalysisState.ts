@@ -47,6 +47,8 @@ export interface JavaScriptAnalysisAccumulator {
     readonly roles: JavaScriptBundlerFactoryRoles;
     readonly exports: string[];
   }[];
+  /** Factory parameter defaults the bundler calling convention never runs. */
+  readonly unusedFactoryDefaults: Set<t.Node>;
   readonly pendingModuleRequireCalls: (
     | t.CallExpression
     | t.OptionalCallExpression
@@ -160,6 +162,7 @@ export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
   pendingBundlerExports: [],
+  unusedFactoryDefaults: new Set(),
   pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],

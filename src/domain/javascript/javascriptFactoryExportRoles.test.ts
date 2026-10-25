@@ -200,3 +200,77 @@ it.each([
   expect(analysis.parse_status).toBe("partial");
   expect(analysis.analysis_coverage?.semantics.unknown_findings).toBe(1);
 });
+
+/** Exports plus every loader call made under Webpack's calling convention. */
+const conventionRun = (factory: string) => {
+  let table: Record<string, (...values: unknown[]) => void> = {};
+  runInNewContext(webpackChunk(factory), {
+    globalThis: {
+      webpackChunkApp: {
+        push: ([, modules]: [unknown, typeof table]) => {
+          table = modules;
+        },
+      },
+    },
+  });
+  const loads: string[] = [];
+  const chunks: string[] = [];
+  const loader = Object.assign(
+    (id: unknown) => {
+      loads.push(String(id));
+      return {};
+    },
+    {
+      d: (target: object, getters: Record<string, () => unknown>) => {
+        for (const [name, get] of Object.entries(getters))
+          Object.defineProperty(target, name, { enumerable: true, get });
+      },
+      e: (id: unknown) => {
+        chunks.push(String(id));
+      },
+    },
+  );
+  const module = { exports: {} };
+  table["17"]?.call(module.exports, module, module.exports, loader);
+  return {
+    exports: Object.getOwnPropertyNames(module.exports).sort(),
+    references: [...loads, ...chunks.map((id) => `chunk:${id}`)].sort(),
+    async_chunk_keys: chunks.sort(),
+  };
+};
+
+it.each([
+  [
+    "(e = {}, t = (() => { for (const k of ['x']) { e.exports.ghost = 1; } })()) {}",
+    "complete",
+  ],
+  ["(e = (t.ghost = 1), t) {}", "complete"],
+  [
+    "(e, t = Object.defineProperty(e.exports, 'ghost', {value: 1})) {}",
+    "complete",
+  ],
+  ["(e = n.d(t, {ghost: () => 1}), t, n) {}", "complete"],
+  ["(e = n(5), t, n) { t.real = 1; }", "complete"],
+  ["(e = n.e(7), t, n) { t.real = 1; }", "complete"],
+  ["(e, t = (n(8), {}), n) { t.real = 1; }", "complete"],
+  [
+    "({exports: x} = (n.d(t, {ghost: () => 1}), {exports: {}}), t, n) { x.real = 1; }",
+    "complete",
+  ],
+  ["({exports: x = (n(6), {ghost: 1})}, t, n) { x.real = 1; }", "complete"],
+  ["(e, t, n, r = n(5)) { t.real = n.e(6); }", "complete"],
+  ["(e, t, n, r = (t.later = 1)) {}", "complete"],
+  ["(e, t, n = (t.ghost = 1, n(9), () => {})) { t.real = 1; }", "partial"],
+  ["(e, {a} = (e.exports.ghost = 1, {})) { e.exports.real = 1; }", "partial"],
+])("yields no facts from never-run defaults in 17%s", (factory, status) => {
+  const analysis = analyzeJavaScriptStaticSource(webpackChunk(factory));
+  const registration = analysis.bundler_registrations[0];
+  expect({
+    exports: registration?.modules[0]?.exports,
+    references: analysis.references
+      .map(({ specifier, expression }) => specifier ?? expression)
+      .sort(),
+    async_chunk_keys: registration?.async_chunk_keys,
+    status: analysis.parse_status,
+  }).toEqual({ ...conventionRun(factory), status });
+});

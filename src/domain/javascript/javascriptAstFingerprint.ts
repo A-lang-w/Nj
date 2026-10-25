@@ -109,6 +109,8 @@ export const collectJavaScriptExports = (
     },
   };
   traverseJavaScriptAst(node, {
+    // A default the calling convention never runs declares no exports.
+    skip: (current) => roles?.unusedDefaults.has(current) === true,
     enter: (current) => {
       if (t.isAssignmentExpression(current))
         collectAssignmentExports(

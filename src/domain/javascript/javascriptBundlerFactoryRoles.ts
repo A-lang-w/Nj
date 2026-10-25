@@ -15,8 +15,9 @@ export interface JavaScriptBundlerFactoryRoles {
   /** The parameter bound to the bundler loader (`__webpack_require__`). */
   readonly loader: t.Identifier | undefined;
   /**
-   * Default expressions of the module and exports parameters. The calling
-   * convention always supplies both objects, so these defaults never run.
+   * Default expressions of role parameters and of `{exports: alias}` targets.
+   * The convention always supplies the module, its exports object and the
+   * loader, so these never run and yield no facts.
    */
   readonly unusedDefaults: ReadonlySet<t.Node>;
   /**
@@ -66,26 +67,25 @@ export const javascriptBundlerFactoryRoles = (
       exact = false;
       break;
     }
-    // Loader consumers resolve its calls through the binding's own value
-    // facts, which cannot yet discount a default the convention never runs.
-    const identifier =
-      role === "loader"
-        ? t.isIdentifier(parameter)
-          ? parameter
-          : undefined
-        : bindingIdentifier(parameter);
-    if (identifier !== undefined) {
-      // A repeated simple parameter name binds its last argument.
-      if (boundLater(parameters, index, identifier.name)) continue;
-      if (role === "exports") roles.exports.push(identifier);
-      else roles[role] = identifier;
-      continue;
-    }
+    // The convention always supplies every role argument, so a role
+    // parameter's default is dead code whatever its binding pattern.
     const pattern = t.isAssignmentPattern(parameter)
       ? parameter.left
       : parameter;
+    if (t.isAssignmentPattern(parameter)) unusedDefaults.add(parameter.right);
+    // Loader consumers resolve its calls through the binding's own value
+    // facts, which cannot yet discount a default the convention never runs.
+    if (
+      t.isIdentifier(pattern) &&
+      (role !== "loader" || pattern === parameter)
+    ) {
+      // A repeated simple parameter name binds its last argument.
+      if (boundLater(parameters, index, pattern.name)) continue;
+      if (role === "exports") roles.exports.push(pattern);
+      else roles[role] = pattern;
+      continue;
+    }
     if (role === "module" && t.isObjectPattern(pattern)) {
-      if (t.isAssignmentPattern(parameter)) unusedDefaults.add(parameter.right);
       if (!moduleExportsAliases(pattern, bindingIdentifier, roles.exports))
         exact = false;
       continue;
