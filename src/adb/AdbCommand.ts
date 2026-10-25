@@ -14,6 +14,7 @@ import {
   ExecFileOutputCancelledError,
   execFileOutputFailure,
   type ExecFileOutputFailure,
+  spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
 import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
@@ -210,11 +211,29 @@ export const runAdbCapture = async (
           remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
         }),
       );
+    // The host, not adb, lacked capacity to start it.
+    if (spawnCapacityExhausted(failure))
+      return err(
+        new AnalysisResourceConstraintError(
+          operation,
+          "capacity",
+          `The host could not start adb (${String(failure.code)}) for ${operation}`,
+          { spawn_error: String(failure.code) },
+          {
+            cause,
+            retryable: true,
+            remediationAction:
+              "The host ran out of process, memory or file-descriptor capacity. Close unused processes or files, or raise the process or open-file limit of the REA process, then retry.",
+          },
+        ),
+      );
     return err(
       new AdbProtocolError(
-        excerpt === ""
-          ? `adb exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
+        failure.spawnFailed === true
+          ? `adb could not be started (${String(failure.code)}) for ${operation}`
+          : excerpt === ""
+            ? `adb exited with code ${String(failure.code)} for ${operation}`
+            : excerpt,
         failure,
         cause,
       ),
