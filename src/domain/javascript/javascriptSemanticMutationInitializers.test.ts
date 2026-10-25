@@ -173,3 +173,36 @@ it.each([
     );
   },
 );
+
+it("keeps repeating effect and capture positions distinct across repeated queries", () => {
+  const program = parseJavaScriptSource(
+    "capture(); for (const item of items) { overwrite(); } after();",
+  )?.program;
+  if (program === undefined)
+    throw new Error("Expected parsed ordering fixture");
+  const parents = new WeakMap<t.Node, t.Node>();
+  const calls = new Map<string, t.CallExpression>();
+  traverseJavaScriptAst(program, {
+    enter: (node, parent) => {
+      if (parent !== null) parents.set(node, parent);
+      if (t.isCallExpression(node) && t.isIdentifier(node.callee))
+        calls.set(node.callee.name, node);
+    },
+  });
+  const capture = calls.get("capture");
+  const effect = calls.get("overwrite");
+  const after = calls.get("after");
+  if (capture === undefined || effect === undefined || after === undefined)
+    throw new Error("Expected ordering calls");
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    expect(semanticTopLevelEffectFollowsCapture(capture, effect, parents)).toBe(
+      true,
+    );
+    expect(semanticTopLevelEffectFollowsCapture(effect, after, parents)).toBe(
+      false,
+    );
+    expect(semanticTopLevelEffectFollowsCapture(capture, effect, parents)).toBe(
+      true,
+    );
+  }
+});

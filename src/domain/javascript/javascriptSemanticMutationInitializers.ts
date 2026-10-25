@@ -54,6 +54,8 @@ interface InitializerPositionCache {
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
+  readonly topLevelCaptures: WeakMap<t.Node, StatementPosition | null>;
+  readonly topLevelEffects: WeakMap<t.Node, StatementPosition | null>;
   readonly evaluationChildren: WeakMap<
     t.Node,
     ReadonlyMap<t.Node, number> | null
@@ -78,6 +80,8 @@ const initializerPositionCache = (
     mutation: new WeakMap(),
     reference: new WeakMap(),
     read: new WeakMap(),
+    topLevelCaptures: new WeakMap(),
+    topLevelEffects: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
   };
@@ -122,39 +126,58 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+const computeTopLevelPosition = (
+  node: t.Node | undefined,
+  parents: WeakMap<t.Node, t.Node>,
+  repeatingEffect: boolean,
+): StatementPosition | null => {
+  let selected: StatementPosition | null = null;
+  let declarator: t.VariableDeclarator | undefined;
+  let child: t.Node | undefined;
+  while (node !== undefined) {
+    if (t.isFunction(node)) return null;
+    if (t.isLoop(node)) {
+      if (!repeatingEffect) return null;
+      // A capture outside the loop may precede the entire repeating region.
+      // Captures within it remain unordered across iterations.
+      selected = null;
+      declarator = undefined;
+    }
+    if (delayedInstanceFieldValue(node, child)) return null;
+    if (t.isVariableDeclarator(node)) declarator = node;
+    if (t.isStatement(node)) {
+      const enclosing = statementPosition(node, parents, declarator);
+      if (enclosing !== null) selected = enclosing;
+    }
+    if (t.isProgram(node)) return selected;
+    child = node;
+    node = parents.get(node);
+  }
+  return null;
+};
+
 /** Order effects after a capture only in a non-repeating capture activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
   effect: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
+  const cache = initializerPositionCache(parents);
   const position = (
     node: t.Node | undefined,
     repeatingEffect = false,
   ): StatementPosition | null => {
-    let selected: StatementPosition | null = null;
-    let declarator: t.VariableDeclarator | undefined;
-    let child: t.Node | undefined;
-    while (node !== undefined) {
-      if (t.isFunction(node)) return null;
-      if (t.isLoop(node)) {
-        if (!repeatingEffect) return null;
-        // A capture outside the loop may precede the entire repeating region.
-        // Captures within it remain unordered across iterations.
-        selected = null;
-        declarator = undefined;
-      }
-      if (delayedInstanceFieldValue(node, child)) return null;
-      if (t.isVariableDeclarator(node)) declarator = node;
-      if (t.isStatement(node)) {
-        const enclosing = statementPosition(node, parents, declarator);
-        if (enclosing !== null) selected = enclosing;
-      }
-      if (t.isProgram(node)) return selected;
-      child = node;
-      node = parents.get(node);
-    }
-    return null;
+    if (node === undefined) return null;
+    // A repeating node may be an ordered effect but never a single capture.
+    // Retain only node facts in the existing parent-map-owned cache, not pairs.
+    const positions = repeatingEffect
+      ? cache.topLevelEffects
+      : cache.topLevelCaptures;
+    const cached = positions.get(node);
+    if (cached !== undefined) return cached;
+    const computed = computeTopLevelPosition(node, parents, repeatingEffect);
+    positions.set(node, computed);
+    return computed;
   };
   const before = position(capture);
   const after = position(effect, true);
