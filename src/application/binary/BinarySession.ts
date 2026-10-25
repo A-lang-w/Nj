@@ -13,7 +13,7 @@ import {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -33,6 +33,7 @@ import {
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
+import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import {
@@ -134,6 +135,16 @@ const trackCleanupFailures = (
             );
     },
   };
+};
+
+/** Provider metadata cannot confer authority to an uncommitted Evidence ID. */
+const unrecordedExecution = (
+  result: Result<AnalysisExecution, AnalysisError>,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok || !("evidenceId" in result.value)) return result;
+  const observation = { ...result.value };
+  delete observation.evidenceId;
+  return ok(observation);
 };
 
 /**
@@ -1180,7 +1191,9 @@ export class BinarySession
             "This operation requires an executable analysis target; the active session contains only app resource access.",
           ),
         );
-      const result = await resources.client.execute(name, arguments_, options);
+      const result = unrecordedExecution(
+        await resources.client.execute(name, arguments_, options),
+      );
       if (!result.ok) return result;
       const execution = { ...result.value, subject: null };
       return ok(execution);
@@ -1207,7 +1220,7 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const call = active.client.execute(name, arguments_, options);
-    const result = await call;
+    const result = unrecordedExecution(await call);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
       name,
@@ -1244,36 +1257,36 @@ export class BinarySession
       name !== "inspect_keyed_archive" &&
       name !== "trace_dylib_resolution"
     ) {
-      const evidence = createEvidence(
-        execution.value.subject === undefined
-          ? active.target
-          : (execution.value.subject ?? undefined),
-        execution.value.provider,
+      const evidence = createAnalysisExecutionEvidence(
+        name,
+        arguments_,
         {
-          operation: name,
-          parameters: arguments_,
-          result: execution.value.result,
+          ...execution.value,
           analysisProfile: profile,
-          rawResult: execution.value.rawResult,
-          limitations: execution.value.limitations,
-          ...(execution.value.relationshipCoverage === undefined
-            ? {}
-            : {
-                relationshipCoverage: execution.value.relationshipCoverage,
-              }),
-          locations: execution.value.locations,
+          subject:
+            execution.value.subject === undefined
+              ? active.target
+              : execution.value.subject,
         },
+        "observed",
       );
+      const sourcesRecorded = recordEvidenceSources(
+        (source) => this.recordEvidence(source),
+        execution.value.sourceEvidence ?? [],
+      );
+      if (!sourcesRecorded.ok) return sourcesRecorded;
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) return recorded;
+      const retained = { ...execution.value, evidenceId: evidence.evidence_id };
       if (execution.value.cachePolicy !== "live")
         this.recordSnapshot({
           target: active.target,
           profile,
           operation: name,
           parameters: arguments_,
-          execution: execution.value,
+          execution: retained,
         });
+      return ok(retained);
     }
     return execution;
   }

@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { peLoadConfigImage } from "../../../src/native/pe/PeLoadConfig.fixture.js";
+import {
+  PE_LOAD_CONFIG_FIXTURE,
+  peLoadConfigImage,
+} from "../../../src/native/pe/PeLoadConfig.fixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -48,7 +51,13 @@ mcpTest(
       expect(
         evidence.normalized_result.load_config?.guard_flags?.flags,
       ).toContain("IMAGE_GUARD_CF_INSTRUMENTED");
-      expect(await readFile(path)).toEqual(bytes);
+      expect(evidence.normalized_result.load_config).toMatchObject({
+        dynamic_value_reloc_table_offset:
+          PE_LOAD_CONFIG_FIXTURE.dynamicRelocOffset,
+        dynamic_value_reloc_table_section:
+          PE_LOAD_CONFIG_FIXTURE.dynamicRelocSection,
+      });
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       const bad = await client.callTool(
         {
           name: "inspect_pe_load_config",
