@@ -15,6 +15,39 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { queryValues, replayReason } from "./environmentStateVariants.js";
+import { readClock } from "./environmentStateWriteValues.js";
+
+/** A read a create's observation takes fields from: an item read's respell the response's clocks and add fields, a list read's only add fields. */
+export interface ObservedRead {
+  readonly ordinal: number;
+  readonly pointer: string;
+  readonly shape: "item" | "list";
+}
+
+/** Whether two clocks show one instant, the coarser spelled to fewer fraction digits: whole seconds of a nanosecond clock. */
+export const respelledInstant = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean => {
+  const [a, b] = [readClock(left), readClock(right)];
+  if (a?.format.kind !== "iso" || b?.format.kind !== "iso") return false;
+  const [fine, coarse] =
+    a.format.fraction >= b.format.fraction ? [a, b] : [b, a];
+  if (coarse.format.kind !== "iso" || coarse.format.fraction > 3) return false;
+  const unit = 10 ** (3 - coarse.format.fraction);
+  return (
+    coarse.subMillisecond === 0 &&
+    Math.floor(fine.ms / unit) * unit === coarse.ms
+  );
+};
+
+/** A create's response object with a read's fields: an item read's values win, a list read only adds fields the response lacks. */
+export const withRead = (
+  response: JsonObject,
+  read: JsonObject,
+  shape: ObservedRead["shape"],
+): JsonObject =>
+  shape === "item" ? { ...response, ...read } : { ...read, ...response };
 
 /** Where an observed entity object was found: the record and a JSON pointer into its response. */
 export interface Observed {
@@ -22,6 +55,8 @@ export interface Observed {
   readonly pointer: string;
   readonly object: JsonObject;
   readonly id: string;
+  /** A create's later read whose fields the object adds to the response's, and whose clock spellings an item read lends it. */
+  readonly read?: ObservedRead;
 }
 
 /** Objects a response carries where an entity may be, in precedence tiers: the root, one member, then the element of a one-element array at the root or in one member. */
