@@ -272,7 +272,9 @@ Windows, because the build lock (`run-exclusive`) will not run a command whose
 descendants it cannot own. When the checkout's `package.json` version matches a
 published release, restore the files from that release's official npm tarball
 instead of building them. Verify the tarball digest against the registry before
-extracting:
+extracting. Run these commands in Git Bash, which Git for Windows installs with
+`openssl` and GNU `tar`; PowerShell cannot run them as written, and the Windows
+`tar.exe` (bsdtar) rejects `--force-local`:
 
 ```bash
 npm view rea-agents@<version> dist.integrity
