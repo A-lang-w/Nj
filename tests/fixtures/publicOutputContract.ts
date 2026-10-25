@@ -12,7 +12,12 @@ import { expect } from "vitest";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
-import { parseEvidence, type Evidence } from "../../src/domain/evidence.js";
+import {
+  evidenceAuthoritySchema,
+  evidenceConfidenceSchema,
+  parseEvidence,
+  type Evidence,
+} from "../../src/domain/evidence.js";
 import type { AnalysisErrorProjection } from "../../src/domain/analysisErrorProjection.js";
 
 /** Documented confidence vocabulary on every canonical Evidence record. */
@@ -99,11 +104,26 @@ export const expectDocumentedErrorContract = async (
 };
 
 /**
+ * The pinned vocabularies must equal the runtime Evidence schema's full
+ * allowed-value sets, so adding a schema value without updating the pinned
+ * literals fails here rather than passing through untested.
+ */
+export const assertPinnedEvidenceVocabularies = (): void => {
+  expect(new Set(evidenceConfidenceSchema.options)).toEqual(
+    new Set(CONFIDENCE_VALUES),
+  );
+  expect(new Set(evidenceAuthoritySchema.options)).toEqual(
+    new Set(AUTHORITY_VALUES),
+  );
+};
+
+/**
  * Assert the canonical Evidence record fields documented for both adapters in
  * docs/mcp-contracts.md -> Tool results: required keys, field types, and the
  * documented confidence and authority enums.
  */
 export const assertCanonicalEvidenceContract = (value: unknown): Evidence => {
+  assertPinnedEvidenceVocabularies();
   const evidence = parseEvidence(value);
   expect(typeof evidence.evidence_id).toBe("string");
   expect(evidence.evidence_id.startsWith("ev_")).toBe(true);
