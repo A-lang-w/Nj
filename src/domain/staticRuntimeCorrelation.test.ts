@@ -37,11 +37,9 @@ const artifactComparison = createEvidence(
       left_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.left.evidence_id],
       right_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
     },
-    result: jsonValueSchema.parse(
-      compareArtifacts(
-        ARTIFACT_COMPARISON_EXAMPLE.left,
-        ARTIFACT_COMPARISON_EXAMPLE.right,
-      ),
+    result: compareArtifacts(
+      ARTIFACT_COMPARISON_EXAMPLE.left,
+      ARTIFACT_COMPARISON_EXAMPLE.right,
     ),
     confidence: "derived",
     authority: "analyst-inference",
@@ -159,10 +157,10 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
     {
       operation: source.operation,
       parameters: source.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...functionDossierSchema.parse(source.normalized_result),
         basic_blocks: [{ start: "0x1000", end: "0x1000", successors: [] }],
-      }),
+      },
       confidence: source.confidence,
       authority: source.authority,
     },
@@ -180,7 +178,7 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
       left_evidence_id: left.evidence_id,
       right_evidence_id: right.evidence_id,
     },
-    result: jsonValueSchema.parse(computed),
+    result: computed,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: computed.limitations,
@@ -244,7 +242,7 @@ it("keeps truncation ahead of an artifact integrity contradiction", () => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         ...inventory,
         occurrences,
         manifest: {
@@ -255,7 +253,7 @@ it("keeps truncation ahead of an artifact integrity contradiction", () => {
             graphSha256,
           ),
         },
-      }),
+      },
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -284,7 +282,7 @@ it("keeps truncation ahead of an artifact integrity contradiction", () => {
         left_evidence_id: untrusted.evidence_id,
         right_evidence_id: verified.evidence_id,
       },
-      result: jsonValueSchema.parse(compared),
+      result: compared,
       confidence: "derived",
       authority: "analyst-inference",
       evidenceLinks: [untrusted.evidence_id, verified.evidence_id],
@@ -365,10 +363,10 @@ it("keeps provider-dependent function contradictions out of cochange hypotheses"
     {
       operation: source.operation,
       parameters: source.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...dossier,
         procedure: { ...dossier.procedure, signature: "long main(void)" },
-      }),
+      },
       confidence: source.confidence,
       authority: source.authority,
       relationshipCoverage,
@@ -392,7 +390,7 @@ it("keeps provider-dependent function contradictions out of cochange hypotheses"
       left_evidence_id: left.evidence_id,
       right_evidence_id: right.evidence_id,
     },
-    result: jsonValueSchema.parse(computed),
+    result: computed,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: computed.limitations,

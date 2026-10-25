@@ -44,6 +44,9 @@ const isObjectArray = (value: unknown): value is Record<string, unknown>[] =>
 
 const escapeTableCell = (value: string): string =>
   value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/\r\n|\r|\n/g, "<br>");
@@ -104,7 +107,11 @@ const formatObjectTable = (
       }
   return renderTable(
     headers,
-    items.map((item) => headers.map((key) => markdownCell(item[key]))),
+    items.map((item) =>
+      headers.map((key) =>
+        markdownCell(Object.hasOwn(item, key) ? item[key] : undefined),
+      ),
+    ),
   );
 };
 

@@ -1,4 +1,5 @@
 import type * as t from "@babel/types";
+import type { JavaScriptFactoryExportBindings } from "./javascriptAstFingerprint.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
@@ -41,6 +42,11 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  readonly pendingBundlerExports: {
+    readonly factory: t.Node;
+    readonly roles: JavaScriptFactoryExportBindings;
+    readonly exports: string[];
+  }[];
   readonly pendingModuleRequireCalls: (
     | t.CallExpression
     | t.OptionalCallExpression
@@ -85,6 +91,7 @@ export interface JavaScriptAnalysisAccumulator {
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
   readonly seen: Set<string>;
+  bundlerExportHelpersObserved: boolean;
   visitedNodes: number;
   unknownFindings: number;
 }
@@ -94,6 +101,13 @@ export interface JavaScriptFindingContext {
   /** Native path/URL identities established by shared lexical and mutation owners. */
   readonly pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery;
   readonly electronExportIntact?: (path: readonly string[]) => boolean;
+  readonly browserWindowReceiver?: (
+    node: t.Node,
+    site: t.Node,
+    suffix: readonly string[],
+  ) =>
+    | { readonly owner: t.NewExpression; readonly path: readonly string[] }
+    | undefined;
   readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
@@ -145,6 +159,7 @@ export interface LocatedJavaScriptFindingInput<
 export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
+  pendingBundlerExports: [],
   pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],
@@ -166,6 +181,7 @@ export const createJavaScriptAnalysisAccumulator = (
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),
+  bundlerExportHelpersObserved: false,
   visitedNodes: 0,
   unknownFindings: 0,
 });

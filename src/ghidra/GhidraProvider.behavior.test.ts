@@ -19,7 +19,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import {
   fixtureDosLoadImage,
   compareDosClientFixture,
@@ -703,12 +702,13 @@ describe("Ghidra platform support", () => {
 
 describe("Ghidra Windows platform support", () => {
   it("keeps Windows P0 unavailable until native isolation authority exists", async () => {
+    const reason = "Authored native artifact unavailable diagnostic";
     const native = vi
       .spyOn(nativeLoader, "systemWindowsNativeAuthority")
       .mockReturnValue({
         available: false,
         failureStage: "artifact",
-        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        reason,
       });
     onTestFinished(() => native.mockRestore());
     const ghidra = provider(installationHost("win32"));
@@ -728,9 +728,7 @@ describe("Ghidra Windows platform support", () => {
     expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "runtime_missing",
-      reason: expect.stringContaining(
-        "Windows native controls are unavailable",
-      ),
+      reason,
       diagnostics: {
         windows_native_failure: {
           stage: "artifact",
@@ -1153,7 +1151,7 @@ describe("Ghidra client projection", () => {
       {
         operation: "list_procedures",
         input: { document: null },
-        options: {},
+        options: { decompileTimeoutSeconds: null },
       },
     ]);
     expect(result).toMatchObject({
@@ -1370,7 +1368,7 @@ describe("Ghidra decompiler failure projection", () => {
   it("reports one procedure's decompile limit as a request timeout", async () => {
     const code = "decompile_timed_out";
     const message =
-      "Ghidra decompilation of 0x401000 exceeded the 5-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS";
+      "Ghidra decompilation of 0x401000 exceeded the 5-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)";
     const ghidra = provider(
       installationHost(),
       () => ({
@@ -1433,7 +1431,7 @@ describe("Ghidra failures during cancellation cleanup", () => {
         remoteCode: "decompile_timed_out",
         projectedCode: "provider_timeout",
         message:
-          "Ghidra decompilation of 0x401000 exceeded the 5-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+          "Ghidra decompilation of 0x401000 exceeded the 5-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
       },
       {
         remoteCode: "regex_stack_exhausted",
@@ -3205,17 +3203,20 @@ describe("Ghidra deadline guidance", () => {
       "250 ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS)",
     );
     expect(projected.remediation.action).toContain(
-      "REA_GHIDRA_STARTUP_TIMEOUT_MS above 250",
+      "ghidra.startup_timeout_ms and action set above 250",
     );
     expect(projected.remediation.action).toContain(
       "REA_GHIDRA_DISABLED_ANALYZERS",
     );
-    expect(projected.remediation.action).toContain("restart REA");
-    expect(projected.remediation.action).toContain("reconnect the MCP client");
-    expect(projected.remediation.action).toContain("export useful Evidence");
-    expect(projected.remediation.action).toContain(
-      "Reopening alone keeps the current server settings",
-    );
+    expect(projected.remediation.action).toContain("without restarting REA");
+    expect(projected.remediation.action).toContain("Export useful Evidence");
+    expect(projected.details).toMatchObject({
+      limit: {
+        setting: "ghidra.startup_timeout_ms",
+        effective_value: 250,
+        applies_at: "next_startup",
+      },
+    });
     expect(projected.remediation.action).not.toContain("rea doctor");
   });
 

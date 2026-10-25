@@ -1,3 +1,4 @@
+import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -81,9 +82,9 @@ export class IdaProvider implements AnalysisProviderCandidate {
   }
   capabilities(): readonly CapabilityDescriptor[] {
     const profiles = [
-      ...idaCapabilities("attached", false, false),
-      ...idaCapabilities("attached", true, true),
-      ...idaCapabilities("headless", true, false),
+      ...idaCapabilities("attached", false, false, this.#regexLimitation()),
+      ...idaCapabilities("attached", true, true, this.#regexLimitation()),
+      ...idaCapabilities("headless", true, false, this.#regexLimitation()),
     ];
     const byOperation = new Map<string, (typeof profiles)[number][]>();
     for (const capability of profiles) {
@@ -169,6 +170,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
           config.value.mode,
           "command" in config.value,
           config.value.protocol === "native",
+          this.#regexLimitation(),
         )
       : this.capabilities();
     const registrationDiagnostics = {
@@ -235,6 +237,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
       target_kind: target.kind,
       target_format: target.format,
     };
+    if (target.format === "gamecube-dol")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
+        diagnostics,
+      };
     if (
       target.kind === "executable" &&
       (isElfMetadataArchitecture(target.architecture) ||
@@ -390,6 +400,12 @@ export class IdaProvider implements AnalysisProviderCandidate {
     const registration = await pending;
     return registration;
   }
+  #regexLimitation(): string {
+    return launchRegexMatchingLimitation(
+      this.config.regexMatchingDeadline,
+      this.config.regexWorkerHeapRequest,
+    );
+  }
   #createBoundClient(
     config: IdaConfiguration,
     target: BinaryTarget,
@@ -400,6 +416,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       target,
       this.connectionFactory(config, this.environment),
       profile,
+      this.config,
     );
   }
   #unboundClient(reason: string): AnalysisClient {
