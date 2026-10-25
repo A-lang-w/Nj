@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.8.0",
   "base": "27dc42d10249f0410904a75c0997842eb03b931c",
-  "target": "80673b22a46d01899718e22584cf95d9f0529ab7",
+  "target": "113679c9a6a1af4c77c1b546e466f4d490dc1095",
   "commits": [
     {
       "sha": "8f7d12e30d63f3d3b4cfe2a90336362841438f56",
@@ -33478,6 +33478,39 @@
         }
       ],
       "pullRequests": [7083]
+    },
+    {
+      "sha": "113679c9a6a1af4c77c1b546e466f4d490dc1095",
+      "subject": "feat(environment): serve creates whose answers show less than reads, and whole-object updates (#7080)",
+      "body": "feat(environment): serve creates whose answers show less than reads, and whole-object updates (#7080)\n\n* feat(environment): take created entities' read-backs and re-derived update members\n\n- A create's observation takes the fields the first read of its entity\n  shows that the answer lacks, and an item read's clock spellings, when the\n  read agrees with the answer otherwise. The plan records the read\n  (observation.read with its shape); an item read then observes rather than\n  checks, a list read only adds fields and still checks. Serving merges the\n  same recorded objects.\n- An update member sent back as the clock the entity held and stored as a\n  fresh clock near the call is a clock rule; one stored as the slug of\n  another member stored as sent is a slug rule. Both are accepted with any\n  value, as whole-object writes send what they read.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(environment): record the write-views verification\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(environment): reconcile write views without hiding contradictions\n\n* fix(environment): reject incompatible slug-only saves\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["80673b22a46d01899718e22584cf95d9f0529ab7"],
+      "authors": [
+        {
+          "name": "Edgar Arakelyan",
+          "email": "edgar.arakelyan@scale.com",
+          "user": {
+            "login": "earakely-scale",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Claude Opus 5.5",
+          "email": "noreply@anthropic.com",
+          "user": {
+            "login": "claude",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [7080]
     }
   ],
   "pullRequests": [
@@ -43657,6 +43690,19 @@
           }
         }
       ]
+    },
+    {
+      "number": 7080,
+      "title": "feat(environment): serve creates whose answers show less than reads, and whole-object updates",
+      "url": "https://github.com/morluto/rea/pull/7080",
+      "author": {
+        "login": "earakely-scale",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "113679c9a6a1af4c77c1b546e466f4d490dc1095"
+      },
+      "issues": []
     },
     {
       "number": 7081,
