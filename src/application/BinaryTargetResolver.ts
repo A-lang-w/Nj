@@ -66,6 +66,7 @@ import {
   hasBinaryPlistSignature,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
+import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import {
   hasZipSignature,
@@ -665,17 +666,15 @@ const detectArtifactFormat = async (
     magic.subarray(0, 4).equals(Buffer.from("xar!"))
   )
     return "pkg";
-  if (lower.endsWith(".dmg")) {
-    throwIfTargetResolutionCancelled(signal);
-    const size = initial.size;
-    if (size >= 512) {
-      const trailer = Buffer.alloc(4);
-      const read = await handle.read(trailer, 0, trailer.length, size - 512);
-      throwIfTargetResolutionCancelled(signal);
-      if (read.bytesRead === 4 && trailer.equals(Buffer.from("koly")))
-        return "dmg";
-    }
-  }
+  if (
+    lower.endsWith(".dmg") &&
+    (await hasDiskImageSignature(
+      initial.size,
+      magic.subarray(0, observed.bytesRead),
+      (position, length) => readHandleRange(handle, position, length, signal),
+    ))
+  )
+    return "dmg";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
@@ -747,7 +746,7 @@ const claimsLeadingExecutableHeader = async (
     size,
   );
 
-/** Read one bounded range, honoring cancellation around the host read. */
+/** Fill one bounded range, honoring cancellation; a short result means end of file. */
 const readHandleRange = async (
   handle: FileHandle,
   position: number,
@@ -756,9 +755,20 @@ const readHandleRange = async (
 ): Promise<Uint8Array> => {
   throwIfTargetResolutionCancelled(signal);
   const bytes = Buffer.alloc(length);
-  const observed = await handle.read(bytes, 0, length, position);
-  throwIfTargetResolutionCancelled(signal);
-  return bytes.subarray(0, observed.bytesRead);
+  let filled = 0;
+  while (filled < length) {
+    if (filled > 0) throwIfTargetResolutionCancelled(signal);
+    const observed = await handle.read(
+      bytes,
+      filled,
+      length - filled,
+      position + filled,
+    );
+    throwIfTargetResolutionCancelled(signal);
+    if (observed.bytesRead === 0) break;
+    filled += observed.bytesRead;
+  }
+  return bytes.subarray(0, filled);
 };
 
 /** Read exactly `size` bytes by offset; a short read means the file changed or ended early. */
