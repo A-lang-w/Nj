@@ -1,3 +1,5 @@
+import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
@@ -24,17 +26,31 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
+  createAppleIpsService,
+  createDevicetreeService,
+  createKernelModuleService,
+  createPeLoadConfigService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createRecordedCrashService,
+  createByteEntropyService,
+  createBinaryLayoutService,
+  pwntoolsHostSupported,
 } from "../composition/binaryDiagnostics.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
+import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
+import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
+import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
+import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
@@ -50,7 +66,6 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
-import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
 import { createGoBinaryService } from "../composition/go.js";
@@ -77,18 +92,11 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { registerFridaTools } from "./registerFridaTools.js";
-import {
-  createByteEntropyService,
-  createBinaryLayoutService,
-  pwntoolsHostSupported,
-} from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCatalogIdentity } from "../catalogIdentity.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import {
-  createToolResultDelivery,
-  type ToolResultDelivery,
-} from "./toolResult.js";
+import { createToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import {
@@ -99,7 +107,6 @@ import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
 import { isAbsolute } from "node:path";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { investigationEvidenceLookup } from "../application/investigation/InvestigationEvidence.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
@@ -184,8 +191,8 @@ import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
+  type WithAdmittedAnalysis,
 } from "./analysisAdmission.js";
-import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
@@ -469,7 +476,11 @@ export const createServer = (
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
+  const devicetree = createDevicetreeService();
   const elfNotes = createElfNotesService();
+  const appleIps = createAppleIpsService();
+  const kernelModule = createKernelModuleService();
+  const peLoadConfig = createPeLoadConfigService();
   const peCertificates = createPeCertificatesService();
   const peImports = createPeImportsService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
@@ -581,7 +592,11 @@ export const createServer = (
       gpuCodeObjects.close(),
       peResources.close(),
       nativeExports.close(),
+      devicetree.close(),
       elfNotes.close(),
+      appleIps.close(),
+      kernelModule.close(),
+      peLoadConfig.close(),
       peCertificates.close(),
       peImports.close(),
       electronFuses.close(),
@@ -650,7 +665,11 @@ export const createServer = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
+    appleIps,
+    kernelModule,
+    peLoadConfig,
     peCertificates,
     peImports,
     electronFuses,
@@ -888,7 +907,11 @@ const registerConfiguredAnalysisTools = (
     il2cppMetadata,
     peResources,
     nativeExports,
+    devicetree,
     elfNotes,
+    appleIps,
+    kernelModule,
+    peLoadConfig,
     peCertificates,
     peImports,
     pythonPyc,
@@ -950,9 +973,38 @@ const registerConfiguredAnalysisTools = (
     evidenceById,
     withAdmittedAnalysis,
   );
+  registerDevicetreeTool(
+    server,
+    devicetree,
+    toolLogger,
+    recordEvidence,
+    evidenceById,
+    withAdmittedAnalysis,
+  );
   registerElfNotesTool(
     server,
     elfNotes,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerAppleIpsTool(
+    server,
+    appleIps,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerKernelModuleTool(
+    server,
+    kernelModule,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerPeLoadConfigTool(
+    server,
+    peLoadConfig,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -1102,7 +1154,9 @@ const createSessionRecorders = (
   session: BinarySessionPort | undefined,
 ) => ({
   evidenceById:
-    session === undefined ? undefined : investigationEvidenceLookup(session),
+    session === undefined
+      ? undefined
+      : session.evidenceForAnalysis.bind(session),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -1126,7 +1180,11 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
   readonly nativeExports: NativeExportsService;
+  readonly devicetree: DevicetreeService;
   readonly elfNotes: ElfNotesService;
+  readonly appleIps: AppleIpsService;
+  readonly kernelModule: KernelModuleService;
+  readonly peLoadConfig: PeLoadConfigService;
   readonly peCertificates: PeCertificatesService;
   readonly peImports: PeImportsService;
   readonly electronFuses: ElectronFuseService;

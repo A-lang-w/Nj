@@ -681,6 +681,12 @@ search permissions (`0700`) on a directory you own before retrying.
 
 On supported Linux distributions, approved setup verifies Hopper's official
 `.deb`, `.rpm`, or Arch package before invoking the native package manager.
+On apt systems, Hopper's runtime dependencies are installed with
+`--no-upgrade` in their own transaction, so setup no longer names an
+already-installed dependency as an upgrade target. apt can still upgrade a
+package that the Hopper package or the Python library repair requires at a
+newer version. Arch's `pacman -S --needed` still updates an outdated
+dependency.
 The official release feed selects the current public demo without a version
 pin. REA verifies the package's detached PGP signature against Hopper's stable
 primary fingerprint `7C2D73BAFAF5B9A710A69DA1A26DF815099B1BCD`, then checks
@@ -744,6 +750,18 @@ Arch Linux and CachyOS, the unversioned compatibility package `zlib-ng-compat`
 may conflict with Hopper's versioned `zlib` dependency. Resolve the package
 conflict yourself, install Hopper's official package manually, or use another
 provider such as Ghidra; rerun `rea setup` after installing Hopper.
+
+If setup cannot finish releasing its resources, a normally returned structured
+result reports `needs_human` and includes `cleanup.reason` with the identified
+paths in `cleanup.resources`. A thrown typed failure reports the same retained
+paths in `details.resources`, preserving the primary failure separately. Reasons
+that do not identify a resource remain explicit without guessing paths from text.
+For in-process callers retaining REA's setup host, a successful retry of its close
+updates the original failure's cleanup state and removes released resource labels.
+Custom `SetupHost` implementations must bind returned or thrown cleanup errors
+to their resource owners to provide the same live recovery. An ownerless error
+remains an unconfirmed snapshot: `runSetup` does not observe later direct calls
+to the caller's port or replace that port's methods.
 
 The supported Linux demo forwards additional launches into its existing
 application, even across private displays. REA therefore reserves one Linux
@@ -985,9 +1003,13 @@ Target admission preserves recognized PE/NE/LE/LX signatures separately from
 reader layout support. A Windows header overlapping the first 64 DOS-header
 bytes remains an unsupported layout in this release; it is not reported as an
 invalid offset. Tiny PE files with short optional headers have additional
-unverified loader requirements. Unconfirmed nonzero DOS padding remains an
-unresolved Windows-header candidate, with independently validated DOS facts in
-the target error diagnostics; those facts do not prove a Windows header absent.
+unverified loader requirements. A nonzero Windows-header pointer without a
+recognized signature remains an unresolved candidate, with independently
+validated DOS facts in the target error diagnostics; those facts do not prove a
+Windows header absent. When a nonempty relocation table ends inside a complete
+DOS header, the remaining header bytes are DOS padding, so a nonzero dword
+there is not a Windows declaration. An unread signature beyond the current
+probe is requested before that padding rule applies.
 On Linux and macOS, `annotate_native_function` also edits a function name and/or
 entry comments atomically and returns refreshed analysis, and `set_address_name`
 and `set_addresses_names` name a function entry or any other mapped address
@@ -1445,6 +1467,13 @@ writes the same package-runner shape, or `bunx rea-agents@<version> mcp` when
 setup runs through `bunx`, and pins it to the exact version that performed
 setup. Run current setup to refresh an older registration, then restart the
 client.
+
+Package runners key their package cache by the requested spec, so the entry
+installed for the `@latest` invocation that ran setup cannot serve the pinned
+registration. Setup therefore materializes the pinned entry once, best-effort
+with a bounded timeout, before finishing. When that step cannot run, for
+example offline, the first client start performs the one-time install inside
+the client's MCP startup deadline and may need one more restart.
 
 ## Package runners and global installation
 

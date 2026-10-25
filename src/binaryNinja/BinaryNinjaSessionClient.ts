@@ -372,7 +372,8 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     args: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
   ): Promise<BinaryNinjaToolReply> {
-    if (signal?.aborted === true) throw new AnalysisCancelledError(tool);
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError(tool, { cause: signal.reason });
     return this.connection.call(tool, args, signal);
   }
 

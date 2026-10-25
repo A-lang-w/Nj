@@ -61,8 +61,7 @@ export const readProviderRegistration = <Value>(
             );
           },
         },
-        async (handle) => {
-          const metadata = await handle.stat();
+        async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
             throw registrationTooLarge();
           const bytes = Buffer.alloc(MAXIMUM_REGISTRATION_BYTES + 1);

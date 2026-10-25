@@ -58,7 +58,9 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   completeSemanticSteps,
+  isErasedJavaScriptValueChild,
   traverseJavaScriptAstSteps,
+  traverseJavaScriptValueAstSteps,
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticRequireOrigin,
@@ -67,7 +69,10 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticEffectTiming,
+  semanticEffectTimingWithinActivation,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   createAmbientPathResolver,
   indexJavaScriptAmbientWritesSteps,
@@ -75,6 +80,8 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  isTypeOnlyImportDeclaration,
+  isTypeOnlyImportSpecifier,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
@@ -229,6 +236,7 @@ const visitSemanticReferenceEffectsAtSite = (
     effect: JavaScriptSemanticReferenceEffectsAtSite["effects"][number],
   ) => boolean,
   requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
 ): Omit<JavaScriptSemanticReferenceEffectsAtSite, "effects"> => {
   const { root, path: inferredPath } = semanticReferenceRoot(referenceNode);
   const memberEffectsIndexed = indexedMemberMutationStates.has(state);
@@ -259,7 +267,7 @@ const visitSemanticReferenceEffectsAtSite = (
     return visit({
       kind,
       ...(effectPath === undefined ? {} : { path: effectPath }),
-      timing: semanticEffectTiming(site, node, state),
+      timing: effectTiming(site, node, state),
     });
   };
   if (binding !== undefined) {
@@ -328,6 +336,7 @@ const semanticReferenceEffectsAtSite = (
   site: t.Node,
   referenceNode: t.Node,
   requestedPath?: JavaScriptSemanticPropertyPath,
+  effectTiming: typeof semanticEffectTiming = semanticEffectTiming,
 ): JavaScriptSemanticReferenceEffectsAtSite => {
   const effects: JavaScriptSemanticReferenceEffectsAtSite["effects"][number][] =
     [];
@@ -340,6 +349,7 @@ const semanticReferenceEffectsAtSite = (
       return true;
     },
     requestedPath,
+    effectTiming,
   );
   return { ...metadata, effects };
 };
@@ -554,6 +564,15 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
         propertyPath,
       );
     },
+    effectsForReferenceWithinActivationAt(site, referenceNode, propertyPath) {
+      return semanticReferenceEffectsAtSite(
+        state,
+        site,
+        referenceNode,
+        propertyPath,
+        semanticEffectTimingWithinActivation,
+      );
+    },
     referenceMayHaveChangedAt(site, referenceNode, propertyPath) {
       if (!indexedMemberMutationStates.has(state)) return true;
       return referenceEffectsMayHaveChanged(
@@ -675,7 +694,7 @@ function* classifyDefinitionReceiversSteps(
     );
     if (aliasFact !== undefined) facts.set(node.start ?? -1, aliasFact);
   };
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node) => {
       classifyRpcRoot(node);
       classifyOpenReceiver(node);
@@ -882,6 +901,7 @@ export function* indexJavaScriptElectronIdentitySteps(
   };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
+    state.erasedSyntaxNodes,
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
@@ -907,7 +927,7 @@ export function* indexJavaScriptElectronIdentitySteps(
   const intactExport = (path: readonly (string | null)[]): boolean =>
     ELECTRON_MODULE.test(path[0] ?? "") &&
     !writes.covers(["electron", ...path.slice(1)]);
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node) => {
       if (
         !t.isCallExpression(node) &&
@@ -1037,6 +1057,7 @@ const createState = (
     getterResourceLimits: new Set(),
     returnedReferenceWidenings: new Set(),
     parentsByNode: new WeakMap(),
+    erasedSyntaxNodes: new WeakSet(),
     scopes: [root],
     scopesById: new Map([[root.scopeId, root]]),
     scopeByNode: new WeakMap([[program, root]]),
@@ -1109,6 +1130,13 @@ function* collectDefinitionsSteps(
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
       if (parent !== null) state.parentsByNode.set(node, parent);
+      if (
+        (parent !== null && state.erasedSyntaxNodes.has(parent)) ||
+        isErasedJavaScriptValueChild(node, parent)
+      ) {
+        state.erasedSyntaxNodes.add(node);
+        return;
+      }
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||
@@ -1423,7 +1451,7 @@ function* indexPrototypeUncertaintySteps(
     "defineProperties",
     "setPrototypeOf",
   ]);
-  yield* traverseJavaScriptAstSteps(program, {
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       const write = semanticWriteSiteTarget(node);
       if (write !== null) {
@@ -2012,7 +2040,10 @@ const bindImports = (
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
+  if (isTypeOnlyImportDeclaration(node)) return;
   for (const specifier of node.specifiers) {
+    if (t.isImportSpecifier(specifier) && isTypeOnlyImportSpecifier(specifier))
+      continue;
     const importedPath = t.isImportDefaultSpecifier(specifier)
       ? ["default"]
       : t.isImportNamespaceSpecifier(specifier)
@@ -2027,12 +2058,7 @@ const bindImports = (
       definitionNode: specifier.local,
       initializer: null,
       directOrigin: { specifier: node.source.value, importedPath },
-      runtimeImport:
-        node.importKind !== "type" &&
-        node.importKind !== "typeof" &&
-        (!t.isImportSpecifier(specifier) ||
-          (specifier.importKind !== "type" &&
-            specifier.importKind !== "typeof")),
+      runtimeImport: true,
     });
   }
 };
