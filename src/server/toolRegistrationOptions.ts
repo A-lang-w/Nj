@@ -5,37 +5,11 @@ import {
   toolOutputSchemaWithMetadata,
 } from "../contracts/toolSchemaMetadata.js";
 
-/** Preserve advertised contracts while the application owns structured input failures. */
-export const applicationValidatedInputSchema = (
-  schema: StandardSchemaWithJSON,
-): StandardSchemaWithJSON => {
-  const standard = schema["~standard"];
-  return {
-    "~standard": {
-      ...standard,
-      vendor: "rea-application",
-      // The canonical parser only chooses between the caller's bag and its
-      // JSON-text recovery, and only client-supplied bags are returned, so
-      // application-owned parsing stays in the handler.
-      validate: async (value: unknown) => {
-        const recoveredArguments = recoveredArgumentBag(value);
-        if (recoveredArguments !== undefined) {
-          const recoveredResult = await standard.validate(recoveredArguments);
-          if (!("issues" in recoveredResult))
-            return { value: recoveredArguments };
-          if ("issues" in (await standard.validate(value))) return { value };
-        }
-        return { value };
-      },
-    },
-  };
-};
-
 /** Parse structured argument text a client serialized instead of sending as JSON. */
 const structuredArgumentText = (supplied: unknown): unknown => {
   if (typeof supplied !== "string") return supplied;
   if (!supplied.startsWith("{") && !supplied.startsWith("[")) return supplied;
-  // ponytail: parse cost is bounded by the MCP request size limit
+  // The MCP request size limit bounds the parse cost.
   try {
     const parsed: unknown = JSON.parse(supplied);
     if (parsed !== null && typeof parsed === "object") return parsed;
@@ -45,10 +19,7 @@ const structuredArgumentText = (supplied: unknown): unknown => {
   return supplied;
 };
 
-/**
- * Merge JSON-text structured arguments into the supplied bag; undefined when
- * nothing needs recovery so callers keep the caller's exact bag.
- */
+/** Merge JSON-text arguments into the bag; undefined when nothing needs recovery. */
 const recoveredArgumentBag = (
   value: unknown,
 ): Record<string, unknown> | undefined => {
@@ -67,15 +38,12 @@ const recoveredArgumentBag = (
 /**
  * Recover structured arguments a client delivered as JSON text before the
  * canonical parser runs. Claude Desktop serializes array and object arguments
- * to strings (morluto/rea#3408), so every structured parameter of every tool
- * is rejected. Recovered values still face the canonical parser: JSON text a
- * string parameter accepts stays the caller's, malformed text keeps its
- * validation failure, and native JSON values are untouched. Recovery applies
- * to the argument bag as a whole, so a call that mixes recovered structured
- * arguments with JSON text a string parameter accepts keeps its rejection.
- * Application-owned validators recover through their own wrapper
- * (applicationValidatedInputSchema), which uses the same helper and keeps
- * failures in the handler.
+ * to strings (morluto/rea#3408), so structured parameters are rejected.
+ * Recovered values still face the canonical parser: JSON text a string
+ * parameter accepts stays the caller's, malformed text keeps its validation
+ * failure, and native JSON values are untouched. Recovery applies to the whole
+ * argument bag, so a call that mixes recovered structured arguments with JSON
+ * text a string parameter accepts keeps its rejection.
  */
 export const acceptStringifiedStructuredArguments = (
   schema: StandardSchemaWithJSON,
@@ -116,3 +84,30 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   outputSchema: toolOutputSchemaWithMetadata(contract),
   annotations: contract.annotations,
 });
+
+/** Register a workflow that validates raw input before effects and projects its own errors. */
+export const applicationToolRegistrationOptions = <
+  Contract extends ToolContract,
+>(
+  contract: Contract,
+) => {
+  const registration = toolRegistrationOptions(contract);
+  const standard = registration.inputSchema["~standard"];
+  const inputSchema: StandardSchemaWithJSON = {
+    "~standard": {
+      ...standard,
+      vendor: "rea-application",
+      validate: async (value: unknown) => {
+        const recoveredArguments = recoveredArgumentBag(value);
+        if (recoveredArguments !== undefined) {
+          const recoveredResult = await standard.validate(recoveredArguments);
+          if (!("issues" in recoveredResult))
+            return { value: recoveredArguments };
+        }
+        // The handler owns application parsing, so the wrapper always accepts.
+        return { value };
+      },
+    },
+  };
+  return { ...registration, inputSchema };
+};

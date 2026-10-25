@@ -1,13 +1,12 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
-  applicationValidatedInputSchema,
+  applicationToolRegistrationOptions,
   toolRegistrationOptions,
 } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -36,7 +35,7 @@ const connect = async (
     { name: "stringified-arguments", version: "1" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(undefined),
   );
   register(server, (input) => calls.push(input));
   const client = new Client({ name: "stringified-arguments", version: "1" });
@@ -60,6 +59,20 @@ const registerContractTool = (
   const { outputSchema: _contractOutput, ...config } = toolRegistrationOptions(
     toolContract(name),
   );
+  server.registerTool(name, config, (input: unknown) => {
+    record(input);
+    return { content: [] };
+  });
+};
+
+/** Register an application-validated contract without its output schema. */
+const registerApplicationTool = (
+  server: EvidenceMcpServer,
+  name: ToolName,
+  record: (input: unknown) => void,
+): void => {
+  const { outputSchema: _contractOutput, ...config } =
+    applicationToolRegistrationOptions(toolContract(name));
   server.registerTool(name, config, (input: unknown) => {
     record(input);
     return { content: [] };
@@ -127,75 +140,58 @@ describe("stringified structured tool arguments", () => {
   });
 
   it("keeps JSON-looking strings intact on application-validated registrations", async () => {
-    const { client, calls } = await connect((server, record) => {
-      server.registerTool(
-        "inspect_capture_path",
-        {
-          inputSchema: applicationValidatedInputSchema(
-            z.object({ path: z.string() }),
-          ),
-        },
-        (input: unknown) => {
-          record(input);
-          return { content: [] };
-        },
-      );
-    });
+    const { client, calls } = await connect((server, record) =>
+      registerApplicationTool(server, "inspect_web_network_capture", record),
+    );
 
     await client.callTool({
-      name: "inspect_capture_path",
-      arguments: { path: "[]" },
+      name: "inspect_web_network_capture",
+      arguments: { capture_path: "[]" },
     });
 
-    expect(calls[0]).toEqual({ path: "[]" });
+    expect(calls[0]).toEqual({ capture_path: "[]" });
   });
 
   it("recovers structured arguments on application-validated registrations", async () => {
-    const { client, calls } = await connect((server, record) => {
-      server.registerTool(
-        "inspect_capture_ordinals",
-        {
-          inputSchema: applicationValidatedInputSchema(
-            z.object({ record_ordinals: z.array(z.number()) }),
-          ),
-        },
-        (input: unknown) => {
-          record(input);
-          return { content: [] };
-        },
-      );
-    });
+    const { client, calls } = await connect((server, record) =>
+      registerApplicationTool(server, "inspect_web_network_capture", record),
+    );
 
     await client.callTool({
-      name: "inspect_capture_ordinals",
-      arguments: { record_ordinals: "[0]" },
+      name: "inspect_web_network_capture",
+      arguments: {
+        capture_path: "/captures/session.har",
+        format: "har",
+        record_ordinals: "[0]",
+      },
     });
 
-    expect(calls[0]).toEqual({ record_ordinals: [0] });
+    expect(calls[0]).toMatchObject({
+      capture_path: "/captures/session.har",
+      format: "har",
+      record_ordinals: [0],
+    });
   });
 
   it("keeps application-owned failures on the caller's original arguments", async () => {
-    const { client, calls } = await connect((server, record) => {
-      server.registerTool(
-        "inspect_capture_ordinals",
-        {
-          inputSchema: applicationValidatedInputSchema(
-            z.object({ record_ordinals: z.array(z.number()) }),
-          ),
-        },
-        (input: unknown) => {
-          record(input);
-          return { content: [] };
-        },
-      );
-    });
+    const { client, calls } = await connect((server, record) =>
+      registerApplicationTool(server, "inspect_web_network_capture", record),
+    );
 
     await client.callTool({
-      name: "inspect_capture_ordinals",
-      arguments: { record_ordinals: '{"0":0}' },
+      name: "inspect_web_network_capture",
+      arguments: {
+        capture_path: "/captures/session.har",
+        format: "har",
+        record_ordinals: '{"0":0}',
+      },
     });
 
-    expect(calls[0]).toEqual({ record_ordinals: '{"0":0}' });
+    expect(calls[0]).toMatchObject({
+      capture_path: "/captures/session.har",
+      format: "har",
+      record_ordinals: '{"0":0}',
+    });
   });
 
   it("still rejects structured text that is not JSON", async () => {
@@ -211,7 +207,7 @@ describe("stringified structured tool arguments", () => {
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain(
-      "Invalid arguments for tool capture_browser_scenario",
+      "do not match its advertised input schema",
     );
   });
 });
