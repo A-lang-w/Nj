@@ -24,7 +24,10 @@ import {
   renamedBook,
 } from "../../fixtures/environmentStateWrites.js";
 import { referencedCreateRows } from "../../fixtures/environmentStateDerivedValues.js";
-import { READ_BACK_TAG_ROWS } from "../../fixtures/environmentStateWriteViews.js";
+import {
+  READ_BACK_TAG_ROWS,
+  slugOnlySaveRows,
+} from "../../fixtures/environmentStateWriteViews.js";
 import { unsupportedInputLiteralSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
@@ -472,15 +475,28 @@ processTest(
   HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
-processTest(
-  "withholds a create from public tools when its sent reference contradicts the recorded response",
-  async ({ processes }) => {
-    const root = await createTestTempDirectory("rea-create-reference-mcp-");
-    const rows = referencedCreateRows({
+processTest.for([
+  {
+    label: "a create whose sent reference contradicts its response",
+    rows: referencedCreateRows({
       id: 1,
       name: "Different Hall",
       floor: "ground",
-    });
+    }),
+    read: "get_books",
+    write: "post_books",
+  },
+  ...[true, false].map((derivedFirst) => ({
+    label: `a slug-only edit incompatible with a derived save (derived first: ${String(derivedFirst)})`,
+    rows: slugOnlySaveRows(derivedFirst, true),
+    read: "get_tags",
+    write: "patch_tags_by_id",
+  })),
+])(
+  "withholds $label from public tools",
+  { timeout: HTTP_BOUNDARY_TIMEOUT_MS },
+  async ({ rows, read, write }, { processes }) => {
+    const root = await createTestTempDirectory("rea-create-reference-mcp-");
     const files = await writeEnvironmentServeFiles(
       root,
       environmentStateServeFixture(timedCaptureEvidence(rows)),
@@ -500,11 +516,10 @@ processTest(
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
-      expect(tools.map(({ name }) => name)).toContain("get_books");
-      expect(tools.map(({ name }) => name)).not.toContain("post_books");
+      expect(tools.map(({ name }) => name)).toContain(read);
+      expect(tools.map(({ name }) => name)).not.toContain(write);
     } finally {
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );

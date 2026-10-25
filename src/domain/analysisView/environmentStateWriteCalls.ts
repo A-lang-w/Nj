@@ -132,7 +132,7 @@ export const reconciledUpdateRule = (
   return undefined;
 };
 
-/** Whether a rule a later call showed gives an earlier call a value other than the one it showed for a field it did not send. */
+/** Whether a later rule reproduces earlier calls, including echoes promoted to derivations. */
 export const contradictsEarlierCalls = (
   draft: {
     readonly plan: { readonly rules: readonly FieldRule[] };
@@ -177,9 +177,12 @@ export const contradictsEarlierCalls = (
         );
       }
       const from = rule.rule === "slug" ? sent.get(rule.from) : undefined;
+      // A slug rule runs only when its source is sent; otherwise serving keeps the field.
       return (
-        typeof from === "string" &&
-        !sameObserved(observation, observedValue(slugOf(from)))
+        rule.rule === "slug" &&
+        (typeof from === "string"
+          ? !sameObserved(observation, observedValue(slugOf(from)))
+          : !kept.includes(rule.field))
       );
     });
   });

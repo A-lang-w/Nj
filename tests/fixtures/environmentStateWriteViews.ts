@@ -236,6 +236,27 @@ export const slugSaveRows = (
   ];
 };
 
+/** A slug-only PATCH and a save that demonstrates deriving the slug from the name. */
+export const slugOnlySaveRows = (
+  derivedFirst: boolean,
+  changed: boolean,
+): readonly TimedCaptureRow[] =>
+  slugSaveRows(derivedFirst, changed).map(
+    ([method, path, body = null, status, request, ...rest]): TimedCaptureRow =>
+      method === "PUT"
+        ? [
+            "PATCH",
+            path,
+            body,
+            status ?? 200,
+            path === "/api/tags/1"
+              ? { slug: changed ? "custom" : "lamp-oil" }
+              : request,
+            ...rest,
+          ]
+        : [method, path, body, status ?? 200, request, ...rest],
+  );
+
 /** One whole-object save falls in its held clock's second; the other visibly stamps a fresh clock. */
 export const clockSaveRows = (
   derivedFirst: boolean,

@@ -12,6 +12,7 @@ import {
   STALE_SLUG_ROWS,
   clockSaveRows,
   slugSaveRows,
+  slugOnlySaveRows,
 } from "../../../tests/fixtures/environmentStateWriteViews.js";
 import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
 
@@ -98,6 +99,20 @@ describe("creates whose answer shows the entity otherwise than reads do", () => 
 });
 
 describe("whole-object updates that send back what the application derives", () => {
+  it.each([
+    [true, true],
+    [false, true],
+    [true, false],
+    [false, false],
+  ] as const)(
+    "checks slug-only saves too (derived first: %s, changed: %s)",
+    (derivedFirst, changed) => {
+      expect(
+        planOf(slugOnlySaveRows(derivedFirst, changed), "patch_tags_by_id")
+          .served,
+      ).toBe(!changed);
+    },
+  );
   it.each([true, false])(
     "reconciles slug saves in either order (derived first: %s)",
     (derivedFirst) => {
