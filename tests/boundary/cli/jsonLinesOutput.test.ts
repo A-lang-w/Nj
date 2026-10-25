@@ -119,43 +119,216 @@ describe("row-oriented CLI JSON Lines", () => {
   );
 });
 
-describe("JSON Lines admission and selection", () => {
+const selectionRefusal = (
+  stream: ReturnType<typeof capture>,
+  option: "format" | "filter-output",
+  observation: string,
+) => {
+  const error = stream.output.error;
+  expect(lines(stream.text())).toEqual([jsonLinesErrorRecord(error)]);
+  // A completed analysis refused only by the output selection is the caller's
+  // request to change, not unreadable provider output needing rea doctor.
+  expect(error).toEqual({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining(observation),
+    retryable: false,
+    remediation: {
+      action:
+        "Use --format json for the complete document, or select one record collection with --filter-output.",
+    },
+    recovery: { kind: "inspect_input_contract", operation: "fixture" },
+    details: {
+      operation: "fixture",
+      issues: [
+        { path: [option], reason: "invalid_value", message: observation },
+      ],
+    },
+  });
+  expect(error?.message.startsWith(observation)).toBe(true);
+  expect(error?.message).not.toContain("rea doctor");
+};
+
+describe("JSON Lines selection refusals", () => {
   it.each([
-    null,
-    {},
-    "scalar",
-    { rows: [], items: [] },
-    { rows: [], normalized_result: { rows: [] } },
-    Object.create({ rows: [{ inherited: true }] }),
-    { rows: [{ $rea: "collision" }] },
+    [
+      null,
+      "The command result is not a JSON Lines record collection: it is null without a rows, items, records, or occurrences array.",
+    ],
+    [
+      {},
+      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
+    ],
+    [
+      "scalar",
+      "The command result is not a JSON Lines record collection: it is a string without a rows, items, records, or occurrences array.",
+    ],
+    [
+      { normalized_result: { schema: { tables: [{ name: "t" }] } } },
+      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
+    ],
+    [
+      { rows: null, page: { items: 3 } },
+      "The command result is not a JSON Lines record collection: rows is null; page.items is a number.",
+    ],
+    [
+      { normalized_result: { rows: { columns: ["a"], values: [[1]] } } },
+      "The command result is not a JSON Lines record collection: normalized_result.rows is an object.",
+    ],
+    [
+      { rows: [], items: [] },
+      "The command result is not one JSON Lines record collection: it contains rows, items.",
+    ],
+    [
+      { rows: [], normalized_result: { page: { records: [] } } },
+      "The command result is not one JSON Lines record collection: it contains rows, normalized_result.page.records.",
+    ],
+    [
+      Object.create({ rows: [{ inherited: true }] }),
+      "The command result is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
+    ],
+    [
+      { rows: [{ id: 1 }, { $rea: "collision" }] },
+      "Record 1 of rows has a top-level $rea field, which JSON Lines reserves for control records.",
+    ],
+    [
+      [{ $rea: "collision" }],
+      "Record 0 of the top-level array has a top-level $rea field, which JSON Lines reserves for control records.",
+    ],
   ])(
-    "refuses an unclear or reserved boundary before writing rows: %j",
-    async (value) => {
+    "refuses an unclear or reserved boundary as a caller selection before writing rows: %j",
+    async (value, observation) => {
       const stream = capture(["--format", "jsonl", "--token-count"]);
       await stream.output.write(value, metadata);
-      expect(lines(stream.text())).toEqual([
-        jsonLinesErrorRecord(stream.output.error),
-      ]);
-      expect(stream.output.error?.code).toBe("unreadable_output");
+      selectionRefusal(stream, "format", observation);
     },
   );
 
-  it.each(["missing", "count", "nested.value"])(
-    "does not admit a scalar/missing selection merely because a filter exists: %s",
-    async (filter) => {
-      const stream = capture(["--format", "jsonl", "--filter-output", filter]);
+  it.each([
+    [
+      [],
+      "The command result is not a JSON Lines record collection: data.normalized_result.rows is null.",
+    ],
+    [
+      ["--filter-output", "normalized_result.missing"],
+      "The --filter-output selection normalized_result.missing is not a JSON Lines record collection: it selects no value.",
+    ],
+  ])(
+    "names the enveloped boundary or result-relative selection with --full-output: %j",
+    async (filter, observation) => {
+      const stream = capture(["--format", "jsonl", "--full-output", ...filter]);
       await stream.output.write(
-        { rows: [{ id: 1 }], count: 0, nested: { value: null } },
+        { evidence_id: "ev:parent", normalized_result: { rows: null } },
         metadata,
       );
-      expect(lines(stream.text())).toHaveLength(1);
-      expect(lines(stream.text())[0]).toMatchObject({
-        $rea: "jsonl/v1",
-        type: "error",
-        result: { code: "unreadable_output" },
+      expect(lines(stream.text())).toEqual([
+        jsonLinesErrorRecord({
+          ok: false,
+          error: stream.output.error,
+          meta: { command: "fixture", duration: "1ms" },
+        }),
+      ]);
+      expect(stream.output.error).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ message: observation }] },
       });
     },
   );
+
+  it.each([
+    [
+      "missing",
+      "The --filter-output selection missing is not a JSON Lines record collection: it selects no value.",
+    ],
+    [
+      "count",
+      "The --filter-output selection count is not a JSON Lines record collection: it is a number.",
+    ],
+    [
+      "nested.value",
+      "The --filter-output selection nested.value is not a JSON Lines record collection: it is null.",
+    ],
+    [
+      "nested.absent",
+      "The --filter-output selection nested.absent is not a JSON Lines record collection: it selects no value.",
+    ],
+    [
+      "nested.list[0,1]",
+      "The --filter-output selection nested.list is not a JSON Lines record collection: it is an array outside a record collection boundary.",
+    ],
+    [
+      "table",
+      "The --filter-output selection table is not a JSON Lines record collection: it is an object.",
+    ],
+    [
+      "table.values",
+      "The --filter-output selection table.values is not a JSON Lines record collection: it is an array outside a record collection boundary.",
+    ],
+    [
+      "rows,items",
+      "The --filter-output selection rows, items is not one JSON Lines record collection: it contains rows, items.",
+    ],
+    [
+      "count,nested",
+      "The --filter-output selection count, nested is not a JSON Lines record collection: it is an object without a rows, items, records, or occurrences array.",
+    ],
+  ])(
+    "does not admit a selection merely because a filter exists: %s",
+    async (filter, observation) => {
+      const stream = capture(["--format", "jsonl", "--filter-output", filter]);
+      await stream.output.write(
+        {
+          rows: [{ id: 1 }],
+          items: [{ id: 2 }],
+          count: 0,
+          nested: { value: null, list: [1, 2] },
+          table: {
+            columns: ["id"],
+            values: [[{ type: "integer", value: "1" }]],
+          },
+        },
+        metadata,
+      );
+      selectionRefusal(stream, "filter-output", observation);
+    },
+  );
+});
+
+describe("JSON Lines admission and selection", () => {
+  it.each([
+    { value: [1, "two", null, false, [3]] },
+    { value: { rows: [1, "two", null, false, [3]] } },
+  ])(
+    "emits primitive and array records verbatim, one per line: %j",
+    async ({ value }) => {
+      const stream = capture(["--format", "jsonl"]);
+      await stream.output.write(value, metadata);
+      const records = lines(stream.text());
+      expect(records.slice(0, 5)).toEqual([1, "two", null, false, [3]]);
+      expect(records.length).toBe(Array.isArray(value) ? 5 : 6);
+      expect(stream.output.error).toBeUndefined();
+    },
+  );
+
+  it("emits no lines for an empty top-level array and only metadata for an empty collection", async () => {
+    const bare = capture(["--format", "jsonl"]);
+    await bare.output.write([], metadata);
+    expect(bare.text()).toBe("");
+    expect(bare.output.error).toBeUndefined();
+    const wrapped = capture(["--format", "jsonl"]);
+    await wrapped.output.write(
+      { items: [], coverage: { examined: 0 } },
+      metadata,
+    );
+    expect(lines(wrapped.text())).toEqual([
+      {
+        $rea: "jsonl/v1",
+        type: "metadata",
+        records: { path: ["items"], emitted: 0, source: 0 },
+        context: { coverage: { examined: 0 } },
+      },
+    ]);
+  });
 
   it("records output selection separately from source coverage and keeps provenance", async () => {
     const value = {

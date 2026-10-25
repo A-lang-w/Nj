@@ -401,7 +401,11 @@ cliTest(
       $rea: "jsonl/v1",
       type: "error",
       result: {
-        code: "unreadable_output",
+        code: "invalid_request",
+        category: "invalid_input",
+        message: expect.stringContaining(
+          "The --filter-output selection operation is not a JSON Lines record collection",
+        ),
         remediation: { action: expect.stringContaining("--format json") },
       },
     });

@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { expect } from "vitest";
 
@@ -87,6 +88,104 @@ cliTest(
       // convenient fields from a shortened view-shaped object.
       expect(parseEvidence(reconstructed)).toEqual(expected);
       expect(records.length).toBe(where === undefined ? 1 : 0);
+    }
+
+    // The documented disambiguating selection exports the same view rows.
+    const selected = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        requestPath,
+        "--format",
+        "jsonl",
+        "--filter-output",
+        "normalized_result.rows",
+      ],
+    });
+    expect(selected.exitCode, selected.stderr).toBe(0);
+    expect(
+      selected.stdout
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .at(-1),
+    ).toMatchObject({
+      type: "metadata",
+      records: {
+        path: ["normalized_result", "rows"],
+        filter: "normalized_result.rows",
+      },
+    });
+  },
+);
+
+cliTest(
+  "refuses non-record SQLite selections as caller output errors while the analysis succeeds",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-json-lines-sqlite-");
+    const path = join(root, "config.sqlite");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        "CREATE TABLE configInts(name TEXT PRIMARY KEY, value INTEGER); INSERT INTO configInts VALUES ('a', 1), ('b', 2);",
+      );
+    } finally {
+      database.close();
+    }
+    const table = ["--table", "configInts", "--row-limit", "3"];
+    const json = await cli.run({
+      arguments: ["inspect-sqlite-database", path, ...table, "--json"],
+    });
+    expect(json.exitCode, json.stderr).toBe(0);
+    for (const [selection, option, observation] of [
+      [
+        [],
+        "format",
+        "The command result is not a JSON Lines record collection: normalized_result.rows is null.",
+      ],
+      [
+        [...table, "--filter-output", "normalized_result.rows"],
+        "filter-output",
+        "The --filter-output selection normalized_result.rows is not a JSON Lines record collection: normalized_result.rows is an object.",
+      ],
+      [
+        ["--filter-output", "normalized_result.schema.tables"],
+        "filter-output",
+        "The --filter-output selection normalized_result.schema.tables is not a JSON Lines record collection: it is an array outside a record collection boundary.",
+      ],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-sqlite-database",
+          path,
+          ...selection,
+          "--format",
+          "jsonl",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout.trimEnd().split("\n")).toHaveLength(1);
+      expect(result.json).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "error",
+        ok: false,
+        result: {
+          code: "invalid_request",
+          category: "invalid_input",
+          message: expect.stringContaining(observation),
+          retryable: false,
+          remediation: {
+            action:
+              "Use --format json for the complete document, or select one record collection with --filter-output.",
+          },
+          details: {
+            operation: "inspect-sqlite-database",
+            issues: [
+              { path: [option], reason: "invalid_value", message: observation },
+            ],
+          },
+        },
+      });
+      expect(result.stdout).not.toContain("rea doctor");
     }
   },
 );
