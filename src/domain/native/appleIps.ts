@@ -327,7 +327,8 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
     for (const frame of thread.frames)
       bytes +=
         appleIpsIntegerTextBytes(frame.image_offset) +
-        appleIpsIntegerTextBytes(frame.runtime_address);
+        appleIpsIntegerTextBytes(frame.runtime_address) +
+        appleIpsIntegerTextBytes(frame.symbol_location);
   }
   for (const mismatch of report.coverage.type_mismatches)
     bytes += 2 * (mismatch.recorded_integer?.length ?? 0);
