@@ -51,15 +51,15 @@ Ghidra imports a private snapshot with `BinaryLoader` and these generic
 languages and compiler specifications. Each family has one fixed byte order:
 m68k is big-endian and the others are little-endian.
 
-| architecture                       | language_id           | compiler_spec_id |
-| ---------------------------------- | --------------------- | ---------------- |
-| x86                                | `x86:LE:32:default`   | `gcc`            |
-| x86_64                             | `x86:LE:64:default`   | `gcc`            |
-| arm                                | `ARM:LE:32:v7`        | `default`        |
-| arm, `processor_variant: cortex-m` | `ARM:LE:32:Cortex`    | `default`        |
-| arm64                              | `AARCH64:LE:64:v8A`   | `default`        |
-| 6502                               | `6502:LE:16:default`  | `default`        |
-| m68k                               | `68000:BE:32:default` | `default`        |
+| architecture | processor_variant | language_id           | compiler_spec_id |
+| ------------ | ----------------- | --------------------- | ---------------- |
+| x86          | —                 | `x86:LE:32:default`   | `gcc`            |
+| x86_64       | —                 | `x86:LE:64:default`   | `gcc`            |
+| arm          | —                 | `ARM:LE:32:v7`        | `default`        |
+| arm          | `cortex-m`        | `ARM:LE:32:Cortex`    | `default`        |
+| arm64        | —                 | `AARCH64:LE:64:v8A`   | `default`        |
+| 6502         | —                 | `6502:LE:16:default`  | `default`        |
+| m68k         | —                 | `68000:BE:32:default` | `default`        |
 
 Compiler specifications select analysis conventions; they do not identify the
 original compiler or ABI of a headerless target. Ghidra's x86 languages do not
