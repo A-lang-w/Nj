@@ -10,20 +10,13 @@ import {
   execFileFailureCapturedOutput,
   ExecFileOutputCancelledError,
   execFileOutputFailure,
+  spawnCapacityExhausted,
 } from "../process/ExecFileOutput.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { isUnresolvedPathErrorCode } from "../filesystem/RegularFile.js";
-
-/** Spawn errnos reporting exhausted host capacity rather than an unusable path. */
-const HOST_SPAWN_CAPACITY_ERRORS: ReadonlySet<string> = new Set([
-  "EAGAIN",
-  "EMFILE",
-  "ENFILE",
-  "ENOMEM",
-]);
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -197,7 +190,7 @@ export const inspectAdbClient = async (
         );
       // The host lacked process, memory or descriptor capacity; the selected
       // path is not the cause.
-      if (HOST_SPAWN_CAPACITY_ERRORS.has(code))
+      if (spawnCapacityExhausted(failure))
         throw new AdbConfigurationFailure(
           "binary_not_executable",
           `The host could not start the selected adb binary (${code}): ${selection.binary}`,

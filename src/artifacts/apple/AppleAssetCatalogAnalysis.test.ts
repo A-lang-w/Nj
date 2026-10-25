@@ -488,6 +488,10 @@ it.each([
   ["EACCES", "AnalysisCapabilityUnavailableError"],
   ["EPERM", "AnalysisCapabilityUnavailableError"],
   ["ENOTDIR", "AnalysisCapabilityUnavailableError"],
+  ["EAGAIN", "AnalysisResourceConstraintError"],
+  ["EMFILE", "AnalysisResourceConstraintError"],
+  ["ENFILE", "AnalysisResourceConstraintError"],
+  ["ENOMEM", "AnalysisResourceConstraintError"],
   ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "AnalysisResourceConstraintError"],
   [1, "AnalysisOutputError"],
 ] as const)(
@@ -501,9 +505,18 @@ it.each([
       stderr: "specific catalog diagnostic",
       signal: code === "ETIMEDOUT" ? "SIGTERM" : null,
       // execFileOutput marks a command that never started.
-      ...((["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const).some(
-        (spawnCode) => spawnCode === code,
-      )
+      ...((
+        [
+          "ENOENT",
+          "EACCES",
+          "EPERM",
+          "ENOTDIR",
+          "EAGAIN",
+          "EMFILE",
+          "ENFILE",
+          "ENOMEM",
+        ] as const
+      ).some((spawnCode) => spawnCode === code)
         ? { spawnFailed: true }
         : {}),
     });
@@ -522,6 +535,11 @@ it.each([
       diagnostics: { catalog_path: "Assets.car" },
       capturedOutput: { stderr: "specific catalog diagnostic" },
       ...(code === "ETIMEDOUT" ? { timeoutMs: 60000 } : {}),
+      // Host capacity is retryable and never marks assetutil unavailable.
+      ...(tag === "AnalysisResourceConstraintError" &&
+      code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? { resource: "capacity", retryable: true }
+        : {}),
     });
   },
 );

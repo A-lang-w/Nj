@@ -306,3 +306,33 @@ it("reports an adb that never started without claiming an exit code", async () =
   if (result.ok) throw new Error("Expected an adb start failure");
   expect(result.error.message).not.toContain("exited with code");
 });
+
+it("reports exhausted host capacity rather than an adb protocol failure", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EAGAIN"), {
+      code: "EAGAIN",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    "/host/adb",
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      retryable: true,
+      reportedLimits: { spawn_error: "EAGAIN" },
+    },
+  });
+});

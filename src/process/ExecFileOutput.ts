@@ -129,6 +129,26 @@ export const execFileOutputFailure = (
   };
 };
 
+/** Spawn errnos reporting exhausted host capacity rather than an unusable command. */
+const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
+  "EAGAIN",
+  "EMFILE",
+  "ENFILE",
+  "ENOMEM",
+]);
+
+/**
+ * Whether the command never started because the host lacked process, memory
+ * or file-descriptor capacity. The command itself may be usable; a retry after
+ * capacity is freed can succeed.
+ */
+export const spawnCapacityExhausted = (
+  failure: ExecFileOutputFailure | undefined,
+): boolean =>
+  failure?.spawnFailed === true &&
+  typeof failure.code === "string" &&
+  HOST_SPAWN_CAPACITY_CODES.has(failure.code);
+
 /** Project admitted command failure facts without reinterpreting failure policy. */
 export const execFileFailureCapturedOutput = (
   failure: ExecFileOutputFailure,
