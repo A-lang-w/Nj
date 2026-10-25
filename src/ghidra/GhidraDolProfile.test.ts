@@ -176,6 +176,29 @@ describe("GameCube DOL Ghidra profile", () => {
     });
   });
 
+  it("names only the language when a compiler spec accompanies a conflicting language", async () => {
+    const ghidra = new GhidraProvider(
+      await installedConfig({
+        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+        REA_GHIDRA_COMPILER_SPEC_ID: "gcc",
+      }),
+      silentLogger,
+      {},
+      host,
+    );
+    const resolved = await ghidra.resolveAnalysisProfile(await dolTarget());
+    if (resolved.ok) throw new Error("expected an override conflict");
+    // DOL accepts a compiler-spec override, so only the language is blamed.
+    expect(projectAnalysisError(resolved.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          expect.objectContaining({ setting: "REA_GHIDRA_LANGUAGE_ID" }),
+        ],
+      },
+    });
+  });
+
   it("does not admit DOL through Windows Ghidra P0", async () => {
     const windows = new GhidraProvider(
       configFor({}),
