@@ -227,7 +227,7 @@ describe("ZIP Zstandard member streams", () => {
       const conversions = vi
         .spyOn(Duplex, "toWeb")
         .mockImplementation((stream, options) => {
-          decoders.push(stream);
+          if (stream instanceof Duplex) decoders.push(stream);
           return toWeb(stream, options);
         });
       onTestFinished(() => conversions.mockRestore());
