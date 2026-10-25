@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { lstat, writeFile } from "node:fs/promises";
+import { lstat, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { classifyAndHashRoot } from "../../fixtures/artifactInventory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
@@ -96,7 +97,7 @@ it.each([false, true])(
   },
 );
 
-it("classifies root ASAR, UDIF and raw DMG signatures across controlled short reads and closes the descriptor", async () => {
+it("classifies root ASAR, UDIF and raw DMG signatures across controlled short reads at both boundaries and closes the descriptor", async () => {
   const root = await createTestTempDirectory("rea-root-short-read-signature-");
   const compactPath = join(root, "compact.asar");
   const asarPath = join(root, "whitespace.asar");
@@ -116,11 +117,12 @@ it("classifies root ASAR, UDIF and raw DMG signatures across controlled short re
   await writeFile(asarPath, asarBytes);
   await writeFile(compactPath, compactBytes);
   await writeFile(dmgPath, dmgBytes);
-  let openedPath: string | undefined;
+  let openedPaths: readonly string[] = [];
   const descriptors: FileHandle[] = [];
   let largestActualRead = 0;
   injected.opened = (candidate, handle) => {
-    if (candidate !== openedPath) return;
+    if (typeof candidate !== "string" || !openedPaths.includes(candidate))
+      return;
     descriptors.push(handle);
     const nativeRead = handle.read.bind(handle);
     const readAtMostThreeBytes = async (
@@ -148,7 +150,8 @@ it("classifies root ASAR, UDIF and raw DMG signatures across controlled short re
     [dmgPath, dmgBytes, "dmg"],
     [rawDmgPath, rawDmgBytes, "dmg"],
   ] as const) {
-    openedPath = path;
+    // Target admission opens the canonical path; inventory opens the input.
+    openedPaths = [path, await realpath(path)];
     descriptors.length = 0;
     largestActualRead = 0;
     const result = await classifyAndHashRoot(path, false, await lstat(path));
@@ -161,5 +164,16 @@ it("classifies root ASAR, UDIF and raw DMG signatures across controlled short re
     expect(largestActualRead).toBeLessThanOrEqual(3);
     expect(descriptors).toHaveLength(1);
     expect(descriptors[0]?.fd).toBe(-1);
+
+    // Target admission must observe the same signature under short reads.
+    descriptors.length = 0;
+    largestActualRead = 0;
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format },
+    });
+    expect(descriptors.length).toBeGreaterThan(0);
+    expect(largestActualRead).toBeGreaterThan(0);
+    expect(largestActualRead).toBeLessThanOrEqual(3);
   }
 });

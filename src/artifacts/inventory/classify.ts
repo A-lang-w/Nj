@@ -173,7 +173,7 @@ const classifyRootFormat = async (
   };
   if (
     lower.endsWith(".dmg") &&
-    (await hasDiskImageSignature(archiveBytes, evidence.prefix, read))
+    (await hasDiskImageSignature(archiveBytes, read))
   )
     return "dmg";
   if (await locateGodotPck(handle, archiveBytes, signal, evidence.prefix))

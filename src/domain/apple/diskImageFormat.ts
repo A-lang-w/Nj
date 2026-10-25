@@ -5,6 +5,8 @@ const UDIF_TRAILER_SIGNATURE = Buffer.from("koly");
 const GPT_HEADER_SIGNATURE = Buffer.from("EFI PART");
 const GPT_REVISION_1_0 = 0x0001_0000;
 const HFS_PLUS_HEADER_END = 1028;
+/** Leading bytes covering every raw layout signature below. */
+const RAW_SIGNATURE_PREFIX_BYTES = HFS_PLUS_HEADER_END;
 
 /**
  * Recognize Apple disk images by structure, not by name or mountability.
@@ -12,15 +14,14 @@ const HFS_PLUS_HEADER_END = 1028;
  * UDIF images carry a `koly` trailer. Raw images (UDRW, UDTO and other
  * `CRawDiskImage` formats) are plain device bytes, so they are recognized by
  * the partition map or the HFS+ volume header that `hdiutil` writes. This
- * establishes neither integrity nor that the image will mount. `prefix` holds
- * the leading bytes; signatures beyond its length are not observed.
+ * establishes neither integrity nor that the image will mount. `read` must
+ * fill each range; a short result means end of file.
  */
 export const hasDiskImageSignature = async (
   size: number,
-  prefix: Uint8Array,
   read: PositionalRead,
 ): Promise<boolean> => {
-  if (!Number.isSafeInteger(size)) return false;
+  if (!Number.isSafeInteger(size) || size <= 0) return false;
   if (size >= UDIF_TRAILER_BYTES) {
     const trailer = await read(
       size - UDIF_TRAILER_BYTES,
@@ -28,8 +29,9 @@ export const hasDiskImageSignature = async (
     );
     if (Buffer.from(trailer).equals(UDIF_TRAILER_SIGNATURE)) return true;
   }
+  // Read the exact window here so every caller observes the same bytes.
   return hasRawDiskImageSignature(
-    Buffer.from(prefix.buffer, prefix.byteOffset, prefix.byteLength),
+    Buffer.from(await read(0, Math.min(size, RAW_SIGNATURE_PREFIX_BYTES))),
   );
 };
 
