@@ -212,17 +212,19 @@ it("returns a directly usable partial analysis reference for an oversized timeou
     const partial = retainedEvidenceReferenceSchema.parse(
       error.details?.partial_observation,
     );
-    expect(error.message).toContain("analysis_timeout_ms");
-    expect(error.remediation.action).toContain("Increase analysis_timeout_ms");
-    expect(error.remediation.action).toContain("--analysis-timeout-ms");
-    expect(error.remediation.action).toContain(
-      "rea analyze-javascript-application",
-    );
-    expect(error.remediation.action).toContain("empty array is invalid");
-    expect(error.remediation.action).toContain("not analysis work");
-    expect(error.remediation.action).toContain(
-      "not a prerequisite for a corrected retry",
-    );
+    expect(error.details).toMatchObject({
+      limit: {
+        setting: "javascript.analysis_timeout_ms",
+        effective_value: 1,
+        parameter: "analysis_timeout_ms",
+        unit: "ms",
+        minimum: 1,
+        maximum: 2_147_483_647,
+        applies_at: "next_operation",
+        agent_editable: true,
+        rea_restart_required: false,
+      },
+    });
     expect(error.recovery).toEqual({
       kind: "inspect_timeout_state",
       operation: "analyze_javascript_application",

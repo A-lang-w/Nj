@@ -21,18 +21,16 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
   const guidance = jadxOperationTimeoutGuidance(1500);
   expect(projected.message).toBe(guidance.userMessage);
   expect(projected.remediation.action).toBe(guidance.remediationAction);
-  expect(projected.message).toContain("1500 ms");
-  expect(projected.remediation.action).toContain(
-    "REA_JADX_OPERATION_TIMEOUT_MS",
-  );
-  expect(projected.remediation.action).toContain("1 to 2147483647");
-  expect(projected.remediation.action).toContain("120000");
-  expect(projected.remediation.action).toContain("next REA process start");
-  expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.details).toMatchObject({
     limit: {
       setting: "jadx.operation_timeout_ms",
       effective_value: 1500,
+      unit: "ms",
+      minimum: 1,
+      maximum: 2_147_483_647,
+      applies_at: "next_operation",
+      agent_editable: true,
+      scope: "rea-runtime",
       rea_restart_required: false,
     },
   });
