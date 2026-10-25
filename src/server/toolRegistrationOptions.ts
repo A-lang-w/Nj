@@ -52,17 +52,29 @@ export const acceptStringifiedStructuredArguments = (
   if (standard === undefined || typeof standard.validate !== "function")
     return schema;
   if (standard.vendor === "rea-application") return schema;
+  const select = (
+    parsedResult: Awaited<ReturnType<typeof standard.validate>>,
+    value: unknown,
+  ) => {
+    if (!("issues" in parsedResult)) return parsedResult;
+    const unchangedResult = standard.validate(value);
+    if (unchangedResult instanceof Promise) {
+      return unchangedResult.then((result) =>
+        "issues" in result ? parsedResult : result,
+      );
+    }
+    return "issues" in unchangedResult ? parsedResult : unchangedResult;
+  };
   return {
     "~standard": {
       ...standard,
-      validate: async (value: unknown) => {
+      validate: (value: unknown) => {
         const recoveredArguments = recoveredArgumentBag(value);
         if (recoveredArguments === undefined) return standard.validate(value);
-        const parsedResult = await standard.validate(recoveredArguments);
-        if (!("issues" in parsedResult)) return parsedResult;
-        const unchangedResult = await standard.validate(value);
-        if (!("issues" in unchangedResult)) return unchangedResult;
-        return parsedResult;
+        const parsedResult = standard.validate(recoveredArguments);
+        return parsedResult instanceof Promise
+          ? parsedResult.then((result) => select(result, value))
+          : select(parsedResult, value);
       },
     },
   };
