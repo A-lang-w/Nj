@@ -271,6 +271,7 @@ const regexFixture = async (deadlineMs = 5000) => {
   return {
     producer,
     client: selected.value.createClient(target, selected.value.profile),
+    profile: selected.value.profile,
   };
 };
 
@@ -378,3 +379,25 @@ describe.each(["search_procedures", "search_strings"] as const)(
     );
   },
 );
+
+it("keeps the bound analysis profile on partial Evidence after a failed read", async () => {
+  const { client, producer, profile } = await regexFixture();
+  producer.beforeCall = (name) => {
+    if (name === "bn_function_list")
+      producer.rawBytes = Buffer.from(producer.rawBytes).fill(0, 0, 4);
+  };
+  try {
+    const result = await client.execute("list_procedures", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        partialObservation: {
+          analysis_profile: profile,
+          normalized_result: { status: "partial" },
+        },
+      },
+    });
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});

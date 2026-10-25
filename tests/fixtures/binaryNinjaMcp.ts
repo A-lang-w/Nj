@@ -381,9 +381,19 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
         bytes = this.rawBytes.subarray(start, start + length);
       else {
         const value = this.strings.find(
-          (entry) => entry.address === args.address,
+          (entry) =>
+            BigInt(String(args.address)) >= BigInt(entry.address) &&
+            BigInt(String(args.address)) <
+              BigInt(entry.address) + BigInt(entry.bytes.length),
         );
-        bytes = (value?.bytes ?? Buffer.alloc(0)).subarray(0, length);
+        const offset =
+          value === undefined
+            ? 0
+            : Number(BigInt(String(args.address)) - BigInt(value.address));
+        bytes = (value?.bytes ?? Buffer.alloc(0)).subarray(
+          offset,
+          offset + length,
+        );
       }
       return this.#structured({
         address: String(args.address),

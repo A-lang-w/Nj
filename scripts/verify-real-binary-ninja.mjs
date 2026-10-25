@@ -334,7 +334,10 @@ const mcp = async (cliDossier) => {
       report.checks.push(
         "second-function pseudocode identity and return to the original function",
       );
-    }
+    } else
+      report.unverified.push(
+        "Function switching: no second procedure and marker supplied.",
+      );
     const invalid = await client.callTool({
       name: "xrefs",
       arguments: { address: "not-an-address" },
@@ -351,9 +354,15 @@ const mcp = async (cliDossier) => {
     );
   } finally {
     const completedPhase = phase;
-    if (opened) await call("close_binary", {});
-    await client.close();
-    phase = completedPhase;
+    try {
+      if (opened) await call("close_binary", {});
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        phase = completedPhase;
+      }
+    }
   }
 };
 /** Call sites Binary Ninja reported for the callers of an entry, read from their Evidence. */

@@ -412,3 +412,95 @@ describe("Binary Ninja relationships, strings and dossiers", () => {
     expect(producer.calls).toHaveLength(0);
   });
 });
+
+describe("Binary Ninja long strings", () => {
+  it.each(["AsciiString", "Utf8String", "Utf16String"])(
+    "reads complete %s values across memory-read boundaries",
+    async (type) => {
+      const { client, producer } = await fixture();
+      const text =
+        "a".repeat(type === "Utf16String" ? 32767 : 65535) + "éneedle";
+      const bytes = Buffer.from(
+        text,
+        type === "Utf16String"
+          ? "utf16le"
+          : type === "Utf8String"
+            ? "utf8"
+            : "latin1",
+      );
+      producer.strings = [{ address: "0x500000", type, bytes }];
+      try {
+        const listed = await value(client, "list_strings");
+        expect(listed.result).toEqual([{ address: "0x500000", value: text }]);
+        expect(
+          (await value(client, "search_strings", { pattern: "needle" })).result,
+        ).toEqual(listed.result);
+        const reads = producer.calls.filter(
+          ({ name, args }) =>
+            name === "bn_memory_read" &&
+            BigInt(String(args.address)) >= 0x500000n,
+        );
+        expect(reads.map(({ args }) => args.length)).toEqual([
+          65536,
+          bytes.length - 65536,
+          65536,
+          bytes.length - 65536,
+        ]);
+        expect(reads.map(({ args }) => args.address)).toEqual([
+          "0x500000",
+          "0x510000",
+          "0x500000",
+          "0x510000",
+        ]);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
+
+  it.each(["short read", "cancellation"])(
+    "rejects a long string on a later-chunk %s and closes cleanly",
+    async (failure) => {
+      const { client, producer } = await fixture();
+      const original = Buffer.from("a".repeat(65536) + "tail");
+      producer.strings = [
+        { address: "0x500000", type: "AsciiString", bytes: original },
+      ];
+      const controller = new AbortController();
+      producer.beforeCall = (name) => {
+        const last = producer.calls.at(-1);
+        if (name !== "bn_memory_read" || last?.args.address !== "0x510000")
+          return;
+        if (failure === "cancellation")
+          controller.abort("cancel later string chunk");
+        else
+          producer.strings = [
+            {
+              address: "0x500000",
+              type: "AsciiString",
+              bytes: original.subarray(0, 65536),
+            },
+          ];
+      };
+      try {
+        expect(
+          await client.execute(
+            "list_strings",
+            {},
+            { signal: controller.signal },
+          ),
+        ).toMatchObject({
+          ok: false,
+          error: {
+            _tag:
+              failure === "cancellation"
+                ? "AnalysisCancelledError"
+                : "AnalysisProtocolError",
+          },
+        });
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
+});

@@ -324,12 +324,6 @@ export class BinaryNinjaOperationRunner {
       const length = Number(BigInt(binaryNinjaAddressSchema.parse(row.length)));
       let bytes: Buffer = Buffer.from(row.previewHex ?? "", "hex");
       if (row.previewTruncated === "true") {
-        if (length > BINARY_NINJA_MEMORY_READ_LIMIT) {
-          omitted.add(
-            `Strings longer than ${String(BINARY_NINJA_MEMORY_READ_LIMIT)} bytes are omitted.`,
-          );
-          continue;
-        }
         bytes = await this.read(address, length);
       } else if (row.previewTruncated !== "false")
         throw new AnalysisProtocolError(
@@ -353,13 +347,26 @@ export class BinaryNinjaOperationRunner {
   }
 
   private async read(address: string, length: number): Promise<Buffer> {
-    const reply = await this.call("bn_memory_read", { address, length });
-    const read = binaryNinjaMemoryReadSchema.parse(reply.structured);
-    if (read.address !== address || read.bytesRead !== length)
-      throw new AnalysisProtocolError(
-        `Binary Ninja read ${String(read.bytesRead)} of ${String(length)} bytes at ${address}.`,
+    const bytes = Buffer.alloc(length);
+    for (let offset = 0; offset < length;) {
+      const chunkLength = Math.min(
+        BINARY_NINJA_MEMORY_READ_LIMIT,
+        length - offset,
       );
-    return Buffer.from(read.hex, "hex");
+      const chunkAddress = `0x${(BigInt(address) + BigInt(offset)).toString(16)}`;
+      const reply = await this.call("bn_memory_read", {
+        address: chunkAddress,
+        length: chunkLength,
+      });
+      const read = binaryNinjaMemoryReadSchema.parse(reply.structured);
+      if (read.address !== chunkAddress || read.bytesRead !== chunkLength)
+        throw new AnalysisProtocolError(
+          `Binary Ninja read ${String(read.bytesRead)} of ${String(chunkLength)} bytes at ${chunkAddress}.`,
+        );
+      Buffer.from(read.hex, "hex").copy(bytes, offset);
+      offset += chunkLength;
+    }
+    return bytes;
   }
 
   async pseudocode(fn: BinaryNinjaFunction): Promise<string> {
