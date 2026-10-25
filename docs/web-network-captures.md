@@ -750,9 +750,12 @@ fields keep the observed value. When the first read of a created entity before
 the next write shows fields the create's answer lacks, or its clocks to another
 precision, the observed entity takes them (`observation.read`). An item read
 that agrees with the answer otherwise lends its fields and clock spellings and
-no longer confirms the create; one that disagrees still checks it. A list read
+no longer confirms the create; one that disagrees or omits an answer field its
+item view renders still checks it. Clock agreement uses the coarser recorded
+precision, including microseconds. A list read
 only adds fields the answer lacks and still checks it. Serving answers a create
-in its answer's shape and stores the fields of both. A `reference` is an object holding fields of the
+in its answer's shape and clock precision and stores the fields of both with
+the item read-back's clock precision. A `reference` is an object holding fields of the
 entity a sent member names, as the state holds it (a parent beside `parentId`):
 the member is accepted with any value, serving looks the entity up and refuses a
 call naming one the environment does not hold or holds in more than one
@@ -787,7 +790,10 @@ object in a one-element array is that object, wrapped so on every call
 echo when stored as sent. A clock sent back as the entity held it and stored as
 a fresh clock near the call is a `clock`, and a member stored as the slug of
 another member stored as sent is a `slug`, both accepted with any value, as a
-whole-object write that sends what it read shows. Any other member stored
+whole-object write that sends what it read shows. A save that echoes an
+already-derived slug or holds a clock in its own second remains compatible
+with that derivation in either call order; earlier saves must also reproduce
+a newly learned slug. Any other member stored
 differently is accepted only with its
 recorded value (`body.fixed`) and stores the value the call that showed it
 recorded (the `value` of its `constant` rule), and a field it changed without

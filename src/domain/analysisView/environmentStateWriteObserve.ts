@@ -24,7 +24,7 @@ export interface ObservedRead {
   readonly shape: "item" | "list";
 }
 
-/** Whether two clocks show one instant, the coarser spelled to fewer fraction digits: whole seconds of a nanosecond clock. */
+/** Whether two clocks agree at the coarser recorded fraction precision, retaining all digits through nanoseconds. */
 export const respelledInstant = (
   left: JsonValue | undefined,
   right: JsonValue | undefined,
@@ -33,11 +33,13 @@ export const respelledInstant = (
   if (a?.format.kind !== "iso" || b?.format.kind !== "iso") return false;
   const [fine, coarse] =
     a.format.fraction >= b.format.fraction ? [a, b] : [b, a];
-  if (coarse.format.kind !== "iso" || coarse.format.fraction > 3) return false;
-  const unit = 10 ** (3 - coarse.format.fraction);
+  if (coarse.format.kind !== "iso") return false;
+  const unit = 10 ** (9 - coarse.format.fraction);
+  const fraction = (clock: typeof fine) =>
+    (((clock.ms % 1000) + 1000) % 1000) * 1_000_000 + clock.subMillisecond;
   return (
-    coarse.subMillisecond === 0 &&
-    Math.floor(fine.ms / unit) * unit === coarse.ms
+    Math.floor(fine.ms / 1000) === Math.floor(coarse.ms / 1000) &&
+    Math.floor(fraction(fine) / unit) * unit === fraction(coarse)
   );
 };
 

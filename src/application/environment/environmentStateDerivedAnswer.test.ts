@@ -199,10 +199,15 @@ describe("served writes whose answers show the entity otherwise than reads do", 
     expect(created).toMatchObject({
       name: "Saltmarsh Gate",
       slug: "saltmarsh-gate",
+      created: firstServedClock(READ_BACK_TAG_ROWS).replace("Z", ".000000000Z"),
     });
     expect(
       tags.answer("get_tags_by_id", { id: String(created["id"]) }).body,
-    ).toMatchObject({ name: "Saltmarsh Gate", document_count: 0 });
+    ).toMatchObject({
+      name: "Saltmarsh Gate",
+      document_count: 0,
+      created: firstServedClock(READ_BACK_TAG_ROWS),
+    });
   });
 
   it("lists a created label with the count its list read showed", () => {

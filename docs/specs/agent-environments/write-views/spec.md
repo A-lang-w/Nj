@@ -23,16 +23,20 @@ Paperless-ngx and Miniflux). Two write-model gaps withheld most of their creates
   or spells its clocks to another precision, the observed entity takes them, and the plan records the read
   (`observation.read`, with its shape).
   - An item read that agrees with the answer otherwise lends its fields and its clock spellings (whole seconds of a
-    nanosecond clock), and no longer confirms the create. One that disagrees on another value still checks the create,
-    which it contradicts.
+    nanosecond clock, or microseconds of one), and no longer confirms the create. One that disagrees on another value,
+    or omits an answer field its item view renders, still checks the create, which it contradicts.
   - A list read, which may show fewer keys of an object, only adds fields the answer lacks and still checks the create.
   - A read that shows nothing new leaves the observation as it was and still confirms the create.
   - Serving merges the same two recorded objects, so a served create answers in its answer's shape and stores the
-    fields of both.
+    fields of both. Generated clocks in the create answer retain that answer's recorded precision independently of
+    the stored read-back precision.
 - **Restamped clocks.** An update member sent back as the clock the entity held, and stored as a fresh clock near the
   call, is a `clock` rule, accepted with any value.
 - **Re-derived slugs.** An update member stored as the slug of another member the call stored as sent is a `slug` rule
   from that member, accepted with any value.
+- **Compatible saves.** A call that echoes an already-derived slug or holds a clock in its own recorded second does
+  not conflict with a demonstrated derivation, in either call order. A slug derivation must reproduce earlier saves
+  as well; an explicit custom slug that disagrees still withholds the update.
 
 Plans and views that need none of this are unchanged.
 

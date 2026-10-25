@@ -361,7 +361,15 @@ export const writeAnswer = (
       : writtenResponse(
           plan.response,
           recorded,
-          rendered,
+          {
+            ...rendered,
+            clocks:
+              plan.observation?.read?.shape === "item"
+                ? plan.rules.flatMap((rule) =>
+                    rule.rule === "clock" ? [rule.field] : [],
+                  )
+                : [],
+          },
           optionalFields(plan),
         );
   if (!body.ok) return err(refused(tool, body.error));

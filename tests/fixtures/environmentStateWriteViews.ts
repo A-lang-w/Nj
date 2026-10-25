@@ -200,3 +200,72 @@ export const RESTAMPED_ROWS: readonly TimedCaptureRow[] = [
     [{ ...POST, title: "Winter rota v3", updated_at: bookClock(4) }],
   ],
 ];
+
+/** One save leaves its slug as sent; the other demonstrates regeneration, in either recording order. */
+export const slugSaveRows = (
+  derivedFirst: boolean,
+  customSlug = false,
+): readonly TimedCaptureRow[] => {
+  const saved = { ...SEED_TAGS[0]!, ...(customSlug ? { slug: "custom" } : {}) };
+  const renamed = {
+    ...SEED_TAGS[1]!,
+    name: "Spring Tide Tables",
+    slug: "spring-tide-tables",
+  };
+  const saves: TimedCaptureRow[][] = [
+    [
+      ["PUT", "/api/tags/1", saved, 200, saved],
+      ["GET", "/api/tags/1", saved],
+    ],
+    [
+      [
+        "PUT",
+        "/api/tags/2",
+        renamed,
+        200,
+        { ...SEED_TAGS[1]!, name: renamed.name },
+      ],
+      ["GET", "/api/tags/2", renamed],
+    ],
+  ];
+  return [
+    ...STALE_SLUG_ROWS.slice(0, 3),
+    ...saves[derivedFirst ? 1 : 0]!,
+    ...saves[derivedFirst ? 0 : 1]!,
+    ["GET", "/api/tags", [saved, renamed]],
+  ];
+};
+
+/** One whole-object save falls in its held clock's second; the other visibly stamps a fresh clock. */
+export const clockSaveRows = (
+  derivedFirst: boolean,
+): readonly TimedCaptureRow[] => {
+  const heldIndex = derivedFirst ? 5 : 3;
+  const freshIndex = derivedFirst ? 3 : 5;
+  const held = { ...POST, updated_at: bookClock(heldIndex) };
+  const fresh = { ...POST, id: 2 };
+  const saved = { ...held, title: "Same-second save" };
+  const stamped = {
+    ...fresh,
+    title: "Fresh save",
+    updated_at: bookClock(freshIndex),
+  };
+  const saves: TimedCaptureRow[][] = [
+    [
+      ["PUT", "/api/posts/1", saved, 200, saved],
+      ["GET", "/api/posts/1", saved],
+    ],
+    [
+      ["PUT", "/api/posts/2", stamped, 200, { ...fresh, title: stamped.title }],
+      ["GET", "/api/posts/2", stamped],
+    ],
+  ];
+  return [
+    ["GET", "/api/posts", [held, fresh]],
+    ["GET", "/api/posts/1", held],
+    ["GET", "/api/posts/2", fresh],
+    ...saves[derivedFirst ? 1 : 0]!,
+    ...saves[derivedFirst ? 0 : 1]!,
+    ["GET", "/api/posts", [saved, stamped]],
+  ];
+};

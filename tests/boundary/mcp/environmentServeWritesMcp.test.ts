@@ -24,6 +24,7 @@ import {
   renamedBook,
 } from "../../fixtures/environmentStateWrites.js";
 import { referencedCreateRows } from "../../fixtures/environmentStateDerivedValues.js";
+import { READ_BACK_TAG_ROWS } from "../../fixtures/environmentStateWriteViews.js";
 import { unsupportedInputLiteralSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
@@ -33,6 +34,66 @@ const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
+
+processTest(
+  "keeps create response clocks separate from enriched item reads through the SDK",
+  async ({ processes }) => {
+    const rows = READ_BACK_TAG_ROWS;
+    const root = await createTestTempDirectory("rea-write-views-sdk-");
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentStateServeFixture(timedCaptureEvidence(rows)),
+    );
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = new Client({ name: "write-views", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map(({ name }) => name)).toEqual(
+        expect.arrayContaining(["post_tags", "get_tags_by_id"]),
+      );
+      const created = await client.callTool({
+        name: "post_tags",
+        arguments: { body: { name: "Boundary Tag" } },
+      });
+      expect(created.isError).toBeFalsy();
+      const clock = bookClock(rows.length + 1);
+      expect(created.structuredContent).toMatchObject({
+        body: {
+          id: 3,
+          name: "Boundary Tag",
+          created: clock.replace("Z", ".000000000Z"),
+        },
+        state: { source: "state" },
+      });
+      expect(created.structuredContent).not.toHaveProperty(
+        "body.document_count",
+      );
+      const read = await client.callTool({
+        name: "get_tags_by_id",
+        arguments: { id: "3" },
+      });
+      expect(read.structuredContent).toMatchObject({
+        body: {
+          id: 3,
+          name: "Boundary Tag",
+          created: clock,
+          document_count: 0,
+        },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
 
 processTest(
   "discovers empty fixed values and applies omitted recorded queries through the SDK before enforcing writes",

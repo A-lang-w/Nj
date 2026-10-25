@@ -124,18 +124,22 @@ const withReadBack = (
     isWrite: context.isWrite,
   });
   if (later === undefined) return own;
-  const shape =
-    context.viewOf(later.ordinal)?.shape === "item" ? "item" : "list";
+  const view = context.viewOf(later.ordinal);
   if (
-    shape === "item" &&
-    Object.entries(later.object).some(
-      ([field, value]) =>
-        Object.hasOwn(own.object, field) &&
-        !same(own.object[field], value) &&
-        !respelledInstant(own.object[field], value),
-    )
+    view?.shape === "item" &&
+    (view.fields.some(
+      (field) =>
+        Object.hasOwn(own.object, field) && !Object.hasOwn(later.object, field),
+    ) ||
+      Object.entries(later.object).some(
+        ([field, value]) =>
+          Object.hasOwn(own.object, field) &&
+          !same(own.object[field], value) &&
+          !respelledInstant(own.object[field], value),
+      ))
   )
     return own;
+  const shape = view?.shape === "item" ? "item" : "list";
   const object = withRead(own.object, later.object, shape);
   if (same(object, own.object)) return own;
   if (shape === "item") context.observed(later.ordinal);
