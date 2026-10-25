@@ -1,3 +1,4 @@
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { z } from "zod";
@@ -123,11 +124,15 @@ export class AnalysisSettings {
     return ok({
       ...this.inspect({ settings: ids }),
       changed,
-      changes: ids.map((setting) => ({
-        setting,
-        old_value: previous.get(setting)!,
-        new_value: this.#describe(setting).value,
-      })),
+      changes: ids.map((setting) => {
+        const oldValue = previous.get(setting);
+        const newValue = this.#describe(setting).value;
+        return {
+          setting,
+          ...(oldValue === undefined ? {} : { old_value: oldValue }),
+          ...(newValue === undefined ? {} : { new_value: newValue }),
+        };
+      }),
       active_work_changed: false as const,
       rea_restart_required: false as const,
     });
@@ -136,12 +141,17 @@ export class AnalysisSettings {
     const definition = analysisSettingDefinition(setting);
     const launch = this.#launch.get(setting)!;
     const override = this.#current.overrides[setting];
+    const launchValue = launch.ok ? launch.value.value : undefined;
+    const value = override === undefined ? launchValue : override;
+    const launchSource = launch.ok ? launch.value.source : ("invalid" as const);
     return {
       setting,
-      value: override === undefined ? launch.value : override,
-      launch_value: launch.value,
+      ...(value === undefined ? {} : { value }),
+      ...(launch.ok
+        ? { launch_value: launch.value.value }
+        : { configuration_error: projectAnalysisError(launch.error) }),
       default_value: definition.defaultValue,
-      source: override === undefined ? launch.source : ("runtime" as const),
+      source: override === undefined ? launchSource : ("runtime" as const),
       unit: definition.unit,
       minimum: definition.minimum,
       maximum: definition.maximum,

@@ -54,10 +54,10 @@ export class WasmArtifactService {
       input.data.command_timeout_ms ??
       this.settings?.().overrides["wasm.command_timeout_ms"] ??
       DEFAULT_WASM_COMMAND_TIMEOUT_MS;
-    const inspected = await this.provider.inspect(
-      { ...input.data, command_timeout_ms: timeout },
-      options,
-    );
+    const inspected = await this.provider.inspect(input.data, {
+      ...options,
+      commandTimeoutMs: timeout,
+    });
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = wasmArtifactSchema.safeParse(execution.result);

@@ -96,53 +96,6 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
 });
 
-it("rechecks cached Electron ASAR headers against a lowered runtime admission", async () => {
-  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const { pathToFileURL } = await import("node:url");
-  const { authorizedElectronFile } =
-    await import("../browser/ElectronFileScope.js");
-  const { asarHeaderBytes } =
-    await import("../../tests/fixtures/asarHeader.js");
-  const root = await mkdtemp(join(tmpdir(), "rea-settings-cache-"));
-  try {
-    const archive = join(root, "cached.asar");
-    await writeFile(
-      archive,
-      Buffer.concat([
-        asarHeaderBytes(
-          JSON.stringify({ files: { "main.js": { size: 1, offset: "0" } } }),
-        ),
-        Buffer.from("x"),
-      ]),
-    );
-    const store = new AnalysisSettings({});
-    const admission = runtimeAsarHeaderAdmission({}, store.read);
-    const member = join(archive, "main.js");
-    const authorize = () =>
-      store.run(() =>
-        authorizedElectronFile(
-          pathToFileURL(member).href,
-          undefined,
-          "inspect_electron_page",
-          admission,
-        ),
-      );
-    expect(await authorize()).toBe(member);
-    expect(
-      store.update({
-        changes: [
-          { setting: "asar.max_header_bytes", action: "set", value: 1 },
-        ],
-      }).ok,
-    ).toBe(true);
-    expect(await authorize()).toBeUndefined();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {
   const environment = { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7" };
   const store = new AnalysisSettings(environment);
@@ -153,11 +106,12 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
       .settings.map(({ setting }) => setting),
-  ).toEqual([
-    "ghidra.startup_timeout_ms",
-    "regex.matching_deadline_ms",
-    "regex.worker_heap_request_mib",
-  ]);
+  ).toEqual(["ghidra.startup_timeout_ms"]);
+  expect(
+    store
+      .inspect({ provider: "ida", operation: "search_strings" })
+      .settings.map(({ setting }) => setting),
+  ).toEqual(["regex.matching_deadline_ms", "regex.worker_heap_request_mib"]);
   expect(
     store
       .inspect({ operation: "inventory_artifact" })

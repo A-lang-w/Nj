@@ -1,3 +1,4 @@
+import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { z } from "zod";
 import {
   analysisSettingIds,
@@ -38,10 +39,11 @@ export const updateAnalysisSettingsInputSchema = z.strictObject({
 });
 const descriptor = z.strictObject({
   setting: analysisSettingIdSchema,
-  value: z.number().nullable(),
-  launch_value: z.number().nullable(),
+  value: z.number().nullable().optional(),
+  launch_value: z.number().nullable().optional(),
   default_value: z.number().nullable(),
-  source: z.enum(["default", "setting", "runtime"]),
+  source: z.enum(["default", "setting", "runtime", "invalid"]),
+  configuration_error: analysisErrorProjectionSchema.optional(),
   unit: z.enum(["bytes", "ms", "seconds", "MiB"]),
   minimum: z.number(),
   maximum: z.number(),
@@ -76,8 +78,8 @@ export const updateAnalysisSettingsResultSchema =
     changes: z.array(
       z.strictObject({
         setting: analysisSettingIdSchema,
-        old_value: z.number().nullable(),
-        new_value: z.number().nullable(),
+        old_value: z.number().nullable().optional(),
+        new_value: z.number().nullable().optional(),
       }),
     ),
     active_work_changed: z.literal(false),

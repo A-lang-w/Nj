@@ -1,3 +1,4 @@
+import { err, ok } from "../domain/result.js";
 import type { z } from "zod";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
 import { analysisSettingDefinition } from "../domain/analysisSettingDefinitions.js";
@@ -32,16 +33,18 @@ export const launchAnalysisSetting = (
       ? undefined
       : environment[definition.environment];
   if (raw === undefined)
-    return { value: definition.defaultValue, source: "default" as const };
+    return ok({ value: definition.defaultValue, source: "default" as const });
   const parsed = environmentSchemas[definition.environment!]?.safeParse(raw);
   if (parsed?.success !== true)
-    throw new ConfigurationError(`Invalid ${definition.environment}`, {
-      settings: [
-        {
-          setting: definition.environment!,
-          constraint: `Expected an integer from ${definition.minimum} to ${definition.maximum} ${definition.unit}`,
-        },
-      ],
-    });
-  return { value: parsed.data, source: "setting" as const };
+    return err(
+      new ConfigurationError(`Invalid ${definition.environment}`, {
+        settings: [
+          {
+            setting: definition.environment!,
+            constraint: `Expected an integer from ${definition.minimum} to ${definition.maximum} ${definition.unit}`,
+          },
+        ],
+      }),
+    );
+  return ok({ value: parsed.data, source: "setting" as const });
 };

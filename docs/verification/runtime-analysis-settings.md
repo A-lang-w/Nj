@@ -23,8 +23,25 @@ This change adds two MCP tools and 11 runtime defaults without a new dependency.
   skips. Typecheck/lint, bridge source compilation, runtime build and generated
   documentation checks passed.
 
+## Review follow-up
+
+Invalid provider-local launch settings remain typed configuration failures rather
+than preventing MCP startup. Inspection reports `source: "invalid"`, omits
+`value` and `launch_value`, and includes `configuration_error`; a runtime
+replacement supplies a usable value, while reset restores the invalid launch
+state. Update history omits an unknown old or new value instead of using null
+(the explicit unbounded Ghidra value).
+
+Regex controls apply to IDA, Hopper and Kuna's supervised ECMAScript matcher.
+Ghidra uses its own Java matcher and is excluded from these controls. IDA's bound
+client and capability descriptions consume the same accepted configuration.
+WASM passes its effective deadline separately from caller parameters, preserving
+omitted arguments in both successful and partial Evidence. Shared error copying
+retains structured limit recovery through attribution and explicit redaction.
+
 ## Representative task costs
 
+Measurements below precede the review follow-up; task costs were not remeasured.
 One measurement per scenario, using the built stdio server and a valid ASAR with
 an index just above 16 MiB and one small JavaScript module. Each scenario ends
 with successful full application analysis delivered as a summary. Discovery,

@@ -218,13 +218,15 @@ it("gives cancellation precedence over malformed raw input", async () => {
 it("uses runtime defaults only for omitted budgets, preserving explicit input and reset", async () => {
   const settings = new AnalysisSettings({});
   const accepted: number[] = [];
+  const authored: (number | undefined)[] = [];
   const service = new WasmArtifactService(
     {
       close: async () => {},
-      inspect: async (input) => {
+      inspect: async (input, options) => {
         const value = wasmArtifactFixture();
-        value.tool_profile.timeout_ms = input.command_timeout_ms!;
-        accepted.push(input.command_timeout_ms!);
+        value.tool_profile.timeout_ms = options!.commandTimeoutMs!;
+        accepted.push(options!.commandTimeoutMs!);
+        authored.push(input.command_timeout_ms);
         return ok(wasmArtifactExecution(value));
       },
     },
@@ -251,4 +253,5 @@ it("uses runtime defaults only for omitted budgets, preserving explicit input an
   });
   expect((await settings.run(() => service.inspect({ path }))).ok).toBe(true);
   expect(accepted).toEqual([123000, 42000, 30000]);
+  expect(authored).toEqual([undefined, 42000, undefined]);
 });

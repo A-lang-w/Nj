@@ -344,6 +344,8 @@ describe("test lane import boundaries", () => {
         resolve("node_modules/oxlint/bin/oxlint"),
         "-c",
         config,
+        "--threads",
+        "1",
         "--format",
         "json",
         ...cases.map(([file]) => file),
@@ -351,6 +353,10 @@ describe("test lane import boundaries", () => {
       { cwd: temporary, encoding: "utf8" },
     );
     if (result.error !== undefined) throw result.error;
+    expect(
+      result.stdout.trimStart().startsWith("{"),
+      `oxlint exited ${String(result.status)} (${String(result.signal)}): ${result.stdout}\n${result.stderr}`,
+    ).toBe(true);
     const report = JSON.parse(result.stdout) as {
       diagnostics: Array<{ filename: string; code: string }>;
     };

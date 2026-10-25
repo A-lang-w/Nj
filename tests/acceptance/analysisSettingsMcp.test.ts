@@ -1,14 +1,15 @@
+import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettingsContracts.js";
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { asarHeaderBytes } from "../fixtures/asarHeader.js";
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-runtime-settings-"));
+  const root = await createTestTempDirectory("rea-runtime-settings-");
   const archive = join(root, "application.asar");
   // Large header, small payload: tests index admission independently of input/member size.
   const first = Buffer.from("export const answer = 42;\n");
@@ -114,6 +115,59 @@ it("advertises exact contracts and recovers a full large-index archive over one 
     ).toMatchObject({ revision: 2 });
   } finally {
     await client.close();
-    await rm(root, { recursive: true, force: true });
   }
 }, 30000);
+
+it.each(["0", "2147483648"])(
+  "keeps invalid JADX launch timeout %s local and repairable through MCP",
+  async (timeout) => {
+    const { client, call } = await connectLocalToolsMcp({
+      REA_JADX_OPERATION_TIMEOUT_MS: timeout,
+    });
+    try {
+      expect((await call("binary_session", {})).isError).not.toBe(true);
+      const inspect = () =>
+        call("inspect_analysis_settings", {
+          settings: ["jadx.operation_timeout_ms"],
+        });
+      const invalid = analysisSettingsResultSchema.parse(
+        (await inspect()).structuredContent,
+      );
+      expect(invalid).toMatchObject({
+        settings: [
+          {
+            source: "invalid",
+            configuration_error: {
+              code: "configuration_invalid",
+              details: {
+                settings: [{ setting: "REA_JADX_OPERATION_TIMEOUT_MS" }],
+              },
+            },
+          },
+        ],
+      });
+      expect(invalid.settings[0]).not.toHaveProperty("value");
+      expect(invalid.settings[0]).not.toHaveProperty("launch_value");
+      const repaired = await call("update_analysis_settings", {
+        changes: [
+          { setting: "jadx.operation_timeout_ms", action: "set", value: 42000 },
+        ],
+      });
+      expect(repaired.isError).not.toBe(true);
+      expect(repaired.structuredContent).toMatchObject({
+        settings: [{ value: 42000, source: "runtime" }],
+        changes: [{ new_value: 42000 }],
+      });
+      const reset = await call("update_analysis_settings", {
+        changes: [{ setting: "jadx.operation_timeout_ms", action: "reset" }],
+      });
+      expect(reset.isError).not.toBe(true);
+      expect((await inspect()).structuredContent).toMatchObject({
+        settings: invalid.settings,
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  30000,
+);
