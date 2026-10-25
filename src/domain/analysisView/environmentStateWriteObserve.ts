@@ -1,17 +1,20 @@
 import type { JsonValue } from "../jsonValue.js";
 import { overlapsWrite } from "./environmentStateWriteAttribution.js";
 import {
+  at,
   collectionPathOf,
   isObject,
   lastSegmentValue,
   listItems,
   pointerTo,
+  projectsFields,
   scalarText,
   type JsonObject,
   type StateEntity,
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { queryValues, replayReason } from "./environmentStateVariants.js";
 
 /** Where an observed entity object was found: the record and a JSON pointer into its response. */
 export interface Observed {
@@ -90,7 +93,36 @@ export interface ObservationSearch {
     ordinal: number,
     use: (body: JsonValue | undefined) => T,
   ) => T;
+  readonly queryOf: (ordinal: number) => string | null | undefined;
 }
+
+/** Whether a successful read neither checks the state nor observes a write: serving replays it, or it asked for some fields only and shows no whole entity. */
+export const projectedRead = (
+  view: StateView,
+  record: StateRecordFacts,
+  io: Pick<ObservationSearch, "withBody" | "queryOf">,
+): boolean => {
+  if (view.shape !== "item" && view.shape !== "list") return false;
+  // An absence or error holds no entity, so it is never a partial one and stays evidence.
+  if (!succeeded(record)) return false;
+  if (replayReason(view, queryValues(record.query), io.queryOf) !== undefined)
+    return true;
+  // Serving answers such a selection with the whole entity, which part of one can neither confirm nor check.
+  if (!projectsFields(record.query)) return false;
+  return io.withBody(record.ordinal, (body) => {
+    const objects =
+      body === undefined || body === null
+        ? []
+        : view.shape === "item"
+          ? [at(body, view.pointer)]
+          : (listItems(body, view.pointer) ?? []);
+    return objects.some(
+      (object) =>
+        !isObject(object) ||
+        view.required_fields.some((field) => !Object.hasOwn(object, field)),
+    );
+  });
+};
 
 const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
@@ -126,7 +158,8 @@ export const laterObservation = (
     if (
       !succeeded(record) ||
       (view?.shape !== "item" && view?.shape !== "list") ||
-      view.type !== target.type
+      view.type !== target.type ||
+      projectedRead(view, record, search)
     )
       continue;
     if (target.covers !== undefined && !target.covers(view)) continue;

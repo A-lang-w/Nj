@@ -28,7 +28,7 @@ import {
   filterClientsNeedingConfigure,
   systemSetupHost,
 } from "../../../src/application/SetupHost.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { configureDetectedClients } from "../../../src/application/SetupClients.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import {
@@ -120,7 +120,7 @@ const preparedVsCodeSetupHost = async (prefix: string) => {
 
 /** Release the held read handle and verify host cleanup retries that same owner. */
 const expectCloseReclaimsHandle = async (
-  host: { close?: () => Promise<string | undefined> },
+  host: { close?: () => Promise<unknown> },
   closeAttempts: readonly object[],
   release: () => void,
 ) => {
@@ -133,7 +133,7 @@ const expectCloseReclaimsHandle = async (
 
 /** Give up on the assertion path: release the handle and let cleanup close it. */
 const cleanupHeldHandle = async (
-  host: { close?: () => Promise<string | undefined> },
+  host: { close?: () => Promise<unknown> },
   release: () => void,
 ) => {
   release();
@@ -161,7 +161,7 @@ it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fa
       status: "failed",
       detail: expect.stringContaining("not valid UTF-8"),
     });
-    expect(await readFile(path)).toEqual(original);
+    expect(Buffer.compare(await readFile(path), original)).toBe(0);
     expect(closeAttempts).toHaveLength(3);
     expect(closeAttempts.every((handle) => handle === closeAttempts[0])).toBe(
       true,
@@ -704,6 +704,10 @@ describe("setup client configuration cleanup ownership", () => {
             (cause: unknown) => cause,
           );
         expect(failure).toBeInstanceOf(ConfigurationError);
+        if (!(failure instanceof ConfigurationError))
+          throw new Error(
+            "Expected the configuration failure to retain cleanup authority",
+          );
         if (encoding === "malformed UTF-8")
           expect(failure).toMatchObject({
             cause: {
@@ -723,9 +727,13 @@ describe("setup client configuration cleanup ownership", () => {
         expect(configure).not.toHaveBeenCalled();
         expect(closeAttempts).toHaveLength(2);
         expect(closeAttempts[0]).toBe(closeAttempts[1]);
-        expect(await readFile(client.configPath)).toEqual(original);
+        expect(
+          Buffer.compare(await readFile(client.configPath), original),
+        ).toBe(0);
 
         await expectCloseReclaimsHandle(host, closeAttempts, release);
+        expect(failure.cleanupIncomplete).toBe(false);
+        expect(failure.cleanupResources).toEqual([]);
       } finally {
         await cleanupHeldHandle(host, release);
       }
