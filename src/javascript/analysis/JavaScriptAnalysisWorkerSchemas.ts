@@ -1,4 +1,11 @@
-import { javaScriptSemanticUnknownOmissionsSchema } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import {
+  javaScriptSemanticUnknownOmissionsSchema,
+  javaScriptSemanticNodeSchema,
+  javaScriptSemanticRelationSchema,
+  javaScriptSemanticUnknownSchema,
+  javaScriptSemanticFingerprintSchema,
+  javaScriptSemanticEvidenceContextSchema,
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -8,13 +15,6 @@ import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticValueTypes.js";
-import {
-  javaScriptSemanticNodeSchema,
-  javaScriptSemanticRelationSchema,
-  javaScriptSemanticUnknownSchema,
-  javaScriptSemanticFingerprintSchema,
-  javaScriptSemanticEvidenceContextSchema,
-} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 
 const range =
   javaScriptSemanticNodeSchema.shape.identity.shape.source_range.unwrap();

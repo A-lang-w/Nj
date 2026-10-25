@@ -7,7 +7,10 @@ import {
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
+import {
+  javascriptArtifactAnalysisScopes,
+  isSkippedJavaScriptAnalysis,
+} from "./JavaScriptArtifactAnalysisTypes.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -16,7 +19,6 @@ import type {
   JavaScriptArtifactFile,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
-import { isSkippedJavaScriptAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import {
   addArtifactContainsEdge,
   applicationManifestPath,

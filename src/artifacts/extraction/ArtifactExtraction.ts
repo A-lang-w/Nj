@@ -1,7 +1,11 @@
 import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
-import type { ArtifactCleanupAttempt } from "../ArtifactResourceScope.js";
+import type {
+  ArtifactCleanupAttempt,
+  ArtifactResourceOwner,
+  ArtifactResourceScope,
+} from "../ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
@@ -43,10 +47,6 @@ import {
   type ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
 import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
-import type {
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventoryForExtractionInScope } from "../inventory/ArtifactInventory.js";
