@@ -820,8 +820,6 @@ describe("web bundle bound WebSocket constructors", () => {
   it.each([
     'const WebSocket = class {}; new WebSocket("wss://example.test/local");',
     'import WebSocket from "other-library"; new WebSocket("wss://example.test/local");',
-    'import type WebSocket from "ws"; new WebSocket("wss://example.test/local");',
-    'import { type WebSocket } from "ws"; new WebSocket("wss://example.test/local");',
     'let Socket = globalThis.WebSocket; Socket = replacement; new Socket("wss://example.test/local");',
     'import WebSocket from "ws"; WebSocket = replacement; new WebSocket("wss://example.test/local");',
     'new WebSocket("wss://example.test/local"); const WebSocket = globalThis.WebSocket;',
@@ -835,7 +833,6 @@ describe("web bundle bound WebSocket constructors", () => {
     'const Socket = require("ws").Server; new Socket("wss://example.test/local");',
     'const { default: Socket } = require("ws"); new Socket("wss://example.test/local");',
     'const Socket = require("other-library").WebSocket; new Socket("wss://example.test/local");',
-    'import type WebSocket = require("ws"); new WebSocket("wss://example.test/local");',
     'const { [key]: WebSocket } = globalThis; new WebSocket("wss://example.test/local");',
     'const { WebSocket = replacement } = globalThis; new WebSocket("wss://example.test/local");',
     'const { WebSocket } = globalThis; globalThis.WebSocket = replacement; new WebSocket("wss://example.test/local");',
@@ -848,6 +845,27 @@ describe("web bundle bound WebSocket constructors", () => {
     "does not infer constructor identity from an unresolved binding: %s",
     (source) => {
       expect(socketEndpoints(source)).toEqual([[], []]);
+    },
+  );
+
+  it.each([
+    'import type WebSocket from "ws";',
+    'import { type WebSocket } from "ws";',
+    'import type WebSocket = require("ws");',
+  ])(
+    "retains ambient identity after erasing %s in both consumers",
+    (prefix) => {
+      const expected = [
+        { value: "wss://example.test/local", mechanism: "call:WebSocket" },
+      ];
+      expect(
+        socketEndpoints(`${prefix} new WebSocket("wss://example.test/local");`),
+      ).toEqual([expected, expected]);
+      expect(
+        socketEndpoints(
+          `${prefix} const WebSocket = class {}; new WebSocket("wss://example.test/local");`,
+        ),
+      ).toEqual([[], []]);
     },
   );
 });

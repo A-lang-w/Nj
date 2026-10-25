@@ -1186,14 +1186,8 @@ function* collectDefinitionsSteps(
         (parent !== null && state.erasedSyntaxNodes.has(parent)) ||
         isErasedJavaScriptValueChild(node, parent)
       ) {
-        // Erasure removes value evaluation, but an explicitly imported type
-        // must not be reinterpreted as an ambient constructor at a value read.
-        if (parent === null || !state.erasedSyntaxNodes.has(parent)) {
-          if (t.isImportDeclaration(node))
-            bindImports(node, currentSemanticScope(stack), state);
-          else if (t.isTSImportEqualsDeclaration(node))
-            bindImportEquals(node, currentSemanticScope(stack), state);
-        }
+        // Erased declarations have no value binding. Module projection retains
+        // their type-only links independently of the runtime scope index.
         state.erasedSyntaxNodes.add(node);
         return;
       }
@@ -2116,6 +2110,11 @@ const bindImports = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   for (const specifier of node.specifiers) {
+    if (
+      isTypeOnlyImportDeclaration(node) ||
+      (t.isImportSpecifier(specifier) && isTypeOnlyImportSpecifier(specifier))
+    )
+      continue;
     const importedPath = t.isImportDefaultSpecifier(specifier)
       ? ["default"]
       : t.isImportNamespaceSpecifier(specifier)
@@ -2130,10 +2129,7 @@ const bindImports = (
       definitionNode: specifier.local,
       initializer: null,
       directOrigin: { specifier: node.source.value, importedPath },
-      runtimeImport:
-        !isTypeOnlyImportDeclaration(node) &&
-        (!t.isImportSpecifier(specifier) ||
-          !isTypeOnlyImportSpecifier(specifier)),
+      runtimeImport: true,
     });
   }
 };
