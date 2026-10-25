@@ -436,6 +436,7 @@ describe("execFileOutput failure metadata", () => {
         code: "ENOTDIR",
         syscall: "spawn",
         path: join(file, "adb"),
+        spawnargs: ["version"],
       });
       expect(execFileOutputFailure(failure)).toEqual({
         stdout: "",
@@ -454,11 +455,17 @@ describe("execFileOutput failure metadata", () => {
   it("marks an asynchronous spawn failure but not a started process's exit", async () => {
     const root = await createTestTempDirectory("rea-exec-spawn-owner-");
     const missing = join(root, "missing");
-    const spawnFailure: unknown = await execFileOutput(missing, []).then(
+    const spawnFailure: unknown = await execFileOutput(missing, [
+      "version",
+    ]).then(
       () => undefined,
       (cause: unknown) => cause,
     );
-    expect(spawnFailure).toMatchObject({ code: "ENOENT", path: missing });
+    expect(spawnFailure).toMatchObject({
+      code: "ENOENT",
+      path: missing,
+      spawnargs: ["version"],
+    });
     expect(execFileOutputFailure(spawnFailure)).toMatchObject({
       code: "ENOENT",
       spawnFailed: true,

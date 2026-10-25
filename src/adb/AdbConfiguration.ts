@@ -15,6 +15,15 @@ import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { isUnresolvedPathErrorCode } from "../filesystem/RegularFile.js";
+
+/** Spawn errnos reporting exhausted host capacity rather than an unusable path. */
+const HOST_SPAWN_CAPACITY_ERRORS: ReadonlySet<string> = new Set([
+  "EAGAIN",
+  "EMFILE",
+  "ENFILE",
+  "ENOMEM",
+]);
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -176,13 +185,25 @@ export const inspectAdbClient = async (
         filesystem_error: code,
       };
       // Nothing executable resolves at the selected path.
-      if (["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(code))
+      if (isUnresolvedPathErrorCode(code))
         throw new AdbConfigurationFailure(
           "binary_missing",
           `The selected adb binary was not found: ${selection.binary}`,
           {
             ...facts,
             remediation: `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary`,
+          },
+          { cause },
+        );
+      // The host lacked process, memory or descriptor capacity; the selected
+      // path is not the cause.
+      if (HOST_SPAWN_CAPACITY_ERRORS.has(code))
+        throw new AdbConfigurationFailure(
+          "binary_not_executable",
+          `The host could not start the selected adb binary (${code}): ${selection.binary}`,
+          {
+            ...facts,
+            remediation: `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${ADB_BINARY_ENV} does not need to change`,
           },
           { cause },
         );

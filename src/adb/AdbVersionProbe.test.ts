@@ -131,3 +131,33 @@ it("names any other not-started spawn errno without an exit code", async () => {
   });
   expect(failure).not.toHaveProperty("diagnostics.exit_code");
 });
+
+it("does not blame the selected path for exhausted host spawn capacity", async () => {
+  vi.mocked(execFileOutput).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EMFILE"), {
+      code: "EMFILE",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const failure = await inspectAdbClient(selection).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    message:
+      "The host could not start the selected adb binary (EMFILE): /host/adb",
+    diagnostics: {
+      filesystem_error: "EMFILE",
+      path_source: "environment",
+      remediation: expect.stringContaining("then retry") as unknown,
+    },
+  });
+  expect(failure).toHaveProperty(
+    "diagnostics.remediation",
+    expect.stringContaining("REA_ADB_PATH does not need to change"),
+  );
+  expect(failure).not.toHaveProperty("diagnostics.exit_code");
+});

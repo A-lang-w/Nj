@@ -606,6 +606,9 @@ it.skipIf(process.platform === "win32")(
       await expect(
         host.prepare?.(AbortSignal.timeout(15_000)),
       ).rejects.toMatchObject({
+        message: expect.stringContaining(
+          "macOS process ownership inspection could not start the Apple Swift compiler via the selected Swift compiler (REA_DARWIN_SWIFTC_PATH) (compiler result: could not start (ENOTDIR))",
+        ),
         compilerOutcome: expect.objectContaining({
           outcome: "spawn_failed",
           code: "ENOTDIR",

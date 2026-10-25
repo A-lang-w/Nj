@@ -146,6 +146,32 @@ export const execFileFailureCapturedOutput = (
   truncated: failure.outputTruncated,
 });
 
+/**
+ * Mark an errno failure from starting the process, which Node reports as
+ * `syscall: "spawn"` when thrown synchronously and `spawn <path>` when
+ * emitted. The synchronous shape gains the `path` and `spawnargs` the
+ * emitted one carries. Argument validation errors carry no errno.
+ */
+const admitSpawnFailure = (
+  error: Error,
+  command: string,
+  arguments_: readonly string[],
+): boolean => {
+  const syscall = Reflect.get(error, "syscall");
+  if (
+    typeof Reflect.get(error, "errno") !== "number" ||
+    typeof syscall !== "string" ||
+    !(syscall === "spawn" || syscall.startsWith("spawn "))
+  )
+    return false;
+  Reflect.set(error, "spawnFailed", true);
+  if (typeof Reflect.get(error, "path") !== "string")
+    Reflect.set(error, "path", command);
+  if (!Array.isArray(Reflect.get(error, "spawnargs")))
+    Reflect.set(error, "spawnargs", [...arguments_]);
+  return true;
+};
+
 /** Run a shell-free command while capturing its complete output bytes. */
 export const execFileBytes = (
   command: string,
@@ -198,10 +224,7 @@ export const execFileBytes = (
                   ? new ExecFileOutputCancelledError(error.cause)
                   : error;
           if (failure !== null) {
-            // Node reports an asynchronous spawn failure with `spawn <path>`.
-            const syscall = Reflect.get(failure, "syscall");
-            if (typeof syscall === "string" && syscall.startsWith("spawn"))
-              Reflect.set(failure, "spawnFailed", true);
+            admitSpawnFailure(failure, command, arguments_);
             Reflect.set(failure, "stdout", stdout.toString("utf8"));
             Reflect.set(failure, "stderr", stderr.toString("utf8"));
             Reflect.set(failure, "stdoutBytes", stdout.byteLength);
@@ -219,11 +242,8 @@ export const execFileBytes = (
       // failure carries; argument validation errors stay unadmitted.
       if (
         error instanceof Error &&
-        typeof Reflect.get(error, "errno") === "number" &&
-        Reflect.get(error, "syscall") === "spawn"
+        admitSpawnFailure(error, command, arguments_)
       ) {
-        Reflect.set(error, "spawnFailed", true);
-        Reflect.set(error, "path", command);
         Reflect.set(error, "stdout", "");
         Reflect.set(error, "stderr", "");
         Reflect.set(error, "stdoutBytes", 0);
