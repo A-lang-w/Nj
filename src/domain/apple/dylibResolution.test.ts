@@ -898,6 +898,86 @@ describe("dyld slice compatibility and coverage", () => {
       ["arm64e", "architecture-missing", "unresolved"],
     ]);
   });
+  describe("32-bit ARM slice grading", () => {
+    const LIB = "Contents/MacOS/lib.dylib";
+    const arm = (cpuSubtype: number, child: string): MachoSlice =>
+      slice({
+        architecture: "arm",
+        cpu_type: 12,
+        cpu_subtype: cpuSubtype,
+        dependencies: [dependency(`@loader_path/${child}`)],
+      });
+    const GENERIC = "generic-child.dylib";
+    const SPECIALIZED = "specialized-child.dylib";
+
+    /** Trace one ARM process against a library whose slices are given in FAT order. */
+    const traceArm = (
+      processSubtype: number,
+      librarySlices: readonly MachoSlice[],
+    ) =>
+      traceDylibLoading(
+        memoryView({
+          [MAIN]: parsed(
+            slice({
+              architecture: "arm",
+              cpu_type: 12,
+              cpu_subtype: processSubtype,
+              file_type: "execute",
+              dependencies: [dependency("@executable_path/lib.dylib")],
+            }),
+          ),
+          [LIB]: parsed(...librarySlices),
+        }),
+        { roots: [MAIN] },
+      );
+
+    const childrenOfLibrary = (
+      trace: Awaited<ReturnType<typeof traceDylibLoading>>,
+    ) =>
+      trace.edges
+        .filter((edge) => edge.loader === LIB)
+        .map((edge) => edge.install_name);
+
+    it.each([
+      ["ARMv7 first", [9, 11]],
+      ["ARMv7s first", [11, 9]],
+    ])(
+      "prefers the ARMv7s slice for an ARMv7s process regardless of FAT order (%s)",
+      async (_label, order) => {
+        const bySubtype: Record<number, MachoSlice> = {
+          9: arm(9, GENERIC),
+          11: arm(11, SPECIALIZED),
+        };
+        const trace = await traceArm(
+          11,
+          order.map((subtype) => bySubtype[subtype] as MachoSlice),
+        );
+        expect(childrenOfLibrary(trace)).toEqual([
+          `@loader_path/${SPECIALIZED}`,
+        ]);
+      },
+    );
+
+    it("falls back to ARMv7 when an ARMv7s process finds no ARMv7s slice", async () => {
+      const trace = await traceArm(11, [arm(9, GENERIC)]);
+      expect(trace.edges[0]?.resolution.status).toBe("resolved");
+      expect(childrenOfLibrary(trace)).toEqual([`@loader_path/${GENERIC}`]);
+    });
+
+    it("never loads an ARMv7s slice into an ARMv7 process", async () => {
+      const trace = await traceArm(9, [arm(11, SPECIALIZED), arm(9, GENERIC)]);
+      expect(childrenOfLibrary(trace)).toEqual([`@loader_path/${GENERIC}`]);
+    });
+
+    it("does not pick between differing ARM slices when the process policy is unknown", async () => {
+      const trace = await traceArm(6, [arm(9, GENERIC), arm(11, SPECIALIZED)]);
+      expect(trace.edges[0]?.candidates[0]?.outcome).toBe(
+        "architecture-missing",
+      );
+      expect(trace.edges[0]?.resolution.status).toBe("unresolved");
+      expect(childrenOfLibrary(trace)).toEqual([]);
+    });
+  });
 
   it("keeps unsupported candidates undeterminable rather than malformed", async () => {
     const trace = await traceDylibLoading(

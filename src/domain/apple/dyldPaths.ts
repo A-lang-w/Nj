@@ -113,14 +113,52 @@ export const expandPrefix = (
  * Slices a process may load, best first, following dyld's graded
  * architectures: an x86_64h process also accepts generic x86_64.
  */
+
 const COMPATIBLE_ARCHITECTURES: Readonly<Record<string, readonly string[]>> = {
   x86_64h: ["x86_64h", "x86_64"],
+};
+
+/** CPU_TYPE_ARM: 32-bit ARM, whose subtypes all share the display name "arm". */
+const CPU_TYPE_ARM = 12;
+
+/**
+ * 32-bit ARM slices a process of a given subtype accepts, best first,
+ * following dyld's graded architectures: an ARMv7s process prefers an
+ * ARMv7s slice and falls back to ARMv7, regardless of FAT order.
+ */
+const ARM32_SUBTYPE_PREFERENCE: Readonly<Record<number, readonly number[]>> = {
+  11: [11, 9], // ARMv7s: v7s, then v7
+  9: [9], // ARMv7: v7 only
+};
+
+const arm32Slice = (
+  slices: readonly MachoSlice[],
+  process: Pick<MachoSlice, "cpu_subtype">,
+): MachoSlice | undefined => {
+  const arm = slices.filter((item) => item.cpu_type === CPU_TYPE_ARM);
+  const preference =
+    ARM32_SUBTYPE_PREFERENCE[machoCpuSubtypeBase(process.cpu_subtype)];
+  if (preference === undefined) {
+    // Unknown loader policy: choose only when the slices cannot disagree.
+    const subtypes = new Set(
+      arm.map((item) => machoCpuSubtypeBase(item.cpu_subtype)),
+    );
+    return subtypes.size <= 1 ? arm[0] : undefined;
+  }
+  for (const subtype of preference) {
+    const slice = arm.find(
+      (item) => machoCpuSubtypeBase(item.cpu_subtype) === subtype,
+    );
+    if (slice !== undefined) return slice;
+  }
+  return undefined;
 };
 
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
   process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
 ): MachoSlice | undefined => {
+  if (process.cpu_type === CPU_TYPE_ARM) return arm32Slice(slices, process);
   for (const architecture of COMPATIBLE_ARCHITECTURES[process.architecture] ?? [
     process.architecture,
   ]) {
