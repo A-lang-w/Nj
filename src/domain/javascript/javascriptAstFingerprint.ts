@@ -10,7 +10,10 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
+import {
+  withoutUnusedFactoryDefaults,
+  type JavaScriptBundlerFactoryRoles,
+} from "./javascriptBundlerFactoryRoles.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
@@ -19,6 +22,8 @@ import {
 /** Static CommonJS export names. */
 export interface StaticExports {
   readonly values: readonly string[];
+  /** Export-shaped writes whose receiver role could not be resolved. */
+  readonly unknown: number;
 }
 
 /** Derive a rename-resistant syntax fingerprint without code execution. */
@@ -51,6 +56,7 @@ export const collectJavaScriptExports = (
   const index = factory?.index;
   const bindings = index?.bindings;
   const exports = new Set<string>();
+  let unknown = 0;
   const bindingId = (reference: t.Identifier): string | undefined =>
     bindings === undefined
       ? undefined
@@ -66,39 +72,42 @@ export const collectJavaScriptExports = (
         return id === undefined ? [] : [id];
       }),
     );
-    return (reference: t.Node | null): boolean => {
-      if (!t.isIdentifier(reference)) return false;
-      if (roles === undefined) return reference.name === fallback;
-      if (bindings === undefined) return false;
+    return (reference: t.Node | null): ReceiverRole => {
+      if (!t.isIdentifier(reference)) return undefined;
+      if (roles === undefined)
+        return reference.name === fallback ? "role" : undefined;
+      if (bindings === undefined) return undefined;
       const binding = resolveSemanticBindingState(
         bindings,
         reference,
         reference.name,
       );
-      if (binding === undefined || !ids.has(binding.bindingId)) return false;
+      if (binding === undefined || !ids.has(binding.bindingId))
+        return undefined;
       // The calling convention owns the parameter's entry value, not every
-      // later value assigned to the same lexical binding. It also always
-      // supplies the argument, so a role parameter's default never runs.
+      // later value assigned to the same lexical binding.
       const read = semanticBindingAtRead(
-        binding,
+        withoutUnusedFactoryDefaults(binding, roles),
         reference,
         bindings.parentsByNode,
       );
-      return (
-        read.status === "ordered" &&
-        read.binding.initializers.length === 0 &&
-        read.binding.referenceInitializers.every(
-          (initializer) =>
-            initializer.assignment !== true &&
-            roles.unusedDefaults.has(initializer.node),
-        )
-      );
+      if (read.status !== "ordered") return "unresolved";
+      return read.binding.initializers.length === 0 &&
+        read.binding.referenceInitializers.length === 0
+        ? "role"
+        : undefined;
     };
   };
   const isExportsAlias = identity(roles?.exports ?? [], "exports");
   const isModuleAlias = identity([roles?.module], "module");
   const isLoaderAlias = identity([roles?.loader], "__webpack_require__");
-  const receivers = { isExportsAlias, isModuleAlias };
+  const receivers: ExportReceivers = {
+    isExportsAlias,
+    isModuleAlias,
+    unresolved: () => {
+      unknown += 1;
+    },
+  };
   traverseJavaScriptAst(node, {
     enter: (current) => {
       if (t.isAssignmentExpression(current))
@@ -116,31 +125,40 @@ export const collectJavaScriptExports = (
             "defineProperty",
           ]);
         collectCallExports(current, exports, receivers, intrinsic, (root) => {
-          if (root === null || !isLoaderAlias(root)) return false;
-          if (index === undefined) return true;
+          const loader = isLoaderAlias(root);
+          if (loader !== "role" || root === null) return loader;
+          if (index === undefined) return "role";
           const facts = index.effectsForReferenceWithinActivationAt(
             current,
             root,
             ["d"],
           );
-          return (
-            facts.memberEffectsIndexed &&
+          return facts.memberEffectsIndexed &&
             !facts.effects.some(
               (effect) =>
                 effect.kind === "member-write" && effect.timing !== "after",
             )
-          );
+            ? "role"
+            : undefined;
         });
       }
       return undefined;
     },
   });
-  return { values: [...exports].sort(compareUnicodeCodePoints) };
+  return { values: [...exports].sort(compareUnicodeCodePoints), unknown };
 };
 
+/**
+ * `role` holds the parameter's entry value; `unresolved` reads its binding
+ * where write order is unknown, so the write may or may not be an export.
+ */
+type ReceiverRole = "role" | "unresolved" | undefined;
+
 interface ExportReceivers {
-  readonly isExportsAlias: (root: t.Node | null) => boolean;
-  readonly isModuleAlias: (root: t.Node | null) => boolean;
+  readonly isExportsAlias: (root: t.Node | null) => ReceiverRole;
+  readonly isModuleAlias: (root: t.Node | null) => ReceiverRole;
+  /** Record an export-shaped write whose receiver could not be resolved. */
+  readonly unresolved: () => void;
 }
 
 const semanticTokens = (node: t.Node): string[] => {
@@ -209,19 +227,24 @@ const collectAssignmentExports = (
   left: t.LVal | t.OptionalMemberExpression,
   right: t.Expression,
   output: Set<string>,
-  { isExportsAlias, isModuleAlias }: ExportReceivers,
+  { isExportsAlias, isModuleAlias, unresolved }: ExportReceivers,
 ): void => {
   const path = memberPath(left);
   if (path === null) return;
   const root = memberRoot(left);
-  const exportsAlias = isExportsAlias(root);
   // Rebinding the CommonJS alias does not replace module.exports.
-  if (path.length === 1 && exportsAlias) return;
-  const exportOffset = exportsAlias
-    ? 1
-    : isModuleAlias(root) && path[1] === "exports"
-      ? 2
-      : null;
+  if (path.length === 1) return;
+  const exportsAlias = isExportsAlias(root);
+  const moduleAlias =
+    exportsAlias === undefined && path[1] === "exports"
+      ? isModuleAlias(root)
+      : undefined;
+  if (exportsAlias === "unresolved" || moduleAlias === "unresolved") {
+    unresolved();
+    return;
+  }
+  const exportOffset =
+    exportsAlias === "role" ? 1 : moduleAlias === "role" ? 2 : null;
   if (exportOffset === null) return;
   if (path.length === exportOffset) {
     if (t.isObjectExpression(right)) collectObjectKeys(right, output);
@@ -237,27 +260,37 @@ const collectAssignmentExports = (
 const collectCallExports = (
   call: t.CallExpression,
   output: Set<string>,
-  { isExportsAlias, isModuleAlias }: ExportReceivers,
+  { isExportsAlias, isModuleAlias, unresolved }: ExportReceivers,
   intrinsic: boolean,
-  isLoaderAlias: (root: t.Node | null) => boolean,
+  isLoaderAlias: (root: t.Node | null) => ReceiverRole,
 ): void => {
   const callee = memberPath(call.callee);
   if (callee === null) return;
   const definePropertyCall = intrinsic;
   const declarationCall =
-    callee.length === 2 &&
-    callee[1] === "d" &&
-    isLoaderAlias(memberRoot(call.callee));
-  if (!definePropertyCall && !declarationCall) return;
+    !definePropertyCall && callee.length === 2 && callee[1] === "d"
+      ? isLoaderAlias(memberRoot(call.callee))
+      : undefined;
+  if (!definePropertyCall && declarationCall === undefined) return;
   const targetNode = call.arguments[0];
   const target = memberPath(targetNode);
-  const exportTarget =
-    isExportsAlias(targetNode ?? null) ||
-    (target !== null &&
-      target.length === 2 &&
-      isModuleAlias(memberRoot(targetNode)) &&
-      target[1] === "exports");
-  if (!exportTarget) return;
+  const exportsAlias = isExportsAlias(targetNode ?? null);
+  const moduleAlias =
+    exportsAlias === undefined &&
+    target !== null &&
+    target.length === 2 &&
+    target[1] === "exports"
+      ? isModuleAlias(memberRoot(targetNode))
+      : undefined;
+  if (exportsAlias === undefined && moduleAlias === undefined) return;
+  if (
+    exportsAlias === "unresolved" ||
+    moduleAlias === "unresolved" ||
+    declarationCall === "unresolved"
+  ) {
+    unresolved();
+    return;
+  }
   if (definePropertyCall) {
     const name = stringValue(call.arguments[1]);
     if (name !== undefined) addExport(output, name);

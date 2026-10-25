@@ -123,6 +123,14 @@ it.each([
   }).toEqual({ exports: conventionExports(factory), status: "complete" });
 });
 
+it("ignores unordered replacements of a non-export member write", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    webpackChunk("(e, t) { e.id = 1; for (const k of [1]) { e = {}; } }"),
+  );
+  expect(analysis.bundler_registrations[0]?.modules[0]?.exports).toEqual([]);
+  expect(analysis.parse_status).toBe("complete");
+});
+
 it("binds a repeated sloppy parameter name to its last argument", () => {
   const factory =
     ": function (e, t, e) { e.exports = {ghost: 1}; t.second = 1; }";
@@ -135,6 +143,41 @@ it("binds a repeated sloppy parameter name to its last argument", () => {
   });
 });
 
+const receiverParameters = [
+  ["(e, t)", "e.exports"],
+  ["(e = {}, t)", "e.exports"],
+  ["(e, t = {})", "t"],
+  ["({exports: x}, t)", "x"],
+] as const;
+const controlFlowWrites = [
+  "for (const key of ['x']) { R.forOf = 1; }",
+  "for (let i = 0; i < 1; i++) { R.forLoop = 1; }",
+  "for (const key in {a: 1}) { R.forIn = 1; }",
+  "let i = 0; while (i++ < 1) { R.whileLoop = 1; }",
+  "do { R.doWhile = 1; } while (false);",
+  "try { R.tryBlock = 1; } finally {}",
+  "{ { R.nestedBlock = 1; } }",
+  "const later = () => { R.arrowClosure = 1; }; later();",
+  "function later() { R.declaredClosure = 1; } later();",
+  "if ([1].length > 0) R.conditional = 1;",
+];
+
+it.each(
+  receiverParameters.flatMap(([parameters, receiver]) =>
+    controlFlowWrites.map((body) => [
+      parameters,
+      body.replaceAll("R.", `${receiver}.`),
+    ]),
+  ),
+)("keeps the entry receiver of 17%s through %s", (parameters, body) => {
+  const factory = `${parameters} { ${body} }`;
+  const analysis = analyzeJavaScriptStaticSource(webpackChunk(factory));
+  expect({
+    exports: analysis.bundler_registrations[0]?.modules[0]?.exports,
+    status: analysis.parse_status,
+  }).toEqual({ exports: conventionExports(factory), status: "complete" });
+});
+
 it.each([
   "(...a) { a[0].exports.rest = 1; }",
   "(e, ...r) { r[0].restExports = 1; }",
@@ -145,7 +188,13 @@ it.each([
   "(e, {a}) { e.exports.exportsPattern = 1; }",
   "(e, t, n = {}) { n.d(t, {defaultedLoader: () => 1}); }",
   "(e, t, {d}) { d(t, {destructuredLoader: () => 1}); }",
-])("reports unresolved factory role pattern 17%s as unknown", (factory) => {
+  "(e, t) { for (const k of [1]) { e.exports.beforeReplace = 1; e = {exports: {}}; } }",
+  "(e = {}, t) { for (const k of [1]) { e.exports.beforeReplace = 1; e = {exports: {}}; } }",
+  "(e, t) { for (const k of [1]) { t.beforeReplace = 1; t = {}; } }",
+  "(e, t, n) { for (const k of [1]) { n.d(t, {beforeReplace: () => 1}); n = {d() {}}; } }",
+  "(e, t) { if ([1].length > 0) e = {exports: {}}; e.exports.afterConditional = 1; }",
+  "(e, t) { const later = () => { e.exports.closure = 1; }; e = {exports: {}}; later(); }",
+])("reports unresolved factory role or receiver 17%s as unknown", (factory) => {
   const analysis = analyzeJavaScriptStaticSource(webpackChunk(factory));
   expect(analysis.bundler_registrations[0]?.modules).toHaveLength(1);
   expect(analysis.parse_status).toBe("partial");

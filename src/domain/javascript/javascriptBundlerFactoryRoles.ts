@@ -4,6 +4,7 @@ import {
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
+import type { JavaScriptSemanticBindingState } from "./javascriptSemanticState.js";
 
 /** Calling-convention roles bound once from one bundler factory's parameters. */
 export interface JavaScriptBundlerFactoryRoles {
@@ -123,3 +124,26 @@ const boundLater = (
     .some((parameter) =>
       Object.hasOwn(t.getBindingIdentifiers(parameter), name),
     );
+
+/**
+ * A role parameter's binding facts at entry. A default the convention never
+ * runs is not a possible value, so write ordering must not see it either.
+ */
+export const withoutUnusedFactoryDefaults = (
+  binding: JavaScriptSemanticBindingState,
+  roles: Pick<JavaScriptBundlerFactoryRoles, "unusedDefaults">,
+): JavaScriptSemanticBindingState => {
+  const unused = ({
+    node,
+    assignment,
+  }: JavaScriptSemanticBindingState["referenceInitializers"][number]) =>
+    assignment !== true && roles.unusedDefaults.has(node);
+  return binding.referenceInitializers.some(unused)
+    ? {
+        ...binding,
+        referenceInitializers: binding.referenceInitializers.filter(
+          (initializer) => !unused(initializer),
+        ),
+      }
+    : binding;
+};

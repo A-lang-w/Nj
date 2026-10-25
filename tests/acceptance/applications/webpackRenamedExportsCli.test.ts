@@ -93,7 +93,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       join(root, "src", "exact.js"),
       `globalThis.webpackChunkApp.push([[1], {
       111(e = {}, t) { e.exports = {defaulted: 1}; },
-      112({exports: x}, t) { x.destructured = 1; }
+      112({exports: x}, t) { x.destructured = 1; },
+      114(e = {}, t) { for (const key of ["x"]) { e.exports.loop = 1; } }
       }]);`,
     );
     await writeFile(
@@ -124,6 +125,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "111": { exports: ["defaulted"], coverage: "complete" },
       "112": { exports: ["destructured"], coverage: "complete" },
       "113": { exports: [], coverage: "partial" },
+      "114": { exports: ["loop"], coverage: "complete" },
     });
     expect(result.graph.coverage.status).toBe("partial");
   },

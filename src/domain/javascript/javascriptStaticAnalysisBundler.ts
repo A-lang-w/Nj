@@ -443,5 +443,7 @@ export const finishBundlerExports = (
       index,
     });
     for (const value of collected.values) pending.exports.push(value);
+    // An unordered receiver read leaves the export list incomplete.
+    accumulator.unknownFindings += collected.unknown;
   }
 };
