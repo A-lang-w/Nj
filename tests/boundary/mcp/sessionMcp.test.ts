@@ -134,7 +134,7 @@ describe("MCP snapshot lifecycle ordering", () => {
         })
       ).isError,
     ).toBe(true);
-    expect(await readFile(snapshotPath)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(snapshotPath), bytes)).toBe(0);
     expect(
       (
         await mcp.callTool({
@@ -592,7 +592,7 @@ describe("json depth bounds over MCP", () => {
             {
               path: [],
               reason: "invalid_value",
-              message: `left.parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}`,
+              message: `left.parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
             },
           ],
         },

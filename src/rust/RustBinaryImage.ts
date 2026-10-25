@@ -28,17 +28,23 @@ export interface RustBinaryImage {
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];
+  readonly section_names_limitation?: string;
 }
 
 type FileSpan = Pick<ImageSection, "offset" | "size">;
 
+/** The stored dependency stream and the PE padding allowance that may follow it. */
+interface DependencySpan extends FileSpan {
+  readonly peFileAlignment?: number | undefined;
+}
+
 /** Container identity and the exact file spans that Rust metadata lookups read. */
 interface RustImageLayout extends Pick<
   RustBinaryImage,
-  "format" | "architecture" | "bits" | "byte_order"
+  "format" | "architecture" | "bits" | "byte_order" | "section_names_limitation"
 > {
   readonly section_name: RustAuditableMetadata["section_name"];
-  readonly dependency: FileSpan | null;
+  readonly dependency: DependencySpan | null;
   /** Spans where rustc stores constant `/rustc/<hash>/` path strings. */
   readonly compiler_strings: readonly FileSpan[];
 }
@@ -59,25 +65,44 @@ export const readRustBinaryImage = (bytes: Buffer): RustBinaryImage => {
               dependency.offset,
               dependency.offset + dependency.size,
             ),
+            { peFileAlignment: dependency.peFileAlignment },
           ),
     rustc_commit: rustcCommit(bytes, compiler_strings),
   };
 };
 
 const nativeLayout = (bytes: Buffer): RustImageLayout => {
-  const { format, architecture, bits, byte_order, sections } =
-    readContainer(bytes);
-  const section_name = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
+  const container = readContainer(bytes);
+  const section_name =
+    container.format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
+  const dependency = dependencySection(
+    container.sections.filter((section) => section.name === section_name),
+  );
   return {
-    format,
-    architecture,
-    bits,
-    byte_order,
+    format: container.format,
+    architecture: container.architecture,
+    bits: container.bits,
+    byte_order: container.byte_order,
+    ...(container.section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation: container.section_names_limitation }),
     section_name,
-    dependency: dependencySection(
-      sections.filter((section) => section.name === section_name),
-    ),
-    compiler_strings: sections.filter((section) => section.read_only),
+    dependency:
+      dependency === null
+        ? null
+        : {
+            offset: dependency.offset,
+            size: dependency.size,
+            peFileAlignment: peFileAlignment(dependency),
+          },
+    compiler_strings: [
+      ...container.sections.filter((section) => section.read_only),
+      ...(container.format === "elf"
+        ? (container.load_regions ?? [])
+            .filter((region) => region.read && !region.write && !region.execute)
+            .map(({ mapping }) => mapping)
+        : []),
+    ],
   };
 };
 
@@ -148,14 +173,22 @@ const dependencySection = (
   return section;
 };
 
+const peFileAlignment = (section: ImageSection): number | undefined =>
+  section.format === "pe" &&
+  section.virtual_size === 0 &&
+  section.file_alignment > 0 &&
+  section.raw_size % section.file_alignment === 0
+    ? section.file_alignment
+    : undefined;
+
 const rustcCommit = (
   bytes: Buffer,
   spans: readonly FileSpan[],
 ): RustBinaryImage["rustc_commit"] => {
   const hashes: { hash: string; file_offset: number }[] = [];
   const seen = new Set<string>();
-  // Overlapping declared sections are scanned once, so total work stays
-  // bounded by the file size however many sections reference a range.
+  // Overlapping sections and mappings are scanned once, so total work stays
+  // bounded by the file size however many of them reference a range.
   for (const range of mergedRanges(spans))
     collectHashes(bytes, range, seen, hashes);
   return hashes.length === 0 ? null : { evidence_kind: "inferred", hashes };
@@ -164,15 +197,12 @@ const rustcCommit = (
 const mergedRanges = (
   spans: readonly FileSpan[],
 ): { readonly offset: number; readonly end: number }[] => {
-  const ranges = spans
-    .filter((span) => span.size > 0)
-    .map((span) => ({
-      offset: span.offset,
-      end: span.offset + span.size,
-    }))
+  const sorted = spans
+    .filter(({ size }) => size > 0)
+    .map(({ offset, size }) => ({ offset, end: offset + size }))
     .sort((left, right) => left.offset - right.offset);
   const merged: { offset: number; end: number }[] = [];
-  for (const range of ranges) {
+  for (const range of sorted) {
     const last = merged.at(-1);
     if (last !== undefined && range.offset <= last.end)
       last.end = Math.max(last.end, range.end);

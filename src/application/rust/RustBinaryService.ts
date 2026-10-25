@@ -1,17 +1,16 @@
-import { isAbsolute } from "node:path";
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { RustBinaryPort } from "./RustBinaryPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
-  rustArchitectureForSubject,
   rustBinarySchema,
-  rustFormatForSubject,
+  type InspectRustBinaryInput,
 } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -53,16 +52,6 @@ export class RustBinaryService {
           cause: input.error,
         }),
       );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const { detail, view, ...parameters } = input.data;
     const compact = detail === "summary" || view !== undefined;
     if (compact) {
@@ -95,16 +84,16 @@ export class RustBinaryService {
 
 const evidenceFor = (
   provider: RustBinaryPort["identity"],
-  parameters: { readonly path: string },
+  parameters: InspectRustBinaryInput,
   value: ReturnType<typeof rustBinarySchema.parse>,
 ): Evidence => {
-  const architecture = rustArchitectureForSubject(value.architecture);
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const section = value.auditable_metadata;
   return createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: rustFormatForSubject(value.format),
+      format: metadataReportSubjectFormat(value),
       ...(architecture === undefined ? {} : { architecture }),
     },
     provider,
